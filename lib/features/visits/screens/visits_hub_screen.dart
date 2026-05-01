@@ -1,0 +1,584 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/features/auth/providers/auth_provider.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_widgets.dart';
+import '../../../core/db/local_database.dart';
+import 'package:lima/shell/nav_bar_layout.dart';
+
+class _NearbyCache {
+  final List<Map<String, dynamic>> orgs;
+  final Map<int, double> distances;
+
+  const _NearbyCache({required this.orgs, required this.distances});
+}
+
+final _nearbyLpuCacheProvider = StateProvider<_NearbyCache?>((ref) => null);
+final _nearbyPharmacyCacheProvider = StateProvider<_NearbyCache?>(
+  (ref) => null,
+);
+
+class VisitsHubScreen extends ConsumerStatefulWidget {
+  const VisitsHubScreen({super.key});
+
+  @override
+  ConsumerState<VisitsHubScreen> createState() => _VisitsHubScreenState();
+}
+
+class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
+  bool _isLpu = true;
+  String _query = '';
+  bool _allRegions = false;
+  List<Map<String, dynamic>> _orgs = [];
+  Map<int, double> _nearbyDistances = {};
+  bool _nearbyMode = false;
+  bool _loading = false;
+  bool _isFindingNearby = false;
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _restoreNearbyCache();
+      _load();
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _restoreNearbyCache() {
+    final cache = _isLpu
+        ? ref.read(_nearbyLpuCacheProvider)
+        : ref.read(_nearbyPharmacyCacheProvider);
+    if (cache == null) return;
+    if (!mounted) return;
+    setState(() {
+      _nearbyMode = true;
+      _nearbyDistances = Map<int, double>.from(cache.distances);
+      _orgs = cache.orgs.map((e) => Map<String, dynamic>.from(e)).toList();
+      _loading = false;
+    });
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final db = ref.read(localDatabaseProvider);
+    final type = _isLpu ? 'lpu' : 'pharmacy';
+    final userCity = ref.read(authProvider).user?.city;
+    List<Map<String, dynamic>> orgs;
+    final local = await db.getOrganisations(
+      type: type,
+      query: _query.isEmpty ? null : _query,
+    );
+    orgs = List<Map<String, dynamic>>.from(local);
+    if (!_allRegions) {
+      orgs = orgs
+          .where((o) => _sameRegion(o['city']?.toString(), userCity))
+          .toList();
+    }
+    orgs.sort((a, b) {
+      final an = (a['name']?.toString() ?? '').toLowerCase();
+      final bn = (b['name']?.toString() ?? '').toLowerCase();
+      return an.compareTo(bn);
+    });
+    if (_nearbyMode && _nearbyDistances.isNotEmpty) {
+      orgs.removeWhere(
+        (o) => !_nearbyDistances.containsKey((o['id'] as num?)?.toInt() ?? 0),
+      );
+    }
+    if (!mounted) return;
+    setState(() {
+      _orgs = orgs;
+      _loading = false;
+    });
+  }
+
+  void _onTabChange(bool isLpu) {
+    if (_isLpu == isLpu) return;
+    setState(() {
+      _isLpu = isLpu;
+      _nearbyMode = false;
+      _nearbyDistances = {};
+      _orgs = [];
+    });
+    _restoreNearbyCache();
+    _load();
+  }
+
+  void _handleHorizontalSwipe(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity.abs() < 150) return;
+
+    if (velocity < 0 && _isLpu) {
+      _onTabChange(false);
+    } else if (velocity > 0 && !_isLpu) {
+      _onTabChange(true);
+    }
+  }
+
+  void _onQueryChange(String q) {
+    setState(() => _query = q);
+    _load();
+  }
+
+  Future<Position?> _requestCurrentPosition() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Геолокация недоступна')));
+      }
+      return null;
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Разрешите геолокацию в настройках приложения'),
+          ),
+        );
+      }
+      await Geolocator.openAppSettings();
+      return null;
+    }
+    return Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+      timeLimit: const Duration(seconds: 12),
+    );
+  }
+
+  Future<void> _findNearby() async {
+    if (_isFindingNearby) return;
+    setState(() => _isFindingNearby = true);
+    try {
+      final pos = await _requestCurrentPosition();
+      if (pos == null) return;
+
+      final db = ref.read(localDatabaseProvider);
+      final type = _isLpu ? 'lpu' : 'pharmacy';
+      final userCity = ref.read(authProvider).user?.city;
+      final rows = await db.getOrganisations(type: type);
+      final filteredRows = !_allRegions
+          ? rows
+                .where((o) => _sameRegion(o['city']?.toString(), userCity))
+                .toList()
+          : rows;
+
+      final map = <int, double>{};
+      final orgs = <Map<String, dynamic>>[];
+      for (final row in filteredRows) {
+        final id = row['id'] as int? ?? 0;
+        final lat = (row['latitude'] as num?)?.toDouble();
+        final lon = (row['longitude'] as num?)?.toDouble();
+        final item = Map<String, dynamic>.from(row);
+        if (lat != null && lon != null) {
+          final distance = Geolocator.distanceBetween(
+            pos.latitude,
+            pos.longitude,
+            lat,
+            lon,
+          );
+          map[id] = distance;
+          item['distance_m'] = distance;
+        }
+        orgs.add(item);
+      }
+      orgs.sort((a, b) {
+        final aId = a['id'] as int? ?? 0;
+        final bId = b['id'] as int? ?? 0;
+        final ad = map[aId] ?? double.infinity;
+        final bd = map[bId] ?? double.infinity;
+        return ad.compareTo(bd);
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _nearbyMode = map.isNotEmpty;
+        _nearbyDistances = map;
+        _orgs = orgs;
+        _loading = false;
+      });
+      final cache = _NearbyCache(
+        orgs: orgs.map((e) => Map<String, dynamic>.from(e)).toList(),
+        distances: Map<int, double>.from(map),
+      );
+      if (_isLpu) {
+        ref.read(_nearbyLpuCacheProvider.notifier).state = cache;
+      } else {
+        ref.read(_nearbyPharmacyCacheProvider.notifier).state = cache;
+      }
+      if (map.isEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Нет координат для сортировки рядом, показан общий список',
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Ошибка загрузки данных')));
+    } finally {
+      if (mounted) setState(() => _isFindingNearby = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.primaryBg,
+      body: Stack(
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragEnd: _handleHorizontalSwipe,
+            child: Column(
+              children: [
+                // Header
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.secondaryBg,
+                    boxShadow: shadowSm,
+                  ),
+                  padding: EdgeInsets.fromLTRB(
+                    AppUi.screenHorizontal,
+                    MediaQuery.of(context).padding.top + 12,
+                    AppUi.screenHorizontal,
+                    16,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        context.l10n.t('search'),
+                        style: GoogleFonts.manrope(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primaryText,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _SegmentedTypeSelector(
+                        isLpu: _isLpu,
+                        onChanged: _onTabChange,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _searchCtrl,
+                        onChanged: _onQueryChange,
+                        decoration: InputDecoration(
+                          hintText: _isLpu
+                              ? context.l10n.t('searchLpu')
+                              : context.l10n.t('searchPharmacy'),
+                          prefixIcon: const Icon(
+                            Icons.search_rounded,
+                            color: AppColors.hintText,
+                          ),
+                          suffixIcon: _query.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(
+                                    Icons.close_rounded,
+                                    color: AppColors.hintText,
+                                    size: 18,
+                                  ),
+                                  onPressed: () {
+                                    setState(() => _query = '');
+                                    _searchCtrl.clear();
+                                    _load();
+                                  },
+                                )
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      GestureDetector(
+                        onTap: () {
+                          setState(() => _allRegions = !_allRegions);
+                          _load();
+                        },
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: Checkbox(
+                                value: _allRegions,
+                                onChanged: (v) {
+                                  setState(() => _allRegions = v ?? false);
+                                  _load();
+                                },
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              context.l10n.t('searchAllRegions'),
+                              style: GoogleFonts.manrope(
+                                fontSize: 13,
+                                color: AppColors.secondaryText,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // List
+                Expanded(
+                  child: _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _orgs.isEmpty
+                      ? EmptyState(
+                          icon: (!_nearbyMode && _query.isEmpty)
+                              ? LucideIcons.mapPin
+                              : Icons.search_off_rounded,
+                          title: (!_nearbyMode && _query.isEmpty)
+                              ? context.l10n.t('findNearbyHint')
+                              : context.l10n.t('nothingFound'),
+                        )
+                      : ListView.builder(
+                          padding: EdgeInsets.fromLTRB(
+                            AppUi.screenHorizontal,
+                            12,
+                            AppUi.screenHorizontal,
+                            LimaNavBarLayout.scrollBottomPadding(context) + 24,
+                          ),
+                          itemCount: _orgs.length,
+                          itemBuilder: (_, i) {
+                            final org = _orgs[i];
+                            return OrgCard(
+                              name: org['name'] as String,
+                              address: org['address'] as String,
+                              isPharmacy: !_isLpu,
+                              distanceMeters: _nearbyMode
+                                  ? _nearbyDistances[org['id'] as int? ?? 0]
+                                  : null,
+                              onTap: () {
+                                if (_isLpu) {
+                                  context.push(
+                                    Uri(
+                                      path: '/visits/lpu/detail/${org['id']}',
+                                      queryParameters: {
+                                        'name': org['name'] as String,
+                                        'address': org['address'] as String,
+                                      },
+                                    ).toString(),
+                                  );
+                                } else {
+                                  context.push(
+                                    Uri(
+                                      path:
+                                          '/visits/pharmacy/detail/${org['id']}',
+                                      queryParameters: {
+                                        'name': org['name'] as String,
+                                      },
+                                    ).toString(),
+                                  );
+                                }
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+
+          // Floating actions
+          Positioned(
+            left: AppUi.screenHorizontal,
+            right: AppUi.screenHorizontal,
+            bottom: LimaNavBarLayout.totalBarHeight(context) - 10,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppTapScale(
+                  onTap: _isFindingNearby ? null : _findNearby,
+                  pressedScale: 0.97,
+                  child: Container(
+                    height: AppUi.buttonHeight,
+                    decoration: BoxDecoration(
+                      color: AppColors.secondaryBg,
+                      borderRadius: BorderRadius.circular(AppUi.cardRadius),
+                      border: Border.all(color: AppColors.primary),
+                      boxShadow: shadowMd,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (_isFindingNearby)
+                          const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.primary,
+                            ),
+                          )
+                        else
+                          const Icon(
+                            LucideIcons.mapPin,
+                            color: AppColors.primary,
+                            size: 18,
+                          ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _isFindingNearby
+                              ? context.l10n.t('searching')
+                              : context.l10n.t('findNearby'),
+                          style: GoogleFonts.manrope(
+                            color: AppColors.primary,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _sameRegion(String? orgCity, String? userCity) {
+    final a = _normalizeRegion(orgCity);
+    final b = _normalizeRegion(userCity);
+    if (a.isEmpty || b.isEmpty) return false;
+    return a == b || a.contains(b) || b.contains(a);
+  }
+
+  String _normalizeRegion(String? value) {
+    if (value == null) return '';
+    final v = value
+        .toLowerCase()
+        .replaceAll('г.', '')
+        .replaceAll('город', '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return v;
+  }
+}
+
+class _TabBtn extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _TabBtn({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: SizedBox(
+          height: 34,
+          child: Center(
+            child: Text(
+              label,
+              style: GoogleFonts.manrope(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: active ? Colors.white : AppColors.secondaryText,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SegmentedTypeSelector extends StatelessWidget {
+  final bool isLpu;
+  final ValueChanged<bool> onChanged;
+
+  const _SegmentedTypeSelector({required this.isLpu, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final segmentWidth = (constraints.maxWidth - 8) / 2;
+        return Container(
+          height: 42,
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: AppColors.primaryBg,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Stack(
+            children: [
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                left: isLpu ? 0 : segmentWidth,
+                top: 0,
+                width: segmentWidth,
+                height: 34,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: shadowSm,
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: _TabBtn(
+                      label: context.l10n.t('lpu'),
+                      active: isLpu,
+                      onTap: () => onChanged(true),
+                    ),
+                  ),
+                  Expanded(
+                    child: _TabBtn(
+                      label: context.l10n.t('pharmacies'),
+                      active: !isLpu,
+                      onTap: () => onChanged(false),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
