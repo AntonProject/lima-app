@@ -223,6 +223,11 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
           .map((e) => e['id'])
           .whereType<int>()
           .toSet();
+      final db = _ref.read(localDatabaseProvider);
+      await db.clearOrgFavorites();
+      for (final id in remoteIds) {
+        await db.updateOrgFavorite(id, true);
+      }
       state = state.copyWith(favoritePharmacyIds: remoteIds);
       await _persistFavorites(remoteIds);
     } catch (_) {

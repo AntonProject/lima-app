@@ -36,8 +36,8 @@
 - `GET /api/Users/me`
 
 ### Справочники / seed
-- `GET /api/dict/Organizations`
-- `GET /api/dict/Doctors`
+- `GET /api/dict/Organizations` (`region_id` передаётся для МП с привязкой к региону)
+- `GET /api/dict/Doctors` — справочник пагинируется сервером (`page_size=30`), поэтому full seed проходит страницы и затем фильтрует врачей по связям организаций региона
 - `GET /api/dict/Drugs`
 - `GET /api/Documents/by-drug/{id}`
 
@@ -76,7 +76,8 @@
 
 ### Delta sync endpoints
 - `GET /Doctors/sync` (fallback `/api/Doctors/sync`)
-- `GET /Organizations/sync` (fallback `/api/Organizations/sync`)
+- `GET /Doctors/relations/sync` (fallback `/api/dict/Doctors/relations/sync`) — связь врачей с организациями
+- `GET /Organizations/sync` (fallback `/api/Organizations/sync`, `region_id` передаётся для МП с привязкой к региону)
 - `GET /Drugs/sync` (fallback `/api/Drugs/sync`)
 
 ## 4) Как работает синхронизация
@@ -86,12 +87,14 @@
 
 1. Если `fullRefresh == false`:
 - пытаемся дельту (`/Organizations/sync`, `/Doctors/sync`, `/Drugs/sync`)
+- для организаций передаём `region_id` текущего МП; связи `/Doctors/relations/sync` фильтруются по организациям региона, затем врачи фильтруются по этим связям
 - если успешно: `upsert` в SQLite
 - затем sync избранных врачей из API
 
 2. Если дельта не поддерживается/упала:
 - выполняется full seed:
   - справочники + материалы + история визитов
+  - организации запрашиваются с `region_id` текущего МП; связи врач-организация берутся из `/Doctors/relations/sync`, справочник врачей читается постранично, затем врачи фильтруются по связям организаций этого региона
   - запись в локальную БД
 
 3. Если `fullRefresh == true`:

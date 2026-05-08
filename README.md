@@ -73,10 +73,11 @@ REST API  ->  RemoteApiService  ->  SQLite lima.db  ->  providers/screens
 
 ## Локальная база данных
 
-Приложение открывает `lima.db`, текущая версия схемы — 8. Основные таблицы:
+Приложение открывает `lima.db`, текущая версия схемы — 10. Основные таблицы:
 
 - `organisations`
 - `doctors`
+- `doctor_organisations`
 - `drugs`
 - `drug_materials`
 - `visits`

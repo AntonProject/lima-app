@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -5,23 +7,12 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/core/models/models.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import '../../../core/db/local_database.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
-
-class _NearbyCache {
-  final List<Map<String, dynamic>> orgs;
-  final Map<int, double> distances;
-
-  const _NearbyCache({required this.orgs, required this.distances});
-}
-
-final _nearbyLpuCacheProvider = StateProvider<_NearbyCache?>((ref) => null);
-final _nearbyPharmacyCacheProvider = StateProvider<_NearbyCache?>(
-  (ref) => null,
-);
 
 class VisitsHubScreen extends ConsumerStatefulWidget {
   const VisitsHubScreen({super.key});
@@ -39,13 +30,14 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
   bool _nearbyMode = false;
   bool _loading = false;
   bool _isFindingNearby = false;
+  Position? _lastNearbyPosition;
+  String? _lastResetToken;
   final TextEditingController _searchCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _restoreNearbyCache();
       _load();
     });
   }
@@ -56,25 +48,37 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
     super.dispose();
   }
 
-  void _restoreNearbyCache() {
-    final cache = _isLpu
-        ? ref.read(_nearbyLpuCacheProvider)
-        : ref.read(_nearbyPharmacyCacheProvider);
-    if (cache == null) return;
-    if (!mounted) return;
-    setState(() {
-      _nearbyMode = true;
-      _nearbyDistances = Map<int, double>.from(cache.distances);
-      _orgs = cache.orgs.map((e) => Map<String, dynamic>.from(e)).toList();
-      _loading = false;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final resetToken = GoRouterState.of(context).uri.queryParameters['reset'];
+    if (resetToken == null || resetToken == _lastResetToken) return;
+    _lastResetToken = resetToken;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _resetToDefault();
     });
+  }
+
+  void _resetToDefault() {
+    setState(() {
+      _isLpu = true;
+      _query = '';
+      _allRegions = false;
+      _nearbyMode = false;
+      _nearbyDistances = {};
+      _lastNearbyPosition = null;
+      _orgs = [];
+    });
+    _searchCtrl.clear();
+    _load();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     final db = ref.read(localDatabaseProvider);
     final type = _isLpu ? 'lpu' : 'pharmacy';
-    final userCity = ref.read(authProvider).user?.city;
+    final user = ref.read(authProvider).user;
     List<Map<String, dynamic>> orgs;
     final local = await db.getOrganisations(
       type: type,
@@ -82,9 +86,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
     );
     orgs = List<Map<String, dynamic>>.from(local);
     if (!_allRegions) {
-      orgs = orgs
-          .where((o) => _sameRegion(o['city']?.toString(), userCity))
-          .toList();
+      orgs = orgs.where((o) => _belongsToUserRegion(o, user)).toList();
     }
     orgs.sort((a, b) {
       final an = (a['name']?.toString() ?? '').toLowerCase();
@@ -109,9 +111,9 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
       _isLpu = isLpu;
       _nearbyMode = false;
       _nearbyDistances = {};
+      _lastNearbyPosition = null;
       _orgs = [];
     });
-    _restoreNearbyCache();
     _load();
   }
 
@@ -128,7 +130,22 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
 
   void _onQueryChange(String q) {
     setState(() => _query = q);
-    _load();
+    final pos = _lastNearbyPosition;
+    if (_nearbyMode && pos != null) {
+      _loadNearbyForPosition(pos);
+    } else {
+      _load();
+    }
+  }
+
+  void _toggleAllRegions(bool value) {
+    setState(() => _allRegions = value);
+    final pos = _lastNearbyPosition;
+    if (_nearbyMode && pos != null) {
+      _loadNearbyForPosition(pos);
+    } else {
+      _load();
+    }
   }
 
   Future<Position?> _requestCurrentPosition() async {
@@ -170,69 +187,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
     try {
       final pos = await _requestCurrentPosition();
       if (pos == null) return;
-
-      final db = ref.read(localDatabaseProvider);
-      final type = _isLpu ? 'lpu' : 'pharmacy';
-      final userCity = ref.read(authProvider).user?.city;
-      final rows = await db.getOrganisations(type: type);
-      final filteredRows = !_allRegions
-          ? rows
-                .where((o) => _sameRegion(o['city']?.toString(), userCity))
-                .toList()
-          : rows;
-
-      final map = <int, double>{};
-      final orgs = <Map<String, dynamic>>[];
-      for (final row in filteredRows) {
-        final id = row['id'] as int? ?? 0;
-        final lat = (row['latitude'] as num?)?.toDouble();
-        final lon = (row['longitude'] as num?)?.toDouble();
-        final item = Map<String, dynamic>.from(row);
-        if (lat != null && lon != null) {
-          final distance = Geolocator.distanceBetween(
-            pos.latitude,
-            pos.longitude,
-            lat,
-            lon,
-          );
-          map[id] = distance;
-          item['distance_m'] = distance;
-        }
-        orgs.add(item);
-      }
-      orgs.sort((a, b) {
-        final aId = a['id'] as int? ?? 0;
-        final bId = b['id'] as int? ?? 0;
-        final ad = map[aId] ?? double.infinity;
-        final bd = map[bId] ?? double.infinity;
-        return ad.compareTo(bd);
-      });
-
-      if (!mounted) return;
-      setState(() {
-        _nearbyMode = map.isNotEmpty;
-        _nearbyDistances = map;
-        _orgs = orgs;
-        _loading = false;
-      });
-      final cache = _NearbyCache(
-        orgs: orgs.map((e) => Map<String, dynamic>.from(e)).toList(),
-        distances: Map<int, double>.from(map),
-      );
-      if (_isLpu) {
-        ref.read(_nearbyLpuCacheProvider.notifier).state = cache;
-      } else {
-        ref.read(_nearbyPharmacyCacheProvider.notifier).state = cache;
-      }
-      if (map.isEmpty && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Нет координат для сортировки рядом, показан общий список',
-            ),
-          ),
-        );
-      }
+      await _loadNearbyForPosition(pos);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -240,6 +195,65 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
       ).showSnackBar(const SnackBar(content: Text('Ошибка загрузки данных')));
     } finally {
       if (mounted) setState(() => _isFindingNearby = false);
+    }
+  }
+
+  Future<void> _loadNearbyForPosition(Position pos) async {
+    setState(() => _loading = true);
+    final db = ref.read(localDatabaseProvider);
+    final type = _isLpu ? 'lpu' : 'pharmacy';
+    final user = ref.read(authProvider).user;
+    final rows = await db.getOrganisations(
+      type: type,
+      query: _query.isEmpty ? null : _query,
+    );
+    final filteredRows = !_allRegions
+        ? rows.where((o) => _belongsToUserRegion(o, user)).toList()
+        : rows;
+
+    final map = <int, double>{};
+    final orgs = <Map<String, dynamic>>[];
+    for (final row in filteredRows) {
+      final id = row['id'] as int? ?? 0;
+      final lat = (row['latitude'] as num?)?.toDouble();
+      final lon = (row['longitude'] as num?)?.toDouble();
+      final item = Map<String, dynamic>.from(row);
+      if (lat != null && lon != null) {
+        final distance = Geolocator.distanceBetween(
+          pos.latitude,
+          pos.longitude,
+          lat,
+          lon,
+        );
+        map[id] = distance;
+        item['distance_m'] = distance;
+      }
+      orgs.add(item);
+    }
+    orgs.sort((a, b) {
+      final aId = a['id'] as int? ?? 0;
+      final bId = b['id'] as int? ?? 0;
+      final ad = map[aId] ?? double.infinity;
+      final bd = map[bId] ?? double.infinity;
+      return ad.compareTo(bd);
+    });
+
+    if (!mounted) return;
+    setState(() {
+      _lastNearbyPosition = pos;
+      _nearbyMode = map.isNotEmpty;
+      _nearbyDistances = map;
+      _orgs = orgs;
+      _loading = false;
+    });
+    if (map.isEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Нет координат для сортировки рядом, показан общий список',
+          ),
+        ),
+      );
     }
   }
 
@@ -304,7 +318,12 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                                   onPressed: () {
                                     setState(() => _query = '');
                                     _searchCtrl.clear();
-                                    _load();
+                                    final pos = _lastNearbyPosition;
+                                    if (_nearbyMode && pos != null) {
+                                      _loadNearbyForPosition(pos);
+                                    } else {
+                                      _load();
+                                    }
                                   },
                                 )
                               : null,
@@ -313,8 +332,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                       const SizedBox(height: 8),
                       GestureDetector(
                         onTap: () {
-                          setState(() => _allRegions = !_allRegions);
-                          _load();
+                          _toggleAllRegions(!_allRegions);
                         },
                         child: Row(
                           children: [
@@ -324,8 +342,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                               child: Checkbox(
                                 value: _allRegions,
                                 onChanged: (v) {
-                                  setState(() => _allRegions = v ?? false);
-                                  _load();
+                                  _toggleAllRegions(v ?? false);
                                 },
                                 materialTapTargetSize:
                                     MaterialTapTargetSize.shrinkWrap,
@@ -465,6 +482,38 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
         ],
       ),
     );
+  }
+
+  bool _belongsToUserRegion(Map<String, dynamic> org, UserModel? user) {
+    final userRegionId = user?.regionId;
+    final orgRegionId = _orgRegionId(org);
+    if (userRegionId != null && orgRegionId != null) {
+      return userRegionId == orgRegionId;
+    }
+    return _sameRegion(org['city']?.toString(), user?.city);
+  }
+
+  int? _orgRegionId(Map<String, dynamic> org) {
+    final direct = org['region_id'];
+    if (direct is num) return direct.toInt();
+    if (direct is String) return int.tryParse(direct);
+    final raw = org['raw_json'] as String?;
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final map = Map<String, dynamic>.from(decoded);
+      final rawRegion = map['region_id'] ?? map['regionId'];
+      if (rawRegion is num) return rawRegion.toInt();
+      if (rawRegion is String) return int.tryParse(rawRegion);
+      final region = map['region'];
+      if (region is Map) {
+        final id = region['id'] ?? region['region_id'];
+        if (id is num) return id.toInt();
+        if (id is String) return int.tryParse(id);
+      }
+    } catch (_) {}
+    return null;
   }
 
   bool _sameRegion(String? orgCity, String? userCity) {

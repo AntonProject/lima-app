@@ -25,7 +25,8 @@ class HomeScreen extends ConsumerStatefulWidget {
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends ConsumerState<HomeScreen>
+    with WidgetsBindingObserver {
   bool _loadingOffline = false;
   bool _loadingRecent = false;
   bool _loadingRecentInFlight = false;
@@ -108,14 +109,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
       for (final row in rows) {
         final rid = _safeStr(row['remote_id']);
         final type = _safeStr(row['visit_type'], fallback: 'lpu');
-        final created = _safeStr(row['created_at'] ?? row['visit_date'] ?? row['date']);
+        final created = _safeStr(
+          row['created_at'] ?? row['visit_date'] ?? row['date'],
+        );
         final key = rid.isNotEmpty ? '${rid}_$type' : '${type}_$created';
         final prev = dedup[key];
         if (prev == null) {
           dedup[key] = row;
           continue;
         }
-        final prevDt = _tryDate(_safeStr(prev['created_at'] ?? prev['visit_date'] ?? prev['date']));
+        final prevDt = _tryDate(
+          _safeStr(prev['created_at'] ?? prev['visit_date'] ?? prev['date']),
+        );
         final curDt = _tryDate(created);
         if (curDt.isAfter(prevDt)) {
           dedup[key] = row;
@@ -139,7 +144,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
           _loadingRecent = false;
         });
       }
-
     } finally {
       _loadingRecentInFlight = false;
       if (mounted && !shouldShowLoader) {
@@ -148,16 +152,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
     }
   }
 
-  PopupMenuItem<String> _langMenuItem(String value, String flag, String label, String current) {
+  PopupMenuItem<String> _langMenuItem(
+    String value,
+    String flag,
+    String label,
+    String current,
+  ) {
     return PopupMenuItem<String>(
       value: value,
       child: Row(
         children: [
           Text(flag, style: const TextStyle(fontSize: 16)),
           const SizedBox(width: 10),
-          Text(label, style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.primaryText)),
+          Text(
+            label,
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: AppColors.primaryText,
+            ),
+          ),
           const Spacer(),
-          if (current == value) const Icon(LucideIcons.check, size: 16, color: AppColors.primary),
+          if (current == value)
+            const Icon(LucideIcons.check, size: 16, color: AppColors.primary),
         ],
       ),
     );
@@ -167,6 +184,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
   Widget build(BuildContext context) {
     debugPrint('[HOME] build start');
     final user = ref.watch(authProvider).user;
+    final isAdmin = user?.role == 'admin';
     final syncState = ref.watch(syncProvider);
     final collections = ref.watch(appCollectionsProvider);
     final dashboardCounts = ref.watch(dashboardCountsProvider).valueOrNull;
@@ -176,7 +194,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
       final nextAt = next.lastSyncAt;
       if (nextAt == null) return;
       if (_lastSyncSeenAt != null &&
-          nextAt.millisecondsSinceEpoch == _lastSyncSeenAt!.millisecondsSinceEpoch) {
+          nextAt.millisecondsSinceEpoch ==
+              _lastSyncSeenAt!.millisecondsSinceEpoch) {
         return;
       }
       if (prevAt == null ||
@@ -231,11 +250,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                       builder: (btnCtx) => AppTapScale(
                         onTap: () async {
                           final box = btnCtx.findRenderObject()! as RenderBox;
-                          final overlay = Navigator.of(btnCtx).overlay!.context.findRenderObject()! as RenderBox;
+                          final overlay =
+                              Navigator.of(
+                                    btnCtx,
+                                  ).overlay!.context.findRenderObject()!
+                                  as RenderBox;
                           final pos = RelativeRect.fromRect(
                             Rect.fromPoints(
-                              box.localToGlobal(Offset(0, box.size.height + 4), ancestor: overlay),
-                              box.localToGlobal(Offset(box.size.width, box.size.height + 4), ancestor: overlay),
+                              box.localToGlobal(
+                                Offset(0, box.size.height + 4),
+                                ancestor: overlay,
+                              ),
+                              box.localToGlobal(
+                                Offset(box.size.width, box.size.height + 4),
+                                ancestor: overlay,
+                              ),
                             ),
                             Offset.zero & overlay.size,
                           );
@@ -243,18 +272,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                           final selected = await showMenu<String>(
                             context: btnCtx,
                             position: pos,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                             color: AppColors.secondaryBg,
                             elevation: 4,
                             items: [
                               _langMenuItem('ru', '🇷🇺', 'Русский', current),
                               _langMenuItem('en', '🇬🇧', 'English', current),
-                              _langMenuItem('uz_latn', '🇺🇿', 'O\'zbekcha', current),
-                              _langMenuItem('uz_cyrl', '🇺🇿', 'Ўзбекча', current),
+                              _langMenuItem(
+                                'uz_latn',
+                                '🇺🇿',
+                                'O\'zbekcha',
+                                current,
+                              ),
+                              _langMenuItem(
+                                'uz_cyrl',
+                                '🇺🇿',
+                                'Ўзбекча',
+                                current,
+                              ),
                             ],
                           );
                           if (selected != null && mounted) {
-                            await ref.read(appLocaleProvider.notifier).setLocale(selected);
+                            await ref
+                                .read(appLocaleProvider.notifier)
+                                .setLocale(selected);
                           }
                         },
                         pressedScale: 0.93,
@@ -287,7 +330,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                                 ),
                               ),
                               const SizedBox(width: 2),
-                      const Icon(LucideIcons.chevronDown, color: Colors.white, size: 14),
+                              const Icon(
+                                LucideIcons.chevronDown,
+                                color: Colors.white,
+                                size: 14,
+                              ),
                             ],
                           ),
                         ),
@@ -343,18 +390,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                           Expanded(
                             child: _ActivityCard(
                               title: context.l10n.t('visitsToday'),
-                              value: '${dashboardCounts?.visitsTodayCount ?? 0}',
+                              value:
+                                  '${dashboardCounts?.visitsTodayCount ?? 0}',
                               subtitle: context.l10n.t(
                                 'lpuStats',
                                 args: {
-                                  'lpu': '${dashboardCounts?.lpuTodayCount ?? 0}',
-                                  'pharmacy': '${dashboardCounts?.pharmacyTodayCount ?? 0}',
+                                  'lpu':
+                                      '${dashboardCounts?.lpuTodayCount ?? 0}',
+                                  'pharmacy':
+                                      '${dashboardCounts?.pharmacyTodayCount ?? 0}',
                                 },
                               ),
                               iconBg: AppColors.iconBgBlue,
                               icon: LucideIcons.calendarDays,
                               iconColor: AppColors.primary,
-                              onTap: () => context.push('/visits/history?range=today'),
+                              onTap: () =>
+                                  context.push('/visits/history?range=today'),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -407,7 +458,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                               iconBg: AppColors.iconBgOrange,
                               icon: LucideIcons.shoppingCart,
                               iconColor: AppColors.accent,
-                              badgeCount: collections.cartCount > 0 ? collections.cartCount : null,
+                              badgeCount: collections.cartCount > 0
+                                  ? collections.cartCount
+                                  : null,
                               onTap: () => context.push('/basket'),
                             ),
                           ),
@@ -526,159 +579,179 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                           title: 'На эту дату визиты не запланированы',
                         ),
                       const SizedBox(height: 8),
-                      Text(
-                        context.l10n.t('offlineAndSync'),
-                        style: GoogleFonts.manrope(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.primaryText,
+                      if (isAdmin) ...[
+                        Text(
+                          context.l10n.t('offlineAndSync'),
+                          style: GoogleFonts.manrope(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.primaryText,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: _loadingOffline ? null : _downloadOfflineData,
-                              child: Container(
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: AppColors.secondaryBg,
-                                  borderRadius: BorderRadius.circular(16),
-                                  boxShadow: shadowSm,
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 40,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        color: AppColors.iconBgBlue,
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: _loadingOffline
-                                          ? const Padding(
-                                              padding: EdgeInsets.all(10),
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: _loadingOffline
+                                    ? null
+                                    : _downloadOfflineData,
+                                child: Container(
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.secondaryBg,
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: shadowSm,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 40,
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          color: AppColors.iconBgBlue,
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                        ),
+                                        child: _loadingOffline
+                                            ? const Padding(
+                                                padding: EdgeInsets.all(10),
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: AppColors.primary,
+                                                    ),
+                                              )
+                                            : const Icon(
+                                                LucideIcons.cloudDownload,
                                                 color: AppColors.primary,
+                                                size: 22,
                                               ),
-                                            )
-                                          : const Icon(
-                                              LucideIcons.cloudDownload,
-                                              color: AppColors.primary,
-                                              size: 22,
-                                            ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            context.l10n.t('offlineMode'),
-                                            style: GoogleFonts.manrope(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w800,
-                                              color: AppColors.primaryText,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            softWrap: false,
-                                          ),
-                                          Text(
-                                            context.l10n.t('downloadData'),
-                                            style: GoogleFonts.manrope(
-                                              fontSize: 11,
-                                              color: AppColors.secondaryText,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            softWrap: false,
-                                          ),
-                                        ],
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              context.l10n.t('offlineMode'),
+                                              style: GoogleFonts.manrope(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w800,
+                                                color: AppColors.primaryText,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              softWrap: false,
+                                            ),
+                                            Text(
+                                              context.l10n.t('downloadData'),
+                                              style: GoogleFonts.manrope(
+                                                fontSize: 11,
+                                                color: AppColors.secondaryText,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              softWrap: false,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () => context.push('/sync'),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-                                decoration: BoxDecoration(
-                                  color: AppColors.secondaryBg,
-                                  borderRadius: BorderRadius.circular(16),
-                                  boxShadow: shadowSm,
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 40,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        color: syncState.unsyncedCount > 0
-                                            ? const Color(0xFFFFF3E0)
-                                            : AppColors.iconBgGreen,
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Icon(
-                                        syncState.unsyncedCount > 0
-                                            ? LucideIcons.circleAlert
-                                            : LucideIcons.circleCheck,
-                                        color: syncState.unsyncedCount > 0
-                                            ? AppColors.accent
-                                            : AppColors.success,
-                                        size: 22,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            context.l10n.t('sync'),
-                                            style: GoogleFonts.manrope(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w800,
-                                              color: AppColors.primaryText,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            softWrap: false,
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => context.push('/sync'),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.secondaryBg,
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: shadowSm,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 40,
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          color: syncState.unsyncedCount > 0
+                                              ? const Color(0xFFFFF3E0)
+                                              : AppColors.iconBgGreen,
+                                          borderRadius: BorderRadius.circular(
+                                            10,
                                           ),
-                                          Text(
-                                            syncState.unsyncedCount > 0
-                                                ? context.l10n.t(
-                                                    'notSyncedShort',
-                                                    args: {'count': '${syncState.unsyncedCount}'},
-                                                  )
-                                                : context.l10n.t('syncedShort'),
-                                            style: GoogleFonts.manrope(
-                                              fontSize: 11,
-                                              color: syncState.unsyncedCount > 0
-                                                  ? AppColors.accent
-                                                  : AppColors.success,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ],
+                                        ),
+                                        child: Icon(
+                                          syncState.unsyncedCount > 0
+                                              ? LucideIcons.circleAlert
+                                              : LucideIcons.circleCheck,
+                                          color: syncState.unsyncedCount > 0
+                                              ? AppColors.accent
+                                              : AppColors.success,
+                                          size: 22,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              context.l10n.t('sync'),
+                                              style: GoogleFonts.manrope(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w800,
+                                                color: AppColors.primaryText,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              softWrap: false,
+                                            ),
+                                            Text(
+                                              syncState.unsyncedCount > 0
+                                                  ? context.l10n.t(
+                                                      'notSyncedShort',
+                                                      args: {
+                                                        'count':
+                                                            '${syncState.unsyncedCount}',
+                                                      },
+                                                    )
+                                                  : context.l10n.t(
+                                                      'syncedShort',
+                                                    ),
+                                              style: GoogleFonts.manrope(
+                                                fontSize: 11,
+                                                color:
+                                                    syncState.unsyncedCount > 0
+                                                    ? AppColors.accent
+                                                    : AppColors.success,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                      ],
                     ],
                   ),
                 ),
@@ -691,9 +764,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
   }
 }
 
-
 DateTime _tryDate(String? source) {
-  if (source == null || source.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+  if (source == null || source.isEmpty) {
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
   final direct = DateTime.tryParse(source);
   if (direct != null) return direct;
   final m = RegExp(
@@ -754,7 +828,8 @@ class _RecentVisitVm {
       row['remote_id'] ?? row['visit_id'] ?? row['id'],
     );
     final responseRaw = _safeStr(row['last_push_response_json']);
-    if ((resolvedId.isEmpty || resolvedId == 'null') && responseRaw.isNotEmpty) {
+    if ((resolvedId.isEmpty || resolvedId == 'null') &&
+        responseRaw.isNotEmpty) {
       try {
         final parsed = jsonDecode(responseRaw);
         if (parsed is int) {
@@ -768,7 +843,9 @@ class _RecentVisitVm {
         }
       } catch (_) {}
       if (resolvedId.isEmpty || resolvedId == 'null') {
-        final digits = RegExp(r'\d+').allMatches(responseRaw).map((m) => m.group(0)!).toList();
+        final digits = RegExp(
+          r'\d+',
+        ).allMatches(responseRaw).map((m) => m.group(0)!).toList();
         if (digits.isNotEmpty) {
           resolvedId = digits.last;
         }
@@ -800,7 +877,10 @@ class _RecentVisitVm {
           rawMap['org_type'],
     ).toLowerCase();
     final visitTypeRaw = _safeStr(
-      row['visit_type'] ?? row['type'] ?? rawMap['visit_type'] ?? rawMap['type'],
+      row['visit_type'] ??
+          row['type'] ??
+          rawMap['visit_type'] ??
+          rawMap['type'],
       fallback: 'lpu',
     ).toLowerCase();
     final type = () {
@@ -811,7 +891,9 @@ class _RecentVisitVm {
         return 'pharmacy';
       }
       if (orgTypeId != null || orgTypeRaw.isNotEmpty) return 'lpu';
-      if (visitTypeRaw == '4' || visitTypeRaw == '3' || visitTypeRaw == 'stock') {
+      if (visitTypeRaw == '4' ||
+          visitTypeRaw == '3' ||
+          visitTypeRaw == 'stock') {
         return 'stock';
       }
       if (visitTypeRaw == '1' ||
@@ -831,17 +913,21 @@ class _RecentVisitVm {
           rawMap['pharmacist_names'],
       fallback: '—',
     );
-    final participantsCount = int.tryParse(
+    final participantsCount =
+        int.tryParse(
           _safeStr(rawMap['participants_count'] ?? rawMap['participants']),
         ) ??
         0;
     String firstDrugName = '';
     try {
-      final itemsRaw = rawMap['items'] ?? rawMap['drugs'] ?? rawMap['order_items'];
+      final itemsRaw =
+          rawMap['items'] ?? rawMap['drugs'] ?? rawMap['order_items'];
       if (itemsRaw is List && itemsRaw.isNotEmpty) {
         final first = itemsRaw.first;
         if (first is Map) {
-          firstDrugName = _safeStr(first['drug_name'] ?? first['name'] ?? first['title']);
+          firstDrugName = _safeStr(
+            first['drug_name'] ?? first['name'] ?? first['title'],
+          );
         }
       }
     } catch (_) {}
@@ -866,10 +952,24 @@ class _RecentVisitVm {
         fallback: 'Визит',
       ),
       dateLabel: () {
-        const months = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+        const months = [
+          'янв',
+          'фев',
+          'мар',
+          'апр',
+          'май',
+          'июн',
+          'июл',
+          'авг',
+          'сен',
+          'окт',
+          'ноя',
+          'дек',
+        ];
         return '${dt.day} ${months[dt.month - 1]}';
       }(),
-      timeLabel: '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
+      timeLabel:
+          '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
       statusLabel: _statusLabelFromKey(statusKey),
       statusKey: statusKey,
       type: type,
@@ -881,13 +981,17 @@ class _RecentVisitVm {
   }
 
   static String _statusKeyFromRaw(String raw) {
-    if (raw.contains('completed') || raw.contains('done') || raw.contains('провед')) {
+    if (raw.contains('completed') ||
+        raw.contains('done') ||
+        raw.contains('провед')) {
       return 'completed';
     }
     if (raw.contains('cancel') || raw.contains('отмен')) {
       return 'cancelled';
     }
-    if (raw.contains('process') || raw.contains('in_progress') || raw.contains('progress')) {
+    if (raw.contains('process') ||
+        raw.contains('in_progress') ||
+        raw.contains('progress')) {
       return 'in_progress';
     }
     if (raw == '1') return 'completed';
@@ -1035,40 +1139,40 @@ class _QuickCard extends StatelessWidget {
               width: 40,
               height: 40,
               child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: iconBg,
-                    borderRadius: BorderRadius.circular(9),
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: iconBg,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Icon(icon, color: iconColor, size: 20),
                   ),
-                  child: Icon(icon, color: iconColor, size: 20),
-                ),
-                if ((badgeCount ?? 0) > 0)
-                  Positioned(
-                    top: -4,
-                    right: -4,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFEF3340),
-                        shape: BoxShape.circle,
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        '${badgeCount!}',
-                        style: GoogleFonts.manrope(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
+                  if ((badgeCount ?? 0) > 0)
+                    Positioned(
+                      top: -4,
+                      right: -4,
+                      child: Container(
+                        width: 16,
+                        height: 16,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFEF3340),
+                          shape: BoxShape.circle,
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '${badgeCount!}',
+                          style: GoogleFonts.manrope(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
               ),
             ),
             const SizedBox(height: 8),
@@ -1158,14 +1262,18 @@ class _VisitItem extends StatelessWidget {
               decoration: BoxDecoration(
                 color: isLpu
                     ? AppColors.iconBgBlue
-                    : (isCircle ? const Color(0xFFDDF5E6) : AppColors.iconBgGreen),
+                    : (isCircle
+                          ? const Color(0xFFDDF5E6)
+                          : AppColors.iconBgGreen),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(
                 isLpu
                     ? LucideIcons.building2
                     : (isCircle ? LucideIcons.circlePlus : LucideIcons.pill),
-                color: isLpu ? AppColors.primary : (isCircle ? const Color(0xFF2AA65A) : AppColors.success),
+                color: isLpu
+                    ? AppColors.primary
+                    : (isCircle ? const Color(0xFF2AA65A) : AppColors.success),
                 size: 20,
               ),
             ),
@@ -1238,9 +1346,16 @@ class _VisitItem extends StatelessWidget {
                       children: [
                         Text(
                           '$date  ',
-                          style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText),
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
-                        const Icon(LucideIcons.users, size: 13, color: Color(0xFF2AA65A)),
+                        const Icon(
+                          LucideIcons.users,
+                          size: 13,
+                          color: Color(0xFF2AA65A),
+                        ),
                         const SizedBox(width: 3),
                         Expanded(
                           child: RichText(
@@ -1251,12 +1366,16 @@ class _VisitItem extends StatelessWidget {
                               children: [
                                 TextSpan(
                                   text: pharmacistsFio,
-                                  style: const TextStyle(color: Color(0xFF2AA65A)),
+                                  style: const TextStyle(
+                                    color: Color(0xFF2AA65A),
+                                  ),
                                 ),
                                 if (participantsCount > 0)
                                   TextSpan(
                                     text: ' ($participantsCount чел.)',
-                                    style: const TextStyle(color: Color(0xFF8390A3)),
+                                    style: const TextStyle(
+                                      color: Color(0xFF8390A3),
+                                    ),
                                   ),
                               ],
                             ),

@@ -106,17 +106,10 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
   Future<void> _loadDoctors() async {
     final db = ref.read(localDatabaseProvider);
     final ids = _allDoctorIds;
-    try {
-      final remote = await ref
-          .read(remoteApiServiceProvider)
-          .getDoctorsByOrganization(widget.orgId);
-      if (remote.isNotEmpty) {
-        await db.upsertDoctors(
-          remote.map((e) => Map<String, dynamic>.from(e)).toList(),
-        );
-      }
-    } catch (_) {}
-    final results = await db.getDoctors(orgId: widget.orgId);
+    final results = await db.getDoctors(
+      orgId: widget.orgId,
+      includeGlobalFallback: false,
+    );
     final list = results
         .map((e) => Map<String, dynamic>.from(e))
         .where((d) => ids.contains((d['id'] as num?)?.toInt()))
@@ -373,7 +366,10 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
           child: Dialog(
             backgroundColor: Colors.white,
             surfaceTintColor: Colors.white,
-            insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 40,
+              vertical: 24,
+            ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(22),
             ),
@@ -499,8 +495,11 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                   ElevatedButton(
                     onPressed: () {
                       Navigator.pop(ctx);
-                      context.pushReplacement(
-                        '/visits/lpu/detail/${widget.orgId}?name=${Uri.encodeComponent(widget.orgName)}',
+                      context.go(
+                        Uri(
+                          path: '/visits/lpu/detail/${widget.orgId}',
+                          queryParameters: {'name': widget.orgName},
+                        ).toString(),
                       );
                     },
                     style: ElevatedButton.styleFrom(
@@ -512,7 +511,9 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                   OutlinedButton(
                     onPressed: () {
                       Navigator.pop(ctx);
-                      context.go('/home?refresh=${DateTime.now().millisecondsSinceEpoch}');
+                      context.go(
+                        '/home?refresh=${DateTime.now().millisecondsSinceEpoch}',
+                      );
                     },
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 44),
@@ -585,217 +586,229 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-      backgroundColor: AppColors.primaryBg,
-      body: Column(
-        children: [
-          Container(
-            color: AppColors.primary,
-            padding: EdgeInsets.fromLTRB(
-              16,
-              MediaQuery.of(context).padding.top + 8,
-              16,
-              14,
+        backgroundColor: AppColors.primaryBg,
+        body: Column(
+          children: [
+            Container(
+              color: AppColors.primary,
+              padding: EdgeInsets.fromLTRB(
+                16,
+                MediaQuery.of(context).padding.top + 8,
+                16,
+                14,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      AppTapScale(
+                        pressedScale: 0.9,
+                        onTap: () {
+                          if (context.canPop()) {
+                            context.pop();
+                            return;
+                          }
+                          context.go(
+                            Uri(
+                              path:
+                                  '/visits/lpu/detail/${widget.orgId}/doctors',
+                              queryParameters: {'name': widget.orgName},
+                            ).toString(),
+                          );
+                        },
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.arrow_back_rounded,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.orgName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.manrope(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 17,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Row(
+                              children: [
+                                Text(
+                                  countLabel,
+                                  style: GoogleFonts.manrope(
+                                    color: Colors.white.withValues(alpha: 0.85),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                GestureDetector(
+                                  onTap: _showDoctorsDialog,
+                                  child: Icon(
+                                    Icons.info_outline_rounded,
+                                    size: 16,
+                                    color: Colors.white.withValues(alpha: 0.85),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    onChanged: (v) => setState(() => _query = v),
+                    decoration: const InputDecoration(
+                      hintText: 'Поиск препарата...',
+                      prefixIcon: Icon(Icons.search_rounded),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    AppTapScale(
-                      pressedScale: 0.9,
-                      onTap: () {
-                        if (context.canPop()) {
-                          context.pop();
-                          return;
-                        }
-                        context.go(
-                          Uri(
-                            path: '/visits/lpu/detail/${widget.orgId}/doctors',
-                            queryParameters: {'name': widget.orgName},
-                          ).toString(),
+            Expanded(
+              child: _filtered.isEmpty
+                  ? const EmptyState(
+                      icon: Icons.search_off_rounded,
+                      title: 'Ничего не найдено',
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
+                      itemCount: _filtered.length,
+                      itemBuilder: (_, i) {
+                        final d = _filtered[i];
+                        final name = d['name']!;
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: _statuses.containsKey(name)
+                                  ? const Color(0xFFEAF0FF)
+                                  : AppColors.secondaryBg,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: _statuses.containsKey(name)
+                                    ? AppColors.primary
+                                    : AppColors.border,
+                                width: _statuses.containsKey(name) ? 1.5 : 0.5,
+                              ),
+                            ),
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        name,
+                                        style: GoogleFonts.manrope(
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.primaryText,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                      Text(
+                                        d['manufacturer']!,
+                                        style: GoogleFonts.manrope(
+                                          color: AppColors.secondaryText,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Builder(
+                                  builder: (_) {
+                                    final dbRow =
+                                        _drugDbData[name.toLowerCase()];
+                                    final docsCount =
+                                        (dbRow?['documents_count'] as num?)
+                                            ?.toInt() ??
+                                        0;
+                                    final drugId = (dbRow?['id'] as num?)
+                                        ?.toInt();
+                                    final hasDoc =
+                                        docsCount > 0 && drugId != null;
+                                    return _ActionIconBox(
+                                      icon: Icons.description_outlined,
+                                      active: false,
+                                      disabled: !hasDoc,
+                                      onTap: hasDoc
+                                          ? () => context.push(
+                                              '/knowledge/drug/$drugId/materials',
+                                            )
+                                          : () {},
+                                    );
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                _ActionIconBox(
+                                  icon: Icons.assignment_outlined,
+                                  active: _statuses.containsKey(name),
+                                  onTap: () async {
+                                    final status = await showMedicalStatusSheet(
+                                      context,
+                                      drugName: name,
+                                    );
+                                    if (status == null) return;
+                                    setState(() => _statuses[name] = status);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
                         );
                       },
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.arrow_back_rounded,
-                          color: Colors.white,
-                        ),
-                      ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.orgName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.manrope(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 17,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Row(
-                            children: [
-                              Text(
-                                countLabel,
-                                style: GoogleFonts.manrope(
-                                  color: Colors.white.withValues(alpha: 0.85),
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              GestureDetector(
-                                onTap: _showDoctorsDialog,
-                                child: Icon(
-                                  Icons.info_outline_rounded,
-                                  size: 16,
-                                  color: Colors.white.withValues(alpha: 0.85),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  onChanged: (v) => setState(() => _query = v),
-                  decoration: const InputDecoration(
-                    hintText: 'Поиск препарата...',
-                    prefixIcon: Icon(Icons.search_rounded),
-                    filled: true,
-                    fillColor: Colors.white,
-                  ),
-                ),
-              ],
+            ),
+          ],
+        ),
+        bottomNavigationBar: Container(
+          color: AppColors.secondaryBg,
+          padding: EdgeInsets.fromLTRB(
+            12,
+            8,
+            12,
+            MediaQuery.of(context).padding.bottom + 8,
+          ),
+          child: AppTapScale(
+            pressedScale: 0.97,
+            onTap: (canFinish && !_actionLocked) ? _finishVisit : null,
+            child: ElevatedButton(
+              onPressed: null,
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 44),
+                disabledBackgroundColor: (canFinish && !_actionLocked)
+                    ? AppColors.primary
+                    : AppColors.primary.withValues(alpha: 0.4),
+                disabledForegroundColor: Colors.white,
+              ),
+              child: const Text('Завершить визит'),
             ),
           ),
-          Expanded(
-            child: _filtered.isEmpty
-                ? const EmptyState(
-                    icon: Icons.search_off_rounded,
-                    title: 'Ничего не найдено',
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
-                    itemCount: _filtered.length,
-                    itemBuilder: (_, i) {
-                      final d = _filtered[i];
-                      final name = d['name']!;
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: _statuses.containsKey(name)
-                                ? const Color(0xFFEAF0FF)
-                                : AppColors.secondaryBg,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: _statuses.containsKey(name)
-                                  ? AppColors.primary
-                                  : AppColors.border,
-                              width: _statuses.containsKey(name) ? 1.5 : 0.5,
-                            ),
-                          ),
-                          padding: const EdgeInsets.all(12),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      name,
-                                      style: GoogleFonts.manrope(
-                                        fontWeight: FontWeight.w600,
-                                        color: AppColors.primaryText,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                    Text(
-                                      d['manufacturer']!,
-                                      style: GoogleFonts.manrope(
-                                        color: AppColors.secondaryText,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Builder(builder: (_) {
-                                final dbRow = _drugDbData[name.toLowerCase()];
-                                final docsCount = (dbRow?['documents_count'] as num?)?.toInt() ?? 0;
-                                final drugId = (dbRow?['id'] as num?)?.toInt();
-                                final hasDoc = docsCount > 0 && drugId != null;
-                                return _ActionIconBox(
-                                  icon: Icons.description_outlined,
-                                  active: false,
-                                  disabled: !hasDoc,
-                                  onTap: hasDoc
-                                      ? () => context.push('/knowledge/drug/$drugId/materials')
-                                      : () {},
-                                );
-                              }),
-                              const SizedBox(width: 8),
-                              _ActionIconBox(
-                                icon: Icons.assignment_outlined,
-                                active: _statuses.containsKey(name),
-                                onTap: () async {
-                                  final status = await showMedicalStatusSheet(
-                                    context,
-                                    drugName: name,
-                                  );
-                                  if (status == null) return;
-                                  setState(() => _statuses[name] = status);
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: Container(
-        color: AppColors.secondaryBg,
-        padding: EdgeInsets.fromLTRB(
-          12,
-          8,
-          12,
-          MediaQuery.of(context).padding.bottom + 8,
         ),
-        child: AppTapScale(
-          pressedScale: 0.97,
-          onTap: (canFinish && !_actionLocked) ? _finishVisit : null,
-          child: ElevatedButton(
-            onPressed: null,
-            style: ElevatedButton.styleFrom(
-              minimumSize: const Size(double.infinity, 44),
-              disabledBackgroundColor: (canFinish && !_actionLocked)
-                  ? AppColors.primary
-                  : AppColors.primary.withValues(alpha: 0.4),
-              disabledForegroundColor: Colors.white,
-            ),
-            child: const Text('Завершить визит'),
-          ),
-        ),
-      ),
       ),
     );
   }
@@ -1164,8 +1177,8 @@ class _ActionIconBox extends StatelessWidget {
           color: disabled
               ? AppColors.primaryBg
               : active
-                  ? AppColors.iconBgBlue
-                  : AppColors.primaryBg,
+              ? AppColors.iconBgBlue
+              : AppColors.primaryBg,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(
@@ -1174,8 +1187,8 @@ class _ActionIconBox extends StatelessWidget {
           color: disabled
               ? AppColors.hintText.withValues(alpha: 0.35)
               : active
-                  ? AppColors.primary
-                  : AppColors.secondaryText,
+              ? AppColors.primary
+              : AppColors.secondaryText,
         ),
       ),
     );

@@ -156,8 +156,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       });
       await ref
           .read(syncProvider.notifier)
-          .pullFromRemote()
-          .timeout(const Duration(seconds: 30));
+          .pullFromRemote(includeDoctors: false, repairDoctors: false)
+          .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () {
+              debugPrint('[SPLASH] quick sync timeout -> continue to app');
+            },
+          );
       debugPrint('[SPLASH] sync done');
       await Future.delayed(const Duration(milliseconds: 300));
 
@@ -213,9 +218,21 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     await Future.delayed(const Duration(milliseconds: 300));
     debugPrint('[SPLASH] navigating to /home');
     if (!mounted) return;
+    _startBackgroundDoctorSync();
     context.go('/home');
     debugPrint('[SPLASH] DONE');
     _loading = false;
+  }
+
+  void _startBackgroundDoctorSync() {
+    final sync = ref.read(syncProvider.notifier);
+    Future<void>.delayed(const Duration(seconds: 2), () async {
+      try {
+        await sync.pullFromRemote();
+      } catch (_) {
+        // Background sync should never block app entry.
+      }
+    });
   }
 
   Future<bool> _checkOnline() async {

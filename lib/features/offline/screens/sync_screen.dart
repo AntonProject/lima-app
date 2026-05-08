@@ -129,9 +129,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: jsonText));
               if (!ctx.mounted) return;
-              ScaffoldMessenger.of(ctx).showSnackBar(
-                const SnackBar(content: Text('JSON скопирован')),
-              );
+              ScaffoldMessenger.of(
+                ctx,
+              ).showSnackBar(const SnackBar(content: Text('JSON скопирован')));
             },
             child: const Text('Копировать'),
           ),
@@ -216,9 +216,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
           'visit_status': m['visit_status'],
           'order_status': m['order_status'],
           'order_status_name': m['order_status_name'],
-          'org_type_id': m['organization_type_id'] ??
-              (org is Map ? org['type_id'] : null),
-          'organization_name': m['organization_name'] ??
+          'org_type_id':
+              m['organization_type_id'] ?? (org is Map ? org['type_id'] : null),
+          'organization_name':
+              m['organization_name'] ??
               (org is Map ? org['organization_name'] : null),
           'prepayment_percent': m['prepayment_percent'],
           'is_wholesaler': m['is_wholesaler'],
@@ -236,10 +237,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         'rows': compact,
       };
     } catch (e) {
-      checks['last_10_orders'] = {
-        'ok': false,
-        'error': '$e',
-      };
+      checks['last_10_orders'] = {'ok': false, 'error': '$e'};
     }
 
     Future<Map<String, dynamic>> probeHistoryPath(String path) async {
@@ -264,50 +262,46 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             }
           }
         }
-        final summary = rows
-            .whereType<Map>()
-            .take(5)
-            .map((e) {
-              final m = Map<String, dynamic>.from(e);
-              final items = m['items'];
-              final org = m['organization'];
-              final visitType = (m['visit_type'] ?? '').toString();
-              final orgTypeId =
-                  m['organization_type_id'] ??
-                  m['org_type_id'] ??
-                  (org is Map ? org['type_id'] : null);
-              final orderStatus = m['order_status'];
-              final hasItems = items is List && items.isNotEmpty;
-              final normalizedGuess = () {
-                if (visitType == '4') return 'stock';
-                if (visitType == '1' && orgTypeId == 1) {
-                  return 'pharmacy_order';
-                }
-                if (visitType == '2') return 'lpu_presentation';
-                if (hasItems || orderStatus == 1) return 'pharmacy_order';
-                return 'unknown';
-              }();
-              return <String, dynamic>{
-                'id': m['id'] ?? m['visit_id'],
-                'visit_type': m['visit_type'],
-                'visit_type_name': m['visit_type_name'],
-                'visit_format_name': m['visit_format_name'],
-                'organization_type_id': orgTypeId,
-                'organization_name':
-                    m['organization_name'] ??
-                        m['org_name'] ??
-                        (org is Map ? org['name'] : null),
-                'doctor_id': m['doctor_id'],
-                'doctor_name': m['doctor_name'],
-                'items_count': items is List ? items.length : 0,
-                'has_items': hasItems,
-                'prepayment': m['prepayment'],
-                'buyer_type': m['buyer_type'],
-                'order_status': orderStatus ?? m['order_status_name'],
-                'normalized_guess': normalizedGuess,
-              };
-            })
-            .toList();
+        final summary = rows.whereType<Map>().take(5).map((e) {
+          final m = Map<String, dynamic>.from(e);
+          final items = m['items'];
+          final org = m['organization'];
+          final visitType = (m['visit_type'] ?? '').toString();
+          final orgTypeId =
+              m['organization_type_id'] ??
+              m['org_type_id'] ??
+              (org is Map ? org['type_id'] : null);
+          final orderStatus = m['order_status'];
+          final hasItems = items is List && items.isNotEmpty;
+          final normalizedGuess = () {
+            if (visitType == '4') return 'stock';
+            if (visitType == '1' && orgTypeId == 1) {
+              return 'pharmacy_order';
+            }
+            if (visitType == '2') return 'lpu_presentation';
+            if (hasItems || orderStatus == 1) return 'pharmacy_order';
+            return 'unknown';
+          }();
+          return <String, dynamic>{
+            'id': m['id'] ?? m['visit_id'],
+            'visit_type': m['visit_type'],
+            'visit_type_name': m['visit_type_name'],
+            'visit_format_name': m['visit_format_name'],
+            'organization_type_id': orgTypeId,
+            'organization_name':
+                m['organization_name'] ??
+                m['org_name'] ??
+                (org is Map ? org['name'] : null),
+            'doctor_id': m['doctor_id'],
+            'doctor_name': m['doctor_name'],
+            'items_count': items is List ? items.length : 0,
+            'has_items': hasItems,
+            'prepayment': m['prepayment'],
+            'buyer_type': m['buyer_type'],
+            'order_status': orderStatus ?? m['order_status_name'],
+            'normalized_guess': normalizedGuess,
+          };
+        }).toList();
         return {
           'ok': true,
           'status': resp.statusCode,
@@ -353,7 +347,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     try {
       remnantRaw.addAll(await api.getVisitHistoryRemnant());
       remnantSw.stop();
-    checks['getVisitHistoryRemnant'] = {
+      checks['getVisitHistoryRemnant'] = {
         'ok': true,
         'elapsed_ms': remnantSw.elapsedMilliseconds,
         'count': remnantRaw.length,
@@ -408,7 +402,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .where((m) {
-              final id = (m['id'] as num?)?.toInt() ??
+              final id =
+                  (m['id'] as num?)?.toInt() ??
                   (m['visit_id'] as num?)?.toInt();
               return id != null && focusIds.contains(id);
             })
@@ -416,7 +411,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
               final org = m['organization'];
               final drugs = m['drugs'];
               return {
-                'id': (m['id'] as num?)?.toInt() ??
+                'id':
+                    (m['id'] as num?)?.toInt() ??
                     (m['visit_id'] as num?)?.toInt(),
                 'visit_type': m['visit_type'],
                 'order_status': m['order_status'],
@@ -446,17 +442,20 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             final rid = (r['remote_id'] as num?)?.toInt();
             return rid != null && focusIds.contains(rid);
           })
-          .map((r) => {
-                'id': r['id'],
-                'remote_id': r['remote_id'],
-                'visit_type': r['visit_type'],
-                'status': r['status'],
-                'created_at': r['created_at'],
-                'last_push_request_json': r['last_push_request_json'],
-                'last_push_response_json': r['last_push_response_json'],
-              })
+          .map(
+            (r) => {
+              'id': r['id'],
+              'remote_id': r['remote_id'],
+              'visit_type': r['visit_type'],
+              'status': r['status'],
+              'created_at': r['created_at'],
+              'last_push_request_json': r['last_push_request_json'],
+              'last_push_response_json': r['last_push_response_json'],
+            },
+          )
           .toList();
-      checks['focus_local_push_payload_51589_51591_51595_51597_51598'] = localFocus;
+      checks['focus_local_push_payload_51589_51591_51595_51597_51598'] =
+          localFocus;
     } catch (e) {
       checks['focus_local_push_payload_51589_51591_51595_51597_51598'] = {
         'ok': false,
@@ -479,7 +478,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 4,
             offset: const Offset(0, 1),
           ),
@@ -502,8 +501,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   ),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: isSynced
                         ? Colors.green.withOpacity(0.1)
@@ -526,8 +527,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
               children: [
                 if (visit['visit_type'] != null) ...[
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.primary.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(6),
@@ -569,10 +572,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             const SizedBox(height: 4),
             Text(
               _formatDateTime(visit['created_at']?.toString()),
-              style: GoogleFonts.manrope(
-                fontSize: 11,
-                color: Colors.grey[500],
-              ),
+              style: GoogleFonts.manrope(fontSize: 11, color: Colors.grey[500]),
             ),
           ],
         ),
@@ -592,14 +592,24 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     if (isDelta) title = 'Итог дельта-синхронизации';
     if (mode == 'full_refresh') title = 'Итог full refresh';
 
-    final fetchedOrg = (debug['delta_organizations_count'] ??
-            debug['fetched_organizations_count'])
+    final fetchedOrg =
+        (debug['delta_organizations_count'] ??
+                debug['fetched_organizations_count'])
+            ?.toString();
+    final fetchedLpu = (debug['delta_lpu_count'] ?? debug['fetched_lpu_count'])
         ?.toString();
+    final fetchedPharmacy =
+        (debug['delta_pharmacy_count'] ?? debug['fetched_pharmacy_count'])
+            ?.toString();
+    final fetchedDistributor =
+        (debug['delta_distributor_count'] ?? debug['fetched_distributor_count'])
+            ?.toString();
     final fetchedDoctors =
         (debug['delta_doctors_count'] ?? debug['fetched_doctors_count'])
             ?.toString();
     final fetchedDrugs =
-        (debug['delta_drugs_count'] ?? debug['fetched_drugs_count'])?.toString();
+        (debug['delta_drugs_count'] ?? debug['fetched_drugs_count'])
+            ?.toString();
     final fetchedVisits =
         (debug['delta_visits_count'] ??
                 debug['fetched_visits_count'] ??
@@ -612,6 +622,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             ?.toString();
 
     final localOrg = debug['local_organizations_total']?.toString() ?? '—';
+    final localLpu = debug['local_lpu_total']?.toString();
+    final localPharmacy = debug['local_pharmacy_total']?.toString();
+    final localDistributor = debug['local_distributor_total']?.toString();
     final localDoctors = debug['local_doctors_total']?.toString() ?? '—';
     final localDrugs = debug['local_drugs_total']?.toString() ?? '—';
 
@@ -624,7 +637,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 4,
             offset: const Offset(0, 1),
           ),
@@ -644,13 +657,29 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
           const SizedBox(height: 8),
           if (isDelta || isFull) ...[
             Text(
-              'Получено с API: ЛПУ $fetchedOrg, врачи $fetchedDoctors, препараты $fetchedDrugs, визиты ${fetchedVisits ?? "—"}, материалы ${fetchedMaterials ?? "—"}',
+              'Получено с API: организации ${fetchedOrg ?? "—"}'
+              '${fetchedLpu == null ? "" : ", ЛПУ $fetchedLpu"}'
+              '${fetchedPharmacy == null ? "" : ", аптеки $fetchedPharmacy"}'
+              '${fetchedDistributor == null ? "" : ", дистрибьюторы $fetchedDistributor"}',
+              style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[700]),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Данные: врачи $fetchedDoctors, препараты $fetchedDrugs, визиты ${fetchedVisits ?? "—"}, материалы ${fetchedMaterials ?? "—"}',
               style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[700]),
             ),
             const SizedBox(height: 4),
           ],
           Text(
-            'Локально сейчас: ЛПУ $localOrg, врачи $localDoctors, препараты $localDrugs',
+            'Локально сейчас: организации $localOrg'
+            '${localLpu == null ? "" : ", ЛПУ $localLpu"}'
+            '${localPharmacy == null ? "" : ", аптеки $localPharmacy"}'
+            '${localDistributor == null ? "" : ", дистрибьюторы $localDistributor"}',
+            style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[800]),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Локальные данные: врачи $localDoctors, препараты $localDrugs',
             style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[800]),
           ),
           if (isDelta && (beforeSyncId != null || afterSyncId != null)) ...[
@@ -665,9 +694,75 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
+  Widget _buildSyncProgressCard(SyncState syncState) {
+    final current = syncState.progressCurrent;
+    final total = syncState.progressTotal;
+    final hasProgress = current != null && total != null && total > 0;
+    final value = hasProgress ? (current / total).clamp(0.0, 1.0) : null;
+    final label = syncState.message ?? 'Синхронизация выполняется…';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.4),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (hasProgress)
+                Text(
+                  '$current/$total',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey[700],
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          LinearProgressIndicator(value: value),
+          const SizedBox(height: 8),
+          Text(
+            hasProgress
+                ? 'Не закрывайте приложение до завершения загрузки.'
+                : 'Подождите, идет обмен с сервером.',
+            style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[600]),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final syncState = ref.watch(syncProvider);
+    final isSyncLoading = syncState.status == SyncStatus.loading;
 
     String? lastSyncTime;
     if (syncState.lastSyncAt != null) {
@@ -687,8 +782,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             child: SafeArea(
               bottom: false,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   boxShadow: [
@@ -745,6 +839,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                 // Section: СТАТУС
                 SectionLabel(text: 'СТАТУС'),
                 const SizedBox(height: 8),
+                if (isSyncLoading) ...[
+                  _buildSyncProgressCard(syncState),
+                  const SizedBox(height: 12),
+                ],
                 Container(
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -780,7 +878,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                     trailing: syncState.unsyncedCount > 0
                         ? Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.orange,
                               borderRadius: BorderRadius.circular(12),
@@ -799,7 +899,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                if (_pendingDoctors.isNotEmpty || _pendingOrgUpdates.isNotEmpty) ...[
+                if (_pendingDoctors.isNotEmpty ||
+                    _pendingOrgUpdates.isNotEmpty) ...[
                   SectionLabel(text: 'ОЧЕРЕДЬ ИЗМЕНЕНИЙ'),
                   const SizedBox(height: 8),
                   Container(
@@ -818,53 +919,84 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                       children: [
                         if (_pendingDoctors.isNotEmpty)
                           ListTile(
-                            leading: const Icon(Icons.person_add, color: Colors.orange),
+                            leading: const Icon(
+                              Icons.person_add,
+                              color: Colors.orange,
+                            ),
                             title: Text(
                               'Новые врачи',
-                              style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w500),
+                              style: GoogleFonts.manrope(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                             subtitle: Text(
-                              _pendingDoctors.map((d) => d['full_name'] as String? ?? '—').join(', '),
+                              _pendingDoctors
+                                  .map((d) => d['full_name'] as String? ?? '—')
+                                  .join(', '),
                               style: GoogleFonts.manrope(fontSize: 12),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
                             trailing: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.orange,
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
                                 '${_pendingDoctors.length}',
-                                style: GoogleFonts.manrope(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                                style: GoogleFonts.manrope(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),
-                        if (_pendingDoctors.isNotEmpty && _pendingOrgUpdates.isNotEmpty)
+                        if (_pendingDoctors.isNotEmpty &&
+                            _pendingOrgUpdates.isNotEmpty)
                           const Divider(height: 1, indent: 16),
                         if (_pendingOrgUpdates.isNotEmpty)
                           ListTile(
-                            leading: const Icon(Icons.business, color: Colors.orange),
+                            leading: const Icon(
+                              Icons.business,
+                              color: Colors.orange,
+                            ),
                             title: Text(
                               'Изменения организаций',
-                              style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w500),
+                              style: GoogleFonts.manrope(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                             subtitle: Text(
-                              _pendingOrgUpdates.map((o) => o['name'] as String? ?? '—').join(', '),
+                              _pendingOrgUpdates
+                                  .map((o) => o['name'] as String? ?? '—')
+                                  .join(', '),
                               style: GoogleFonts.manrope(fontSize: 12),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
                             trailing: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.orange,
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
                                 '${_pendingOrgUpdates.length}',
-                                style: GoogleFonts.manrope(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                                style: GoogleFonts.manrope(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),
@@ -899,8 +1031,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   child: Column(
                     children: [
                       ListTile(
-                        leading: const Icon(Icons.cloud_download,
-                            color: Colors.blue),
+                        leading: const Icon(
+                          Icons.cloud_download,
+                          color: Colors.blue,
+                        ),
                         title: Text(
                           'Загрузить с сервера',
                           style: GoogleFonts.manrope(
@@ -909,45 +1043,62 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                           ),
                         ),
                         subtitle: Text(
-                          'Перезаписать локальные данные из API',
+                          isSyncLoading
+                              ? (syncState.message ?? 'Загрузка выполняется…')
+                              : 'Перезаписать локальные данные из API',
                           style: GoogleFonts.manrope(fontSize: 12),
                         ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () async {
-                          if (!mounted) return;
-                          final notifier = ref.read(syncProvider.notifier);
-                          try {
-                            await notifier.pullFromRemote();
-                          } catch (e) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Ошибка загрузки: $e'),
-                              ),
-                            );
-                            return;
-                          }
-                          await _loadData();
-                          if (!mounted) return;
-                          final latest = ref.read(syncProvider);
-                          if (latest.lastGetDebug != null && mounted) {
-                            await _showJsonDialog(
-                              title: 'GET sync response',
-                              payload: latest.lastGetDebug!,
-                            );
-                          }
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text('Данные загружены')),
-                            );
-                          }
-                        },
+                        trailing: isSyncLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.chevron_right),
+                        onTap: isSyncLoading
+                            ? null
+                            : () async {
+                                if (!mounted) return;
+                                final notifier = ref.read(
+                                  syncProvider.notifier,
+                                );
+                                try {
+                                  await notifier.pullFromRemote();
+                                } catch (e) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Ошибка загрузки: $e'),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                await _loadData();
+                                if (!mounted) return;
+                                final latest = ref.read(syncProvider);
+                                if (latest.lastGetDebug != null && mounted) {
+                                  await _showJsonDialog(
+                                    title: 'GET sync response',
+                                    payload: latest.lastGetDebug!,
+                                  );
+                                }
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Данные загружены'),
+                                    ),
+                                  );
+                                }
+                              },
                       ),
                       const Divider(height: 1),
                       ListTile(
-                        leading: const Icon(Icons.restart_alt_rounded,
-                            color: Colors.deepPurple),
+                        leading: const Icon(
+                          Icons.restart_alt_rounded,
+                          color: Colors.deepPurple,
+                        ),
                         title: Text(
                           'Принудительный full refresh',
                           style: GoogleFonts.manrope(
@@ -956,67 +1107,90 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                           ),
                         ),
                         subtitle: Text(
-                          'Полностью обновить локальный снапшот из API',
+                          isSyncLoading
+                              ? (syncState.message ??
+                                    'Full refresh выполняется…')
+                              : 'Полностью обновить локальный снапшот из API',
                           style: GoogleFonts.manrope(fontSize: 12),
                         ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () async {
-                          final confirmed = await showDialog<bool>(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: const Text('Подтвердите full refresh'),
-                              content: const Text(
-                                'Будет выполнено полное обновление локальной БД из API. '
-                                'Несинхронизированные визиты будут сохранены.',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(ctx, false),
-                                  child: const Text('Отмена'),
+                        trailing: isSyncLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
                                 ),
-                                ElevatedButton(
-                                  onPressed: () => Navigator.pop(ctx, true),
-                                  child: const Text('Обновить'),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (confirmed != true) return;
-                          if (!mounted) return;
-                          final notifier = ref.read(syncProvider.notifier);
-                          try {
-                            await notifier.pullFromRemote(fullRefresh: true);
-                          } catch (e) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Ошибка full refresh: $e'),
-                              ),
-                            );
-                            return;
-                          }
-                          await _loadData();
-                          if (!mounted) return;
-                          final latest = ref.read(syncProvider);
-                          if (latest.lastGetDebug != null && mounted) {
-                            await _showJsonDialog(
-                              title: 'GET sync response',
-                              payload: latest.lastGetDebug!,
-                            );
-                          }
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Выполнен full refresh'),
-                              ),
-                            );
-                          }
-                        },
+                              )
+                            : const Icon(Icons.chevron_right),
+                        onTap: isSyncLoading
+                            ? null
+                            : () async {
+                                final confirmed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text(
+                                      'Подтвердите full refresh',
+                                    ),
+                                    content: const Text(
+                                      'Будет выполнено полное обновление локальной БД из API. '
+                                      'Несинхронизированные визиты будут сохранены.',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, false),
+                                        child: const Text('Отмена'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, true),
+                                        child: const Text('Обновить'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed != true) return;
+                                if (!mounted) return;
+                                final notifier = ref.read(
+                                  syncProvider.notifier,
+                                );
+                                try {
+                                  await notifier.pullFromRemote(
+                                    fullRefresh: true,
+                                  );
+                                } catch (e) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Ошибка full refresh: $e'),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                await _loadData();
+                                if (!mounted) return;
+                                final latest = ref.read(syncProvider);
+                                if (latest.lastGetDebug != null && mounted) {
+                                  await _showJsonDialog(
+                                    title: 'GET sync response',
+                                    payload: latest.lastGetDebug!,
+                                  );
+                                }
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Выполнен full refresh'),
+                                    ),
+                                  );
+                                }
+                              },
                       ),
                       const Divider(height: 1),
                       ListTile(
-                        leading: const Icon(Icons.cloud_upload,
-                            color: Colors.green),
+                        leading: const Icon(
+                          Icons.cloud_upload,
+                          color: Colors.green,
+                        ),
                         title: Text(
                           'Отправить на сервер',
                           style: GoogleFonts.manrope(
@@ -1046,8 +1220,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
-                                  latest.message ??
-                                      'Синхронизация завершена',
+                                  latest.message ?? 'Синхронизация завершена',
                                 ),
                               ),
                             );
@@ -1079,10 +1252,14 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                             ? const SizedBox(
                                 width: 20,
                                 height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.chevron_right),
-                        onTap: _runningApiDiagnostics ? null : _runApiDiagnostics,
+                        onTap: _runningApiDiagnostics
+                            ? null
+                            : _runApiDiagnostics,
                       ),
                     ],
                   ),

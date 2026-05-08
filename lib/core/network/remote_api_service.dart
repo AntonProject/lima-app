@@ -65,42 +65,75 @@ class RemoteApiService {
     return _extractMap(response.data);
   }
 
-  Future<RemoteSeedBundle> fetchOfflineSeed() async {
+  Future<RemoteSeedBundle> fetchOfflineSeed({
+    int? regionId,
+    bool includeDoctors = true,
+    void Function(String message, {int? current, int? total})? onProgress,
+  }) async {
+    onProgress?.call('Загружаем организации…');
     final orgsRaw = await _getList(
       '/api/dict/Organizations',
-      queryParameters: {'_no_limit': true},
+      queryParameters: {'_no_limit': true, 'region_id': ?regionId},
     );
-    final doctorsRaw = await _getList(
-      '/api/dict/Doctors',
-      queryParameters: {'_no_limit': true},
-    );
-
     final orgs = orgsRaw
         .map(_mapOrg)
         .whereType<Map<String, dynamic>>()
         .toList();
-    final doctors = doctorsRaw
-        .map(_mapDoctor)
-        .whereType<Map<String, dynamic>>()
-        .toList();
+    final orgIds = orgs
+        .map((e) => (e['id'] as num?)?.toInt())
+        .whereType<int>()
+        .toSet();
+    var doctorOrgLinks = <Map<String, dynamic>>[];
+    var scopedDoctors = <Map<String, dynamic>>[];
+    if (includeDoctors) {
+      final relationRows = await getDoctorOrganisationRelations(syncId: 0);
+      doctorOrgLinks = relationRows.where((row) {
+        final orgId = (row['organisation_id'] as num?)?.toInt();
+        return orgId != null && (regionId == null || orgIds.contains(orgId));
+      }).toList();
+      final scopedDoctorIds = doctorOrgLinks
+          .map((e) => (e['doctor_id'] as num?)?.toInt())
+          .whereType<int>()
+          .toSet();
+      final doctors = await getDoctorsDictionary(
+        regionId: regionId,
+        onPage: (current, total, loaded) {
+          onProgress?.call(
+            'Загружаем врачей: $loaded записей, страница $current из ${total ?? '…'}',
+            current: current,
+            total: total,
+          );
+        },
+      );
+      scopedDoctors = doctors.where((row) {
+        if (regionId == null) return true;
+        final doctorId = (row['id'] as num?)?.toInt();
+        return doctorId != null && scopedDoctorIds.contains(doctorId);
+      }).toList();
+    }
 
+    onProgress?.call('Загружаем препараты и материалы…');
     // Use the stock price-list endpoint so drugs have real price/stock data.
     final stockDrugs = await getStockPriceListDrugs();
     // Use the bulk Documents endpoint to get all materials + counts efficiently.
     final docsResult = await getDrugDocuments();
 
     final now = DateTime.now().toIso8601String();
-    final drugs = stockDrugs.map((d) => <String, dynamic>{
-      'id': d.id,
-      'name': d.name,
-      'manufacturer': d.manufacturer,
-      'price': d.price,
-      'serial_number': d.serialNumber ?? '',
-      'expiry_date': d.expiryDate ?? '',
-      'stock': d.stock ?? 0,
-      'documents_count': docsResult.counts[d.id] ?? 0,
-      'updated_at': now,
-    }).toList();
+    final drugs = stockDrugs
+        .map(
+          (d) => <String, dynamic>{
+            'id': d.id,
+            'name': d.name,
+            'manufacturer': d.manufacturer,
+            'price': d.price,
+            'serial_number': d.serialNumber ?? '',
+            'expiry_date': d.expiryDate ?? '',
+            'stock': d.stock ?? 0,
+            'documents_count': docsResult.counts[d.id] ?? 0,
+            'updated_at': now,
+          },
+        )
+        .toList();
 
     // ── Visit history (all types) ──────────────────────────────────────────
     final allVisitsRaw = <dynamic>[];
@@ -111,10 +144,7 @@ class RemoteApiService {
     ]) {
       try {
         allVisitsRaw.addAll(
-          await _getList(
-            endpoint,
-            queryParameters: {'_no_limit': true},
-          ),
+          await _getList(endpoint, queryParameters: {'_no_limit': true}),
         );
       } catch (_) {
         try {
@@ -180,11 +210,15 @@ class RemoteApiService {
     final dayTypesRaw = <Map<String, dynamic>>[];
     try {
       final dts = await getDayTypes();
-      dayTypesRaw.addAll(dts.map((e) => {
-        'id': e['id'],
-        'name': e['name'] ?? e['title'] ?? '${e['id']}',
-        'raw_json': jsonEncode(e),
-      }));
+      dayTypesRaw.addAll(
+        dts.map(
+          (e) => {
+            'id': e['id'],
+            'name': e['name'] ?? e['title'] ?? '${e['id']}',
+            'raw_json': jsonEncode(e),
+          },
+        ),
+      );
     } catch (_) {}
 
     // ── Daily stats ────────────────────────────────────────────────────────
@@ -195,7 +229,8 @@ class RemoteApiService {
 
     return RemoteSeedBundle(
       orgs: orgs,
-      doctors: doctors,
+      doctors: scopedDoctors,
+      doctorOrgLinks: doctorOrgLinks,
       drugs: drugs,
       materials: docsResult.materials,
       visits: visits,
@@ -217,12 +252,17 @@ class RemoteApiService {
     );
     if (id == null || orgName == null || orgName.isEmpty) return null;
 
-    final orgTypeRaw = _toString(m['organization_type'] ?? m['org_type'])?.toLowerCase();
+    final orgTypeRaw = _toString(
+      m['organization_type'] ?? m['org_type'],
+    )?.toLowerCase();
     final orgTypeId = _toInt(m['organization_type_id'] ?? m['type_id']);
-    final orgType = (orgTypeId == 1 || orgTypeRaw == 'pharmacy') ? 'pharmacy' : 'lpu';
+    final orgType = (orgTypeId == 1 || orgTypeRaw == 'pharmacy')
+        ? 'pharmacy'
+        : 'lpu';
 
     final dateRaw = _toString(m['date'] ?? m['start_date'] ?? m['visit_date']);
-    final date = (dateRaw != null ? DateTime.tryParse(dateRaw) : null) ?? DateTime.now();
+    final date =
+        (dateRaw != null ? DateTime.tryParse(dateRaw) : null) ?? DateTime.now();
 
     return {
       'remote_id': id,
@@ -433,7 +473,10 @@ class RemoteApiService {
       ]);
       return rows.map(_mapOrg).whereType<Map<String, dynamic>>().toList();
     } catch (_) {
-      final all = await _getList('/api/dict/Organizations', queryParameters: {'_no_limit': true});
+      final all = await _getList(
+        '/api/dict/Organizations',
+        queryParameters: {'_no_limit': true},
+      );
       return all
           .map(_mapOrg)
           .whereType<Map<String, dynamic>>()
@@ -586,25 +629,52 @@ class RemoteApiService {
   Future<List<Map<String, dynamic>>> getDoctorsByOrganization(
     int organizationId,
   ) async {
-    final endpoints = <({String path, Map<String, dynamic>? query})>[
-      (path: '/api/dict/Organizations/$organizationId/doctors', query: null),
-      (path: '/dict/Organizations/$organizationId/doctors', query: null),
-      (
-        path: '/api/dict/Doctors',
-        query: {
-          'organization_id': [organizationId],
-          '_no_limit': true,
-        },
-      ),
-      (
-        path: '/api/dict/Doctors',
-        query: {'organization_id': organizationId, '_no_limit': true},
-      ),
-      (path: '/doctors/by-organization/$organizationId', query: null),
-      (path: '/Doctors/by-organization/$organizationId', query: null),
-      (path: '/api/doctors/by-organization/$organizationId', query: null),
-      (path: '/api/Doctors/by-organization/$organizationId', query: null),
-    ];
+    final endpoints =
+        <({String path, Map<String, dynamic>? query, bool scopedPath})>[
+          (
+            path: '/api/dict/Organizations/$organizationId/doctors',
+            query: null,
+            scopedPath: true,
+          ),
+          (
+            path: '/dict/Organizations/$organizationId/doctors',
+            query: null,
+            scopedPath: true,
+          ),
+          (
+            path: '/api/dict/Doctors',
+            query: {
+              'organization_id': [organizationId],
+              '_no_limit': true,
+            },
+            scopedPath: false,
+          ),
+          (
+            path: '/api/dict/Doctors',
+            query: {'organization_id': organizationId, '_no_limit': true},
+            scopedPath: false,
+          ),
+          (
+            path: '/doctors/by-organization/$organizationId',
+            query: null,
+            scopedPath: true,
+          ),
+          (
+            path: '/Doctors/by-organization/$organizationId',
+            query: null,
+            scopedPath: true,
+          ),
+          (
+            path: '/api/doctors/by-organization/$organizationId',
+            query: null,
+            scopedPath: true,
+          ),
+          (
+            path: '/api/Doctors/by-organization/$organizationId',
+            query: null,
+            scopedPath: true,
+          ),
+        ];
     Object? lastError;
     for (final e in endpoints) {
       try {
@@ -613,7 +683,22 @@ class RemoteApiService {
             .map(_mapDoctor)
             .whereType<Map<String, dynamic>>()
             .toList();
-        if (mapped.isNotEmpty) return mapped;
+        final filtered = e.scopedPath
+            ? mapped.map((row) {
+                final doctor = Map<String, dynamic>.from(row);
+                if (((doctor['organisation_id'] as num?)?.toInt() ?? 0) == 0) {
+                  doctor['organisation_id'] = organizationId;
+                }
+                return doctor;
+              }).toList()
+            : mapped
+                  .where(
+                    (row) =>
+                        (row['organisation_id'] as num?)?.toInt() ==
+                        organizationId,
+                  )
+                  .toList();
+        if (filtered.isNotEmpty) return filtered;
       } catch (err) {
         lastError = err;
       }
@@ -900,12 +985,50 @@ class RemoteApiService {
       );
       return rows.map(_mapDoctor).whereType<Map<String, dynamic>>().toList();
     } catch (_) {
-      final rows = await _getList(
-        '/api/dict/Doctors',
-        queryParameters: {'_no_limit': true},
-      );
-      return rows.map(_mapDoctor).whereType<Map<String, dynamic>>().toList();
+      if (syncId != null) rethrow;
+      return getDoctorsDictionary();
     }
+  }
+
+  Future<List<Map<String, dynamic>>> getDoctorsDictionary({
+    int? regionId,
+    void Function(int currentPage, int? totalPages, int loadedCount)? onPage,
+  }) async {
+    final rows = await _getListAnyPaged(
+      ['/api/dict/Doctors', '/dict/Doctors'],
+      queryParameters: {'region_id': ?regionId},
+      onPage: onPage,
+    );
+    return rows.map(_mapDoctor).whereType<Map<String, dynamic>>().toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getDoctorOrganisationRelations({
+    int? syncId,
+  }) async {
+    final rows = await _getListAnyWithQuery(
+      ['/api/dict/Doctors/relations/sync', '/Doctors/relations/sync'],
+      queryParameters: {'sync_id': ?syncId},
+    );
+    return rows
+        .whereType<Map>()
+        .map((raw) {
+          final m = Map<String, dynamic>.from(raw);
+          final doctorId = _toInt(m['doctor_id']);
+          final organisationId = _toInt(
+            m['organization_id'] ?? m['organisation_id'] ?? m['org_id'],
+          );
+          if (doctorId == null || doctorId <= 0 || organisationId == null) {
+            return null;
+          }
+          return <String, dynamic>{
+            'doctor_id': doctorId,
+            'organisation_id': organisationId,
+            'sync_id': _toInt(m['sync_id']),
+            'raw_json': jsonEncode(m),
+          };
+        })
+        .whereType<Map<String, dynamic>>()
+        .toList();
   }
 
   Future<List<Map<String, dynamic>>> getOrganizationsNearby({
@@ -1224,10 +1347,13 @@ class RemoteApiService {
     );
   }
 
-  Future<List<Map<String, dynamic>>> getOrganizationsSync({int? syncId}) async {
+  Future<List<Map<String, dynamic>>> getOrganizationsSync({
+    int? syncId,
+    int? regionId,
+  }) async {
     final rows = await _getListAnyWithQuery(
       ['/api/dict/Organizations/sync', '/dict/Organizations/sync'],
-      queryParameters: {'sync_id': ?syncId},
+      queryParameters: {'sync_id': ?syncId, 'region_id': ?regionId},
     );
     return rows.map(_mapOrg).whereType<Map<String, dynamic>>().toList();
   }
@@ -1271,13 +1397,17 @@ class RemoteApiService {
         if (data is List) {
           buf.writeln('  List[${data.length}]');
           if (data.isNotEmpty) {
-            buf.writeln('  First item keys: ${(data.first as Map?)?.keys.toList()}');
+            buf.writeln(
+              '  First item keys: ${(data.first as Map?)?.keys.toList()}',
+            );
             buf.writeln('  First item: ${jsonEncode(data.first)}');
           }
         } else if (data is Map) {
           buf.writeln('  Map keys: ${data.keys.toList()}');
           final preview = jsonEncode(data);
-          buf.writeln('  ${preview.length > 500 ? preview.substring(0, 500) : preview}');
+          buf.writeln(
+            '  ${preview.length > 500 ? preview.substring(0, 500) : preview}',
+          );
         } else {
           buf.writeln('  $data');
         }
@@ -1298,7 +1428,9 @@ class RemoteApiService {
     ]);
 
     if (rows.isNotEmpty) {
-      debugPrint('[PriceList] first row keys: ${(rows.first as Map?)?.keys.toList()}');
+      debugPrint(
+        '[PriceList] first row keys: ${(rows.first as Map?)?.keys.toList()}',
+      );
       debugPrint('[PriceList] first row: ${rows.first}');
     }
     final seen = <int>{};
@@ -1338,10 +1470,14 @@ class RemoteApiService {
               _toString(producerMap['name']) ??
               _toString(m['manufacturer']) ??
               '',
-          serialNumber: _toString(m['serial_no'] ?? m['series'] ?? m['serial_number']),
+          serialNumber: _toString(
+            m['serial_no'] ?? m['series'] ?? m['serial_number'],
+          ),
           expiryDate: _toString(m['expire_date'] ?? m['expiry_date']),
           price: price,
-          stock: _toInt(m['actual_balance'] ?? m['remains_amount'] ?? m['stock']),
+          stock: _toInt(
+            m['actual_balance'] ?? m['remains_amount'] ?? m['stock'],
+          ),
           documentsCount: 0,
           // income_detailing_id is needed when creating a Бронь order.
           currentStockId: _toInt(m['income_detailing_id']),
@@ -1355,7 +1491,14 @@ class RemoteApiService {
   /// Fetches all drug documents from KBase API (paginated).
   /// Returns list of drug_materials rows ready to insert into DB.
   /// Also returns a map of drugId → documentsCount.
-  Future<({List<Map<String, dynamic>> materials, Map<int, int> counts, Map<int, String> drugNames})> getDrugDocuments() async {
+  Future<
+    ({
+      List<Map<String, dynamic>> materials,
+      Map<int, int> counts,
+      Map<int, String> drugNames,
+    })
+  >
+  getDrugDocuments() async {
     final materials = <Map<String, dynamic>>[];
     final counts = <int, int>{};
     final drugNames = <int, String>{};
@@ -1378,7 +1521,9 @@ class RemoteApiService {
           final drugId = _toInt(drugMap['id']);
           if (drugId == null) continue;
           final drugName = _toString(drugMap['name']);
-          if (drugName != null && drugName.isNotEmpty) drugNames[drugId] = drugName;
+          if (drugName != null && drugName.isNotEmpty) {
+            drugNames[drugId] = drugName;
+          }
           final docs = item['documents'];
           if (docs is! List) continue;
           counts[drugId] = (counts[drugId] ?? 0) + docs.length;
@@ -1417,7 +1562,8 @@ class RemoteApiService {
           : const <String, dynamic>{};
       final pharmacyId = _toInt(org['id']);
       final pharmacyName = _toString(org['name']) ?? '';
-      final createdAt = _toString(c['date_of_creation']) ?? DateTime.now().toIso8601String();
+      final createdAt =
+          _toString(c['date_of_creation']) ?? DateTime.now().toIso8601String();
       final items = c['items'];
       if (items is! List) continue;
       for (final item in items) {
@@ -1475,10 +1621,7 @@ class RemoteApiService {
       ['/api/Visits/history/orders', '/Visits/history/orders'],
       queryParameters: {'_no_limit': true},
     );
-    return rows
-        .map(_mapVisit)
-        .whereType<Map<String, dynamic>>()
-        .toList();
+    return rows.map(_mapVisit).whereType<Map<String, dynamic>>().toList();
   }
 
   Future<Map<String, dynamic>?> getVisitHistoryOrderById(int visitId) async {
@@ -1536,10 +1679,7 @@ class RemoteApiService {
       ['/api/Visits/history/remnant', '/Visits/history/remnant'],
       queryParameters: {'_no_limit': true},
     );
-    return rows
-        .map(_mapVisit)
-        .whereType<Map<String, dynamic>>()
-        .toList();
+    return rows.map(_mapVisit).whereType<Map<String, dynamic>>().toList();
   }
 
   Future<List<Map<String, dynamic>>> getVisitHistoryGeneral() async {
@@ -1621,6 +1761,7 @@ class RemoteApiService {
   Future<List<dynamic>> _getListAnyPaged(
     List<String> paths, {
     Map<String, dynamic>? queryParameters,
+    void Function(int currentPage, int? totalPages, int loadedCount)? onPage,
   }) async {
     Object? lastError;
     for (final path in paths) {
@@ -1629,10 +1770,7 @@ class RemoteApiService {
         var page = 1;
         var hasMore = true;
         while (hasMore) {
-          final qp = <String, dynamic>{
-            ...?queryParameters,
-            'page': page,
-          };
+          final qp = <String, dynamic>{...?queryParameters, 'page': page};
           final response = await _api.dio.get(path, queryParameters: qp);
           final data = response.data;
           if (data is String && data.trimLeft().startsWith('<')) {
@@ -1645,10 +1783,12 @@ class RemoteApiService {
             final pageInfo = Map<String, dynamic>.from(data['page'] as Map);
             final hasNext = pageInfo['has_next_page'] == true;
             final totalPages = _toInt(pageInfo['total_pages']) ?? page;
+            onPage?.call(page, totalPages, out.length);
             hasMore = hasNext || page < totalPages;
             page++;
             continue;
           }
+          onPage?.call(page, null, out.length);
           hasMore = false;
         }
         if (out.isNotEmpty) return out;
@@ -1770,6 +1910,10 @@ class RemoteApiService {
         (typeText?.contains('pharm') ?? false) ||
         (typeText?.contains('апт') ?? false) ||
         typeId == 1;
+    final isDistributor =
+        (typeText?.contains('distributor') ?? false) ||
+        (typeText?.contains('дистриб') ?? false) ||
+        typeId == 3;
 
     return {
       'id': id,
@@ -1783,9 +1927,17 @@ class RemoteApiService {
                 m['address_line'],
           ) ??
           '',
-      'type': isPharmacy ? 'pharmacy' : 'lpu',
-      'city': _toString(m['city'] ?? m['region_name']),
-      'district': _toString(m['district'] ?? m['area'] ?? m['area_name']),
+      'type': isPharmacy ? 'pharmacy' : (isDistributor ? 'distributor' : 'lpu'),
+      'city': _toString(
+        m['city'] ?? m['region_name'] ?? _nestedName(m['region']),
+      ),
+      'region_id': _toInt(
+        m['region_id'] ?? m['regionId'] ?? _nestedId(m['region']),
+      ),
+      'district': _toString(
+        m['district'] ?? m['area'] ?? m['area_name'] ?? _nestedName(m['area']),
+      ),
+      'area_id': _toInt(m['area_id'] ?? m['areaId'] ?? _nestedId(m['area'])),
       'inn': _toString(m['inn'] ?? m['org_inn']),
       'category': _toString(m['category'] ?? m['category_name'] ?? m['class']),
       'responsible': _toString(m['responsible_person'] ?? m['responsible']),
@@ -1801,13 +1953,14 @@ class RemoteApiService {
       'distance_m': _toDouble(
         m['distance_m'] ?? m['distance'] ?? m['distance_meter'],
       ),
-      'is_favorite': (_toBool(
-            m['is_favorite'] ??
-                m['isFavorite'] ??
-                m['favorite'] ??
-                m['in_favorites'],
-          ) ??
-          false)
+      'is_favorite':
+          (_toBool(
+                m['is_favorite'] ??
+                    m['isFavorite'] ??
+                    m['favorite'] ??
+                    m['in_favorites'],
+              ) ??
+              false)
           ? 1
           : 0,
       'updated_at': _toIso(m['updated_at']) ?? DateTime.now().toIso8601String(),
@@ -1835,10 +1988,14 @@ class RemoteApiService {
       'organisation_id':
           _toInt(m['organisation_id'] ?? m['organization_id'] ?? m['org_id']) ??
           0,
-      'is_favorite': (_toBool(
-            m['is_favorite'] ?? m['isFavorite'] ?? m['favorite'] ?? m['in_favorites'],
-          ) ??
-          false)
+      'is_favorite':
+          (_toBool(
+                m['is_favorite'] ??
+                    m['isFavorite'] ??
+                    m['favorite'] ??
+                    m['in_favorites'],
+              ) ??
+              false)
           ? 1
           : 0,
       'category':
@@ -1848,6 +2005,16 @@ class RemoteApiService {
       'sync_id': _toInt(m['sync_id']),
       'raw_json': jsonEncode(m),
     };
+  }
+
+  static dynamic _nestedId(dynamic raw) {
+    if (raw is Map) return raw['id'] ?? raw['region_id'] ?? raw['area_id'];
+    return null;
+  }
+
+  static dynamic _nestedName(dynamic raw) {
+    if (raw is Map) return raw['name'] ?? raw['name_ru'] ?? raw['title'];
+    return null;
   }
 
   static Map<String, dynamic>? _mapDrug(dynamic raw) {
@@ -1920,7 +2087,8 @@ class RemoteApiService {
         : const <String, dynamic>{};
 
     final remoteId = _toInt(m['id'] ?? m['visit_id']);
-    final orgId = _toInt(
+    final orgId =
+        _toInt(
           m['organization_id'] ??
               m['org_id'] ??
               orgMap['organization_id'] ??
@@ -2000,7 +2168,8 @@ class RemoteApiService {
       if (typeRaw == '4' || typeRaw == 'stock' || typeRaw == 'remnant') {
         return 'stock';
       }
-      final hasCircle = m['visit_pharm_circle'] != null ||
+      final hasCircle =
+          m['visit_pharm_circle'] != null ||
           (formatRaw?.contains('фармкруж') ?? false);
       if (hasCircle) return 'circle';
       return _fromVisitType(typeRaw);
@@ -2185,7 +2354,14 @@ class RemoteApiService {
       final minute = int.tryParse(m.group(5) ?? '0') ?? 0;
       final second = int.tryParse(m.group(6) ?? '0') ?? 0;
       if (day != null && month != null && year != null) {
-        return DateTime(year, month, day, hour, minute, second).toIso8601String();
+        return DateTime(
+          year,
+          month,
+          day,
+          hour,
+          minute,
+          second,
+        ).toIso8601String();
       }
     }
     return null;
@@ -2207,6 +2383,7 @@ class ManagerOption {
 class RemoteSeedBundle {
   final List<Map<String, dynamic>> orgs;
   final List<Map<String, dynamic>> doctors;
+  final List<Map<String, dynamic>> doctorOrgLinks;
   final List<Map<String, dynamic>> drugs;
   final List<Map<String, dynamic>> materials;
   final List<Map<String, dynamic>> visits;
@@ -2219,6 +2396,7 @@ class RemoteSeedBundle {
   const RemoteSeedBundle({
     required this.orgs,
     required this.doctors,
+    this.doctorOrgLinks = const [],
     required this.drugs,
     required this.materials,
     required this.visits,

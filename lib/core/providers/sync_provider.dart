@@ -30,6 +30,8 @@ class SyncState {
   final DateTime? lastSyncAt;
   final Map<String, dynamic>? lastGetDebug;
   final Map<String, dynamic>? lastPostDebug;
+  final int? progressCurrent;
+  final int? progressTotal;
 
   const SyncState({
     this.status = SyncStatus.idle,
@@ -38,6 +40,8 @@ class SyncState {
     this.lastSyncAt,
     this.lastGetDebug,
     this.lastPostDebug,
+    this.progressCurrent,
+    this.progressTotal,
   });
 
   SyncState copyWith({
@@ -47,6 +51,9 @@ class SyncState {
     DateTime? lastSyncAt,
     Map<String, dynamic>? lastGetDebug,
     Map<String, dynamic>? lastPostDebug,
+    int? progressCurrent,
+    int? progressTotal,
+    bool clearProgress = false,
   }) {
     return SyncState(
       status: status ?? this.status,
@@ -55,6 +62,10 @@ class SyncState {
       lastSyncAt: lastSyncAt ?? this.lastSyncAt,
       lastGetDebug: lastGetDebug ?? this.lastGetDebug,
       lastPostDebug: lastPostDebug ?? this.lastPostDebug,
+      progressCurrent: clearProgress
+          ? null
+          : progressCurrent ?? this.progressCurrent,
+      progressTotal: clearProgress ? null : progressTotal ?? this.progressTotal,
     );
   }
 }
@@ -67,6 +78,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
   final ApiClient _apiClient;
   final bool Function() _isOffline;
   final Future<bool> Function() _silentReauth;
+  final int? Function() _currentRegionId;
   bool _isReconciling = false;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   final InAppNotificationsService _notificationsService =
@@ -78,6 +90,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
     this._apiClient,
     this._isOffline,
     this._silentReauth,
+    this._currentRegionId,
   ) : super(const SyncState()) {
     _startConnectivityWatcher();
   }
@@ -111,7 +124,11 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   /// Fetches the full dataset from the mock remote, seeds the local DB, and
   /// records the sync timestamp in sync_meta.
-  Future<void> pullFromRemote({bool fullRefresh = false}) async {
+  Future<void> pullFromRemote({
+    bool fullRefresh = false,
+    bool includeDoctors = true,
+    bool repairDoctors = true,
+  }) async {
     if (_isOffline()) {
       state = state.copyWith(
         status: SyncStatus.idle,
@@ -121,20 +138,34 @@ class SyncNotifier extends StateNotifier<SyncState> {
     }
     state = state.copyWith(
       status: SyncStatus.loading,
-      message: 'Загрузка данных…',
+      message: fullRefresh
+          ? 'Full refresh: подготовка загрузки…'
+          : 'Загрузка данных: проверяем дельту…',
+      clearProgress: true,
     );
 
     try {
       if (!fullRefresh) {
-        final delta = await _tryDeltaPull();
+        final delta = await _tryDeltaPull(
+          includeDoctors: includeDoctors,
+        ).timeout(const Duration(seconds: 25), onTimeout: () => null);
         if (delta != null) {
-          final live = await _syncAllLiveDataFromRemote();
+          state = state.copyWith(
+            status: SyncStatus.loading,
+            message: 'Дельта получена, обновляем живые данные…',
+            clearProgress: true,
+          );
+          final live = await _syncAllLiveDataFromRemote(
+            repairDoctors: repairDoctors,
+          );
           final now = DateTime.now();
           await _db.setSyncMeta('last_pull_at', now.toIso8601String());
           final unsynced = await _db.unsyncedCount();
           final totals = await _collectLocalTotals();
+          final deltaOrgCounts = _countOrgTypes(delta.organizations);
           state = state.copyWith(
             status: SyncStatus.success,
+            clearProgress: true,
             unsyncedCount: unsynced,
             message: 'Дельта-синхронизация выполнена',
             lastSyncAt: now,
@@ -144,6 +175,10 @@ class SyncNotifier extends StateNotifier<SyncState> {
               'last_sync_id_before': delta.lastSyncIdBefore,
               'last_sync_id_after': delta.lastSyncIdAfter,
               'delta_organizations_count': delta.organizationsCount,
+              'delta_lpu_count': deltaOrgCounts.lpu,
+              'delta_pharmacy_count': deltaOrgCounts.pharmacy,
+              'delta_distributor_count': deltaOrgCounts.distributor,
+              'delta_other_organizations_count': deltaOrgCounts.other,
               'delta_doctors_count': delta.doctorsCount,
               'delta_drugs_count': delta.drugsCount,
               'delta_visits_count': live.visitsCount,
@@ -151,6 +186,10 @@ class SyncNotifier extends StateNotifier<SyncState> {
               'delta_materials_count': live.materialsCount,
               'delta_cached_files_count': live.cachedFilesCount,
               'local_organizations_total': totals.organizations,
+              'local_lpu_total': totals.lpu,
+              'local_pharmacy_total': totals.pharmacy,
+              'local_distributor_total': totals.distributor,
+              'local_other_organizations_total': totals.otherOrganizations,
               'local_doctors_total': totals.doctors,
               'local_drugs_total': totals.drugs,
               'message': 'Delta sync success',
@@ -159,18 +198,36 @@ class SyncNotifier extends StateNotifier<SyncState> {
           await _notificationsService.add(
             title: 'Синхронизация завершена',
             body:
-                'Дельта: ЛПУ ${delta.organizationsCount}, врачи ${delta.doctorsCount}, препараты ${delta.drugsCount}.',
+                'Дельта: ЛПУ ${deltaOrgCounts.lpu}, аптеки ${deltaOrgCounts.pharmacy}, врачи ${delta.doctorsCount}, препараты ${delta.drugsCount}.',
             kind: 'sync',
           );
           return;
         }
+        state = state.copyWith(
+          status: SyncStatus.loading,
+          message: 'Дельта недоступна, загружаем полный справочник…',
+          clearProgress: true,
+        );
       }
 
-      final seed = await _remoteApi.fetchOfflineSeed();
+      final regionId = _currentRegionId();
+      final seed = await _remoteApi.fetchOfflineSeed(
+        regionId: regionId,
+        includeDoctors: includeDoctors,
+        onProgress: _setPullProgress,
+      );
+      state = state.copyWith(
+        status: SyncStatus.loading,
+        message: fullRefresh
+            ? 'Full refresh: записываем данные в локальную БД…'
+            : 'Загрузка: записываем данные в локальную БД…',
+        clearProgress: true,
+      );
       if (fullRefresh) {
         await _db.replaceRemoteSnapshotPreservingUnsynced(
           orgs: seed.orgs,
           doctors: seed.doctors,
+          doctorOrgLinks: seed.doctorOrgLinks,
           drugs: seed.drugs,
           materials: seed.materials,
           visits: seed.visits,
@@ -184,6 +241,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
         await _db.seedFromRemote(
           orgs: seed.orgs,
           doctors: seed.doctors,
+          doctorOrgLinks: seed.doctorOrgLinks,
           drugs: seed.drugs,
           materials: seed.materials,
           visits: seed.visits,
@@ -195,24 +253,33 @@ class SyncNotifier extends StateNotifier<SyncState> {
         );
       }
 
-      final live = await _syncAllLiveDataFromRemote();
+      final live = await _syncAllLiveDataFromRemote(
+        repairDoctors: repairDoctors,
+      );
 
       final now = DateTime.now();
       await _db.setSyncMeta('last_pull_at', now.toIso8601String());
 
       final unsynced = await _db.unsyncedCount();
       final totals = await _collectLocalTotals();
+      final fetchedOrgCounts = _countOrgTypes(seed.orgs);
 
       state = state.copyWith(
         status: SyncStatus.success,
+        clearProgress: true,
         unsyncedCount: unsynced,
         message:
-            '${fullRefresh ? 'Полное обновление' : 'Загружено'}: ${seed.orgs.length} организаций, ${seed.drugs.length} препаратов',
+            '${fullRefresh ? 'Полное обновление' : 'Загружено'}: ЛПУ ${fetchedOrgCounts.lpu}, аптеки ${fetchedOrgCounts.pharmacy}, препараты ${seed.drugs.length}',
         lastSyncAt: now,
         lastGetDebug: {
           'ok': true,
           'mode': fullRefresh ? 'full_refresh' : 'seed_pull',
+          'region_id': regionId,
           'fetched_organizations_count': seed.orgs.length,
+          'fetched_lpu_count': fetchedOrgCounts.lpu,
+          'fetched_pharmacy_count': fetchedOrgCounts.pharmacy,
+          'fetched_distributor_count': fetchedOrgCounts.distributor,
+          'fetched_other_organizations_count': fetchedOrgCounts.other,
           'fetched_doctors_count': seed.doctors.length,
           'fetched_drugs_count': seed.drugs.length,
           'fetched_materials_count': seed.materials.length,
@@ -222,6 +289,10 @@ class SyncNotifier extends StateNotifier<SyncState> {
           'live_materials_count': live.materialsCount,
           'cached_files_count': live.cachedFilesCount,
           'local_organizations_total': totals.organizations,
+          'local_lpu_total': totals.lpu,
+          'local_pharmacy_total': totals.pharmacy,
+          'local_distributor_total': totals.distributor,
+          'local_other_organizations_total': totals.otherOrganizations,
           'local_doctors_total': totals.doctors,
           'local_drugs_total': totals.drugs,
           'message': 'GET sync success',
@@ -232,7 +303,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
             ? 'Полная синхронизация завершена'
             : 'Синхронизация завершена',
         body:
-            'Изменения: ЛПУ ${seed.orgs.length}, врачи ${seed.doctors.length}, препараты ${seed.drugs.length}, визиты ${seed.visits.length}.',
+            'Изменения: ЛПУ ${fetchedOrgCounts.lpu}, аптеки ${fetchedOrgCounts.pharmacy}, врачи ${seed.doctors.length}, препараты ${seed.drugs.length}, визиты ${seed.visits.length}.',
         kind: 'sync',
       );
     } catch (e, st) {
@@ -240,6 +311,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
         status: SyncStatus.error,
         message: 'Ошибка загрузки: $e',
         lastGetDebug: {'ok': false, 'error': '$e'},
+        clearProgress: true,
       );
       await _notificationsService.add(
         title: 'Синхронизация с ошибкой',
@@ -251,20 +323,53 @@ class SyncNotifier extends StateNotifier<SyncState> {
     }
   }
 
-  Future<_DeltaPullResult?> _tryDeltaPull() async {
+  void _setPullProgress(String message, {int? current, int? total}) {
+    if (!mounted) return;
+    state = state.copyWith(
+      status: SyncStatus.loading,
+      message: message,
+      progressCurrent: current,
+      progressTotal: total,
+    );
+  }
+
+  Future<_DeltaPullResult?> _tryDeltaPull({bool includeDoctors = true}) async {
     final syncCursor = await _db.getSyncMeta('last_sync_id');
     final syncId = int.tryParse(syncCursor ?? '');
+    final regionId = _currentRegionId();
     try {
-      final orgs = await _remoteApi.getOrganizationsSync(syncId: syncId);
-      final doctors = await _remoteApi.getDoctorsSync(syncId: syncId);
+      final orgs = await _remoteApi.getOrganizationsSync(
+        syncId: syncId,
+        regionId: regionId,
+      );
+      final doctors = includeDoctors
+          ? await _remoteApi.getDoctorsSync(syncId: syncId)
+          : const <Map<String, dynamic>>[];
+      final relations = includeDoctors
+          ? await _remoteApi.getDoctorOrganisationRelations(syncId: syncId)
+          : const <Map<String, dynamic>>[];
       final drugs = await _remoteApi.getDrugsSync(syncId: syncId);
 
       await _db.upsertOrganisations(orgs);
-      await _db.upsertDoctors(doctors);
+      final scopedRelations = await _filterRelationsToKnownRegionOrgs(
+        relations,
+      );
+      await _db.upsertDoctorOrganisationLinks(scopedRelations);
+      final scopedDoctorIds = scopedRelations
+          .map((e) => (e['doctor_id'] as num?)?.toInt())
+          .whereType<int>()
+          .toSet();
+      final scopedDoctors = doctors.where((row) {
+        if (regionId == null) return true;
+        final doctorId = (row['id'] as num?)?.toInt();
+        return doctorId != null && scopedDoctorIds.contains(doctorId);
+      }).toList();
+      await _db.upsertDoctors(scopedDoctors);
       await _db.upsertDrugs(drugs);
       final maxSyncId = [
         ...orgs.map((e) => e['sync_id'] as int?),
-        ...doctors.map((e) => e['sync_id'] as int?),
+        ...scopedDoctors.map((e) => e['sync_id'] as int?),
+        ...scopedRelations.map((e) => e['sync_id'] as int?),
         ...drugs.map((e) => e['sync_id'] as int?),
       ].whereType<int>().fold<int>(syncId ?? 0, (p, e) => e > p ? e : p);
       if (maxSyncId > 0) {
@@ -275,7 +380,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
         lastSyncIdBefore: syncId,
         lastSyncIdAfter: maxSyncId > 0 ? maxSyncId : syncId,
         organizationsCount: orgs.length,
-        doctorsCount: doctors.length,
+        organizations: orgs,
+        doctorsCount: scopedDoctors.length,
         drugsCount: drugs.length,
       );
     } catch (_) {
@@ -286,18 +392,63 @@ class SyncNotifier extends StateNotifier<SyncState> {
   Future<_LocalTotals> _collectLocalTotals() async {
     final db = _db.db;
     final orgs = await db.rawQuery('SELECT COUNT(*) AS c FROM organisations');
+    final lpu = await db.rawQuery(
+      "SELECT COUNT(*) AS c FROM organisations WHERE type = 'lpu'",
+    );
+    final pharmacies = await db.rawQuery(
+      "SELECT COUNT(*) AS c FROM organisations WHERE type = 'pharmacy'",
+    );
+    final distributors = await db.rawQuery(
+      "SELECT COUNT(*) AS c FROM organisations WHERE type = 'distributor'",
+    );
     final doctors = await db.rawQuery('SELECT COUNT(*) AS c FROM doctors');
     final drugs = await db.rawQuery('SELECT COUNT(*) AS c FROM drugs');
+    final orgTotal = (orgs.first['c'] as int?) ?? 0;
+    final lpuTotal = (lpu.first['c'] as int?) ?? 0;
+    final pharmacyTotal = (pharmacies.first['c'] as int?) ?? 0;
+    final distributorTotal = (distributors.first['c'] as int?) ?? 0;
     return _LocalTotals(
-      organizations: (orgs.first['c'] as int?) ?? 0,
+      organizations: orgTotal,
+      lpu: lpuTotal,
+      pharmacy: pharmacyTotal,
+      distributor: distributorTotal,
+      otherOrganizations:
+          orgTotal - lpuTotal - pharmacyTotal - distributorTotal,
       doctors: (doctors.first['c'] as int?) ?? 0,
       drugs: (drugs.first['c'] as int?) ?? 0,
     );
   }
 
+  _OrgTypeCounts _countOrgTypes(List<Map<String, dynamic>> orgs) {
+    var lpu = 0;
+    var pharmacy = 0;
+    var distributor = 0;
+    var other = 0;
+    for (final org in orgs) {
+      switch ((org['type'] ?? '').toString()) {
+        case 'lpu':
+          lpu++;
+        case 'pharmacy':
+          pharmacy++;
+        case 'distributor':
+          distributor++;
+        default:
+          other++;
+      }
+    }
+    return _OrgTypeCounts(
+      lpu: lpu,
+      pharmacy: pharmacy,
+      distributor: distributor,
+      other: other,
+    );
+  }
+
   /// Refreshes all live data that changes frequently: visits, planned visits,
   /// favourite doctors/orgs, daily stats, managers, day types, and materials.
-  Future<_LiveSyncResult> _syncAllLiveDataFromRemote() async {
+  Future<_LiveSyncResult> _syncAllLiveDataFromRemote({
+    bool repairDoctors = true,
+  }) async {
     var visitsCount = 0;
     var plannedVisitsCount = 0;
     var materialsCount = 0;
@@ -306,15 +457,47 @@ class SyncNotifier extends StateNotifier<SyncState> {
     try {
       final totals = await _collectLocalTotals();
       if (totals.organizations == 0) {
-        final orgs = await _remoteApi.getOrganizationsSync(syncId: null);
+        final orgs = await _remoteApi.getOrganizationsSync(
+          syncId: null,
+          regionId: _currentRegionId(),
+        );
         if (orgs.isNotEmpty) {
           await _db.upsertOrganisations(orgs);
         }
       }
-      if (totals.doctors == 0) {
-        final doctors = await _remoteApi.getDoctorsSync(syncId: null);
-        if (doctors.isNotEmpty) {
-          await _db.upsertDoctors(doctors);
+      final shouldRepairDoctors =
+          repairDoctors &&
+          (totals.doctors == 0 ||
+              (_currentRegionId() != null && totals.doctors < 100));
+      if (shouldRepairDoctors) {
+        final doctors = await _remoteApi.getDoctorsDictionary(
+          regionId: _currentRegionId(),
+          onPage: (current, total, loaded) {
+            _setPullProgress(
+              'Дозагружаем врачей: $loaded записей, страница $current из ${total ?? '…'}',
+              current: current,
+              total: total,
+            );
+          },
+        );
+        final relations = await _remoteApi.getDoctorOrganisationRelations(
+          syncId: 0,
+        );
+        final scopedRelations = await _filterRelationsToKnownRegionOrgs(
+          relations,
+        );
+        await _db.upsertDoctorOrganisationLinks(scopedRelations);
+        final scopedDoctorIds = scopedRelations
+            .map((e) => (e['doctor_id'] as num?)?.toInt())
+            .whereType<int>()
+            .toSet();
+        final scopedDoctors = doctors.where((row) {
+          if (_currentRegionId() == null) return true;
+          final doctorId = (row['id'] as num?)?.toInt();
+          return doctorId != null && scopedDoctorIds.contains(doctorId);
+        }).toList();
+        if (scopedDoctors.isNotEmpty) {
+          await _db.upsertDoctors(scopedDoctors);
         }
       }
     } catch (_) {}
@@ -522,6 +705,21 @@ class SyncNotifier extends StateNotifier<SyncState> {
       materialsCount: materialsCount,
       cachedFilesCount: cachedFilesCount,
     );
+  }
+
+  Future<List<Map<String, dynamic>>> _filterRelationsToKnownRegionOrgs(
+    List<Map<String, dynamic>> relations,
+  ) async {
+    if (_currentRegionId() == null) return relations;
+    final orgRows = await _db.getOrganisations();
+    final orgIds = orgRows
+        .map((e) => (e['id'] as num?)?.toInt())
+        .whereType<int>()
+        .toSet();
+    return relations.where((row) {
+      final orgId = (row['organisation_id'] as num?)?.toInt();
+      return orgId != null && orgIds.contains(orgId);
+    }).toList();
   }
 
   // ── pushToRemote ───────────────────────────────────────────────────────────
@@ -802,6 +1000,7 @@ class _DeltaPullResult {
   final int? lastSyncIdBefore;
   final int? lastSyncIdAfter;
   final int organizationsCount;
+  final List<Map<String, dynamic>> organizations;
   final int doctorsCount;
   final int drugsCount;
 
@@ -809,6 +1008,7 @@ class _DeltaPullResult {
     required this.lastSyncIdBefore,
     required this.lastSyncIdAfter,
     required this.organizationsCount,
+    required this.organizations,
     required this.doctorsCount,
     required this.drugsCount,
   });
@@ -816,13 +1016,35 @@ class _DeltaPullResult {
 
 class _LocalTotals {
   final int organizations;
+  final int lpu;
+  final int pharmacy;
+  final int distributor;
+  final int otherOrganizations;
   final int doctors;
   final int drugs;
 
   const _LocalTotals({
     required this.organizations,
+    required this.lpu,
+    required this.pharmacy,
+    required this.distributor,
+    required this.otherOrganizations,
     required this.doctors,
     required this.drugs,
+  });
+}
+
+class _OrgTypeCounts {
+  final int lpu;
+  final int pharmacy;
+  final int distributor;
+  final int other;
+
+  const _OrgTypeCounts({
+    required this.lpu,
+    required this.pharmacy,
+    required this.distributor,
+    required this.other,
   });
 }
 
@@ -849,5 +1071,6 @@ final syncProvider = StateNotifierProvider<SyncNotifier, SyncState>((ref) {
     ref.watch(apiClientProvider),
     () => ref.read(isOfflineProvider),
     () => ref.read(authProvider.notifier).silentReauth(),
+    () => ref.read(authProvider).user?.regionId,
   );
 });

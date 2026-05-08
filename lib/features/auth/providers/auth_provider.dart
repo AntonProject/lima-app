@@ -73,7 +73,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<bool> _silentReauth(String login, String password) async {
     try {
       await _creds.setCurrentLogin(login);
-      final token = await _remoteApi.authorize(login: login, password: password);
+      final token = await _remoteApi.authorize(
+        login: login,
+        password: password,
+      );
       await _api.saveToken(token);
       await _fetchProfile(login: login);
       return state.status == AuthStatus.authenticated;
@@ -87,25 +90,38 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final data = await _remoteApi.getCurrentUser();
       final stats = await _loadStatisticsFallback(data);
       final user = UserModel(
-        id: (data['id'] as num?)?.toInt() ?? (data['user_id'] as num?)?.toInt() ?? 0,
+        id:
+            (data['id'] as num?)?.toInt() ??
+            (data['user_id'] as num?)?.toInt() ??
+            0,
         fullName: _extractFullName(data),
-        role: _normalizeRole(data['role'] ?? data['role_name'] ?? data['user_role']),
+        role: _normalizeRole(
+          data['role'] ?? data['role_name'] ?? data['user_role'],
+        ),
         city: _extractCity(data),
+        regionId: _extractRegionId(data),
         phone: _extractPhone(data),
         company: _extractCompany(
-          data['company_name'] ?? data['company'] ?? data['company_title'] ?? data['organization_name'],
+          data['company_name'] ??
+              data['company'] ??
+              data['company_title'] ??
+              data['organization_name'],
         ),
         visitsCount: stats.visitsCount,
         salesAmount: stats.salesAmount,
         doctorsCount: stats.doctorsCount,
       );
 
-      if (user.fullName.isEmpty) throw const FormatException('User profile is empty');
+      if (user.fullName.isEmpty) {
+        throw const FormatException('User profile is empty');
+      }
 
       final owner = await _db.getCurrentUserOwner();
       final effectiveLogin = login ?? owner.login;
       if (effectiveLogin == null || effectiveLogin.isEmpty) {
-        throw const FormatException('Login is required to bind local user data');
+        throw const FormatException(
+          'Login is required to bind local user data',
+        );
       }
       if (owner.login != null && owner.login != effectiveLogin) {
         await _db.clearUserScopedData();
@@ -116,11 +132,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
         login: effectiveLogin,
         role: user.role,
       );
-      await _api.prefs.setString(_cachedUserKeyFor(effectiveLogin), jsonEncode(user.toJson()));
+      await _api.prefs.setString(
+        _cachedUserKeyFor(effectiveLogin),
+        jsonEncode(user.toJson()),
+      );
 
       state = state.copyWith(status: AuthStatus.authenticated, user: user);
     } on DioException catch (e) {
-      final isNetworkError = e.response == null ||
+      final isNetworkError =
+          e.response == null ||
           e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.receiveTimeout ||
@@ -157,12 +177,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<void> login(String username, String password) async {
     state = state.copyWith(status: AuthStatus.loading, errorMessage: null);
     try {
-      final token = await _remoteApi.authorize(login: username, password: password);
+      final token = await _remoteApi.authorize(
+        login: username,
+        password: password,
+      );
       await _api.saveToken(token);
       await _creds.save(username, password);
       await _fetchProfile(login: username);
     } on DioException catch (e) {
-      final isNetworkError = e.type == DioExceptionType.connectionError ||
+      final isNetworkError =
+          e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.receiveTimeout ||
           e.type == DioExceptionType.sendTimeout ||
@@ -212,7 +236,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
 
     try {
-      final user = UserModel.fromJson(jsonDecode(cachedJson) as Map<String, dynamic>);
+      final user = UserModel.fromJson(
+        jsonDecode(cachedJson) as Map<String, dynamic>,
+      );
       await _creds.setCurrentLogin(username);
       state = state.copyWith(status: AuthStatus.authenticated, user: user);
     } catch (_) {
@@ -230,26 +256,66 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   static String _extractFullName(Map<String, dynamic> data) {
-    return (data['full_name'] ?? data['fio'] ?? data['name'] ?? data['user_name'] ?? '')
+    return (data['full_name'] ??
+            data['fio'] ??
+            data['name'] ??
+            data['user_name'] ??
+            '')
         .toString()
         .trim();
   }
 
   static String? _extractCity(Map<String, dynamic> data) {
-    return (data['city'] ?? data['city_name'] ?? data['region_name'] ?? data['region'] ?? data['district_name'])
+    return (data['city'] ??
+            data['city_name'] ??
+            data['region_name'] ??
+            _nestedName(data['region']) ??
+            data['region'] ??
+            data['district_name'])
         ?.toString();
   }
 
+  static int? _extractRegionId(Map<String, dynamic> data) {
+    final direct = data['region_id'] ?? data['regionId'];
+    if (direct is num) return direct.toInt();
+    if (direct is String) return int.tryParse(direct);
+    final region = data['region'];
+    if (region is Map) {
+      final id = region['id'] ?? region['region_id'];
+      if (id is num) return id.toInt();
+      if (id is String) return int.tryParse(id);
+    }
+    return null;
+  }
+
+  static String? _nestedName(dynamic value) {
+    if (value is Map) {
+      return (value['name'] ?? value['title'] ?? value['name_ru'])?.toString();
+    }
+    return null;
+  }
+
   static String? _extractPhone(Map<String, dynamic> data) {
-    final raw = (data['phone'] ?? data['phone_number'] ?? data['mobile'] ?? '').toString().trim();
+    final raw = (data['phone'] ?? data['phone_number'] ?? data['mobile'] ?? '')
+        .toString()
+        .trim();
     return raw.isEmpty ? null : raw;
   }
 
   static String _normalizeRole(dynamic rawRole) {
     final value = (rawRole ?? '').toString().trim().toLowerCase();
     if (value.isEmpty) return 'mp';
-    if (value == 'admin' || value == 'administrator' || value.contains('админ')) return 'admin';
-    if (value == 'rm' || value == 'regional_manager' || value == 'regional manager' || value.contains('регион')) return 'rm';
+    if (value == 'admin' ||
+        value == 'administrator' ||
+        value.contains('админ')) {
+      return 'admin';
+    }
+    if (value == 'rm' ||
+        value == 'regional_manager' ||
+        value == 'regional manager' ||
+        value.contains('регион')) {
+      return 'rm';
+    }
     return 'mp';
   }
 
@@ -262,7 +328,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
     final cachedJson = _api.prefs.getString(_cachedUserKeyFor(saved.login));
     if (cachedJson == null) return false;
     try {
-      final user = UserModel.fromJson(jsonDecode(cachedJson) as Map<String, dynamic>);
+      final user = UserModel.fromJson(
+        jsonDecode(cachedJson) as Map<String, dynamic>,
+      );
       state = state.copyWith(status: AuthStatus.authenticated, user: user);
       return true;
     } catch (_) {
@@ -276,7 +344,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = const AuthState(status: AuthStatus.unauthenticated);
   }
 
-  static String _cachedUserKeyFor(String login) => 'cached_user_profile::$login';
+  static String _cachedUserKeyFor(String login) =>
+      'cached_user_profile::$login';
 }
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {

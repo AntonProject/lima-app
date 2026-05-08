@@ -65,28 +65,10 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
 
   Future<void> _loadDoctors() async {
     final db = ref.read(localDatabaseProvider);
-    var results = <Map<String, dynamic>>[];
-    try {
-      final remote = await ref
-          .read(remoteApiServiceProvider)
-          .getDoctorsByOrganization(widget.orgId);
-      if (remote.isNotEmpty) {
-        final normalized = remote.map((e) {
-          final row = Map<String, dynamic>.from(e);
-          final orgId = (row['organisation_id'] as num?)?.toInt() ?? 0;
-          if (orgId == 0) {
-            row['organisation_id'] = widget.orgId;
-          }
-          return row;
-        }).toList();
-        await db.upsertDoctors(normalized);
-      }
-    } catch (_) {
-      // If network is unavailable we continue from local DB.
-    }
-    results = await db.getDoctors(
+    final results = await db.getDoctors(
       orgId: widget.orgId,
       query: _query.isEmpty ? null : _query,
+      includeGlobalFallback: false,
     );
     if (!mounted) return;
     final list = results.map((e) => Map<String, dynamic>.from(e)).toList();
@@ -136,7 +118,9 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     if (!_canEditDirectory) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Добавление врача доступно только администратору')),
+        const SnackBar(
+          content: Text('Добавление врача доступно только администратору'),
+        ),
       );
       return;
     }
@@ -197,7 +181,9 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
                 pressedScale: 0.97,
                 onTap: () {
                   if (nameCtrl.text.trim().isEmpty ||
-                      specialtyCtrl.text.trim().isEmpty) { return; }
+                      specialtyCtrl.text.trim().isEmpty) {
+                    return;
+                  }
                   Navigator.pop(ctx, {
                     'name': nameCtrl.text.trim(),
                     'phone': phoneCtrl.text.trim(),
@@ -268,7 +254,9 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Врач сохранён локально и будет синхронизирован при появлении сети'),
+            content: Text(
+              'Врач сохранён локально и будет синхронизирован при появлении сети',
+            ),
             duration: Duration(seconds: 3),
           ),
         );
@@ -486,15 +474,15 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
               onPressed: !canEditDirectory
                   ? null
                   : () async {
-                final manager = await showManagerSelectDialog(context);
-                if (!mounted) return;
-                if (manager != null) {
-                  setState(() {
-                    _selectedManager = manager;
-                    _mode = _VisitMode.manager;
-                  });
-                }
-              },
+                      final manager = await showManagerSelectDialog(context);
+                      if (!mounted) return;
+                      if (manager != null) {
+                        setState(() {
+                          _selectedManager = manager;
+                          _mode = _VisitMode.manager;
+                        });
+                      }
+                    },
               style: OutlinedButton.styleFrom(
                 minimumSize: const Size(46, 46),
                 maximumSize: const Size(46, 46),

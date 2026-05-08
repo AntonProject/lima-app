@@ -32,7 +32,7 @@ Local writes -> SQLite first -> push unsynced rows to API -> mark as synced
 - `lib/core/providers/app_collections_provider.dart` — локальные коллекции для экранов.
 - `lib/features/offline/screens/sync_screen.dart` — ручной sync и диагностика.
 
-Текущая версия схемы `lima.db` — 8.
+Текущая версия схемы `lima.db` — 10.
 
 ## Обзор базы данных
 
@@ -54,7 +54,7 @@ Local writes -> SQLite first -> push unsynced rows to API -> mark as synced
 ## Связи
 
 ```text
-organisations ──< doctors            organisations.id = doctors.organisation_id
+organisations ──< doctor_organisations >── doctors
 drugs         ──< drug_materials     drugs.id = drug_materials.drug_id
 organisations ──< visits             organisations.id = visits.org_id
 doctors       ──< visits             doctors.id = visits.doctor_id, nullable
@@ -75,8 +75,10 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 | `name` | TEXT | Название ЛПУ или аптеки. |
 | `address` | TEXT | Адрес. |
 | `type` | TEXT | Обычно `lpu` или `pharmacy`. |
-| `city` | TEXT | Город. |
+| `city` | TEXT | Регион/город для отображения и fallback-фильтра. |
+| `region_id` | INTEGER | API id региона для фильтрации справочника по региону МП. |
 | `district` | TEXT | Район. |
+| `area_id` | INTEGER | API id района. |
 | `inn` | TEXT | ИНН. |
 | `category` | TEXT | Категория/бизнес-маркер. |
 | `responsible` | TEXT | Ответственный. |
@@ -98,13 +100,24 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 | `id` | INTEGER PK | Серверный/локальный идентификатор. |
 | `full_name` | TEXT | ФИО врача. |
 | `specialty` | TEXT | Специальность. |
-| `organisation_id` | INTEGER | Ссылка на `organisations.id`. |
+| `organisation_id` | INTEGER | Legacy/локальная ссылка на `organisations.id`; API-связи хранятся в `doctor_organisations`. |
 | `is_favorite` | INTEGER | 0/1, признак избранного. |
 | `category` | TEXT | A/B/C или категория из API. |
 | `last_visit_label` | TEXT | Display label последнего визита. |
 | `updated_at` | TEXT | Время обновления на сервере. |
 | `sync_id` | INTEGER | Cursor/id для delta sync. |
 | `raw_json` | TEXT | Исходный API payload. |
+
+### `doctor_organisations`
+
+Хранит many-to-many связь врачей с организациями из API `/Doctors/relations/sync`.
+
+| Поле | Тип | Описание |
+| --- | --- | --- |
+| `doctor_id` | INTEGER | id врача. |
+| `organisation_id` | INTEGER | id организации/ЛПУ. |
+| `sync_id` | INTEGER | Cursor/id связи для delta sync. |
+| `raw_json` | TEXT | Исходный API payload связи. |
 
 ### `drugs`
 
@@ -288,7 +301,7 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 Если delta sync недоступен или завершился ошибкой, приложение откатывается на full seed:
 
 - организации;
-- врачи;
+- врачи: full seed читает `/api/dict/Doctors` постранично, потому что API возвращает по 30 записей на страницу;
 - препараты;
 - материалы препаратов;
 - история визитов;

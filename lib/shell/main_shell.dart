@@ -26,7 +26,13 @@ class _MainShellState extends ConsumerState<MainShell> {
   String _lastOfflineToastPath = '';
   bool _showOfflineToast = false;
 
-  static const _tabPaths = ['/home', '/plan', '/visits', '/knowledge', '/profile'];
+  static const _tabPaths = [
+    '/home',
+    '/plan',
+    '/visits',
+    '/knowledge',
+    '/profile',
+  ];
 
   int _indexFromLocation(String location) {
     for (int i = _tabPaths.length - 1; i >= 0; i--) {
@@ -76,7 +82,8 @@ class _MainShellState extends ConsumerState<MainShell> {
     final isTopLevelTab = _tabPaths.contains(currentPath);
 
     // Белые иконки статус-бара на синих экранах, тёмные на светлых
-    final isLightStatusBar = currentPath == '/home' ||
+    final isLightStatusBar =
+        currentPath == '/home' ||
         currentPath == '/profile' ||
         currentPath.contains('/detailing') ||
         currentPath.contains('/complete');
@@ -140,7 +147,15 @@ class _MainShellState extends ConsumerState<MainShell> {
                   currentIndex: _currentIndex,
                   onTap: (i) {
                     if (i < _tabPaths.length) {
-                      context.go(_tabPaths[i]);
+                      final target = _tabPaths[i];
+                      if (target == '/visits' &&
+                          !currentPath.startsWith('/visits')) {
+                        context.go(
+                          '/visits?reset=${DateTime.now().millisecondsSinceEpoch}',
+                        );
+                        return;
+                      }
+                      context.go(target);
                     }
                   },
                 ),
@@ -350,9 +365,7 @@ class _CenterNavItem extends StatelessWidget {
               ],
             ),
             child: Icon(
-              isActive
-                  ? LucideIcons.mapPin
-                  : LucideIcons.mapPin,
+              isActive ? LucideIcons.mapPin : LucideIcons.mapPin,
               color: Colors.white,
               size: 24,
             ),

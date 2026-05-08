@@ -57,41 +57,22 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
   }
 
   Future<void> _loadOrg() async {
-    final org = await ref.read(localDatabaseProvider).getOrganisationById(widget.orgId);
+    final org = await ref
+        .read(localDatabaseProvider)
+        .getOrganisationById(widget.orgId);
     if (!mounted) return;
     setState(() => _org = org);
   }
 
   Future<void> _loadDoctors() async {
     final db = ref.read(localDatabaseProvider);
-    final api = ref.read(remoteApiServiceProvider);
-    var results = await db.getDoctors(orgId: widget.orgId);
-    var mutableResults = results
+    final results = await db.getDoctors(
+      orgId: widget.orgId,
+      includeGlobalFallback: false,
+    );
+    final mutableResults = results
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
-
-    if (mutableResults.isEmpty) {
-      try {
-        final remote = await api.getDoctorsByOrganization(widget.orgId);
-        if (remote.isNotEmpty) {
-          final normalized = remote.map((e) {
-            final row = Map<String, dynamic>.from(e);
-            final orgId = (row['organisation_id'] as num?)?.toInt() ?? 0;
-            if (orgId == 0) {
-              row['organisation_id'] = widget.orgId;
-            }
-            return row;
-          }).toList();
-          await db.upsertDoctors(normalized);
-          results = await db.getDoctors(orgId: widget.orgId);
-          mutableResults = results
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        }
-      } catch (_) {
-        // Keep local snapshot if endpoint is unavailable.
-      }
-    }
 
     // Mark doctors that have been visited using local visit history
     try {
@@ -128,10 +109,13 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
         {
           'id': doctorId,
           'full_name': (doctor['full_name'] ?? doctor['name'] ?? '').toString(),
-          'specialty': (doctor['specialty'] ?? doctor['position'] ?? '').toString(),
-          'organisation_id': ((doctor['organisation_id'] ?? doctor['organization_id'])
-                  is num)
-              ? ((doctor['organisation_id'] ?? doctor['organization_id']) as num).toInt()
+          'specialty': (doctor['specialty'] ?? doctor['position'] ?? '')
+              .toString(),
+          'organisation_id':
+              ((doctor['organisation_id'] ?? doctor['organization_id']) is num)
+              ? ((doctor['organisation_id'] ?? doctor['organization_id'])
+                        as num)
+                    .toInt()
               : widget.orgId,
           'is_favorite': next ? 1 : 0,
           'category': (doctor['category'] ?? 'C').toString(),
@@ -149,20 +133,30 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(next ? 'Добавлено в избранное' : 'Убрано из избранного'),
+          content: Text(
+            next ? 'Добавлено в избранное' : 'Убрано из избранного',
+          ),
         ),
       );
     } catch (_) {
       // Queue for retry when internet returns.
       try {
-        await db.enqueueFavorite(entityType: 'doctor', entityId: doctorId, add: next);
+        await db.enqueueFavorite(
+          entityType: 'doctor',
+          entityId: doctorId,
+          add: next,
+        );
       } catch (_) {}
       if (ref.read(isOfflineProvider)) {
         pulseOfflineBanner(ref);
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(next ? 'Добавлено в избранное' : 'Убрано из избранного')),
+        SnackBar(
+          content: Text(
+            next ? 'Добавлено в избранное' : 'Убрано из избранного',
+          ),
+        ),
       );
     }
   }
@@ -175,9 +169,13 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       if (raw == null || raw.isEmpty) return null;
       final map = jsonDecode(raw);
       if (map is Map<String, dynamic>) {
-        final v = (map['phone'] ?? map['phone_1'] ?? map['phone1'] ?? map['phone_number'])
-            ?.toString()
-            .trim();
+        final v =
+            (map['phone'] ??
+                    map['phone_1'] ??
+                    map['phone1'] ??
+                    map['phone_number'])
+                ?.toString()
+                .trim();
         if (v != null && v.isNotEmpty) return v;
       }
     } catch (_) {}
@@ -193,14 +191,18 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
 
   String? _orgResponsible() {
     final raw = _rawOrg();
-    final v = (raw['responsible_person'] ?? raw['responsible'])?.toString().trim();
+    final v = (raw['responsible_person'] ?? raw['responsible'])
+        ?.toString()
+        .trim();
     if (v != null && v.isNotEmpty) return v;
     return null;
   }
 
   String? _orgDistrict() {
     final raw = _rawOrg();
-    final v = (raw['district'] ?? raw['area'] ?? raw['area_name'])?.toString().trim();
+    final v = (raw['district'] ?? raw['area'] ?? raw['area_name'])
+        ?.toString()
+        .trim();
     if (v != null && v.isNotEmpty) return v;
     final direct = (_org?['district'] as String?)?.trim();
     if (direct != null && direct.isNotEmpty) return direct;
@@ -209,14 +211,17 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
 
   String? _orgCategory() {
     final raw = _rawOrg();
-    final v = (raw['category'] ?? raw['category_name'] ?? raw['class'])?.toString().trim();
+    final v = (raw['category'] ?? raw['category_name'] ?? raw['class'])
+        ?.toString()
+        .trim();
     if (v != null && v.isNotEmpty) return v;
     return null;
   }
 
   bool? _worksWithUs() {
     final raw = _rawOrg();
-    final candidate = raw['is_working_with_us'] ??
+    final candidate =
+        raw['is_working_with_us'] ??
         raw['working_with_us'] ??
         raw['is_partner'] ??
         raw['is_active_partner'];
@@ -260,20 +265,29 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     if (!_canEditDirectory) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Редактирование доступно только администратору')),
+        const SnackBar(
+          content: Text('Редактирование доступно только администратору'),
+        ),
       );
       return;
     }
 
-    final nameCtrl = TextEditingController(text: (_org?['name'] as String?) ?? widget.orgName);
+    final nameCtrl = TextEditingController(
+      text: (_org?['name'] as String?) ?? widget.orgName,
+    );
     final innCtrl = TextEditingController(text: _orgInn() ?? '');
     final phoneCtrl = TextEditingController(text: _orgPhone() ?? '');
-    final cityCtrl = TextEditingController(text: (_org?['city'] as String?) ?? '');
+    final cityCtrl = TextEditingController(
+      text: (_org?['city'] as String?) ?? '',
+    );
     final districtCtrl = TextEditingController(text: _orgDistrict() ?? '');
-    final displayAddress = ((_org?['address'] as String?) ?? widget.orgAddress).trim();
+    final displayAddress = ((_org?['address'] as String?) ?? widget.orgAddress)
+        .trim();
     final addressCtrl = TextEditingController(text: displayAddress);
     final categoryCtrl = TextEditingController(text: _orgCategory() ?? 'C');
-    final responsibleCtrl = TextEditingController(text: _orgResponsible() ?? '');
+    final responsibleCtrl = TextEditingController(
+      text: _orgResponsible() ?? '',
+    );
     final lat = (_org?['latitude'] as num?)?.toDouble();
     final lon = (_org?['longitude'] as num?)?.toDouble();
 
@@ -290,28 +304,62 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
           16,
           16,
           16,
-          MediaQuery.of(ctx).viewInsets.bottom + MediaQuery.of(ctx).padding.bottom + 16,
+          MediaQuery.of(ctx).viewInsets.bottom +
+              MediaQuery.of(ctx).padding.bottom +
+              16,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Редактировать организацию', style: GoogleFonts.manrope(fontSize: 20, fontWeight: FontWeight.w700)),
+            Text(
+              'Редактировать организацию',
+              style: GoogleFonts.manrope(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             const SizedBox(height: 12),
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Название *')),
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Название *'),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: innCtrl, decoration: const InputDecoration(labelText: 'ИНН *')),
+            TextField(
+              controller: innCtrl,
+              decoration: const InputDecoration(labelText: 'ИНН *'),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Телефон')),
+            TextField(
+              controller: phoneCtrl,
+              decoration: const InputDecoration(labelText: 'Телефон'),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: cityCtrl, decoration: const InputDecoration(labelText: 'Регион *')),
+            TextField(
+              controller: cityCtrl,
+              decoration: const InputDecoration(labelText: 'Регион *'),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: districtCtrl, decoration: const InputDecoration(labelText: 'Район')),
+            TextField(
+              controller: districtCtrl,
+              decoration: const InputDecoration(labelText: 'Район'),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: addressCtrl, decoration: const InputDecoration(labelText: 'Адрес *')),
+            TextField(
+              controller: addressCtrl,
+              decoration: const InputDecoration(labelText: 'Адрес *'),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: categoryCtrl, decoration: const InputDecoration(labelText: 'Категория')),
+            TextField(
+              controller: categoryCtrl,
+              decoration: const InputDecoration(labelText: 'Категория'),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: responsibleCtrl, decoration: const InputDecoration(labelText: 'Ответственное лицо')),
+            TextField(
+              controller: responsibleCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Ответственное лицо',
+              ),
+            ),
             const SizedBox(height: 8),
             Container(
               width: double.infinity,
@@ -335,7 +383,9 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 48),
+              ),
               child: const Text('Обновить'),
             ),
           ],
@@ -372,9 +422,9 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     );
     await _loadOrg();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Организация обновлена')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Организация обновлена')));
 
     // Отправляем в API в фоне; при ошибке кладём в очередь
     try {
@@ -417,7 +467,8 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     final responsible = _orgResponsible();
     final category = _orgCategory();
     final worksWithUs = _worksWithUs();
-    final displayAddress = ((_org?['address'] as String?) ?? widget.orgAddress).trim();
+    final displayAddress = ((_org?['address'] as String?) ?? widget.orgAddress)
+        .trim();
     final ctaBottom = LimaNavBarLayout.totalBarHeight(context) + 12;
 
     return Scaffold(
@@ -427,370 +478,416 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
           Column(
             children: [
               // ── AppBar ────────────────────────────────────────────────────
-              AppCenteredHeader(
-                title: 'ЛПУ',
-                onBack: () => context.pop(),
-              ),
+              AppCenteredHeader(title: 'ЛПУ', onBack: () => context.pop()),
 
               Expanded(
                 child: ListView(
-                  padding: EdgeInsets.fromLTRB(
-                    16,
-                    12,
-                    16,
-                    ctaBottom + 56,
-                  ),
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, ctaBottom + 56),
                   children: [
-                // ── Org header card ────────────────────────────────────────
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.secondaryBg,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: shadowSm,
-                  ),
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: AppColors.iconBgBlue,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.home_work_rounded,
-                            color: AppColors.primary, size: 26),
+                    // ── Org header card ────────────────────────────────────────
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.secondaryBg,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: shadowSm,
                       ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.orgName,
-                              style: GoogleFonts.manrope(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.primaryText,
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: AppColors.iconBgBlue,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(
+                              Icons.home_work_rounded,
+                              color: AppColors.primary,
+                              size: 26,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.orgName,
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primaryText,
+                                  ),
+                                ),
+                                if (category != null &&
+                                    category.isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.iconBgLight,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      category,
+                                      style: GoogleFonts.manrope(
+                                        fontSize: 11,
+                                        color: AppColors.secondaryText,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          if (worksWithUs == false) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFEEF0),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'Не работает с нами',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 12,
+                                  color: AppColors.error,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
-                            if (category != null && category.isNotEmpty) ...[
-                              const SizedBox(height: 6),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // ── Info ───────────────────────────────────────────────────
+                    const SectionLabel(text: 'ИНФОРМАЦИЯ'),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.secondaryBg,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: shadowSm,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Column(
+                        children: [
+                          if ((_org?['city'] as String? ?? '').isNotEmpty)
+                            InfoRow(
+                              label: 'Регион',
+                              value: _org!['city'] as String,
+                            ),
+                          if (displayAddress.isNotEmpty)
+                            InfoRow(label: 'Адрес', value: displayAddress),
+                          if (phone != null && phone.isNotEmpty)
+                            InfoRow(
+                              label: 'Телефон',
+                              value: phone,
+                              isLink: true,
+                              onTap: () => launchPhone(phone),
+                            ),
+                          if (inn != null && inn.isNotEmpty)
+                            InfoRow(label: 'ИНН', value: inn),
+                          if (responsible != null && responsible.isNotEmpty)
+                            InfoRow(label: 'Ответственный', value: responsible),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // ── Call / Route / Edit ───────────────────────────────────
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _ActionBtn(
+                            icon: Icons.call_rounded,
+                            label: 'Позвонить',
+                            onTap: hasPhone
+                                ? () async {
+                                    if (phone == null || phone.isEmpty) return;
+                                    await launchPhone(phone);
+                                  }
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _ActionBtn(
+                            icon: Icons.near_me_rounded,
+                            label: 'Маршрут',
+                            onTap: _buildYandexRoute,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _ActionBtn(
+                            icon: Icons.edit_rounded,
+                            label: 'Редактировать',
+                            onTap: canEditDirectory
+                                ? _openEditOrganizationSheet
+                                : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+
+                    // ── History ────────────────────────────────────────────────
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.secondaryBg,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: shadowSm,
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => context.push(
+                          Uri(
+                            path: '/visits/history',
+                            queryParameters: {
+                              'type': 'lpu',
+                              'orgId': '${widget.orgId}',
+                              'openFirst': '1',
+                            },
+                          ).toString(),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                          child: Row(
+                            children: [
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                width: 40,
+                                height: 40,
                                 decoration: BoxDecoration(
-                                  color: AppColors.iconBgLight,
-                                  borderRadius: BorderRadius.circular(8),
+                                  color: AppColors.iconBgBlue,
+                                  borderRadius: BorderRadius.circular(10),
                                 ),
+                                child: const Icon(
+                                  Icons.access_time_filled_rounded,
+                                  color: AppColors.primary,
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
                                 child: Text(
-                                  category,
+                                  'История визитов',
                                   style: GoogleFonts.manrope(
-                                    fontSize: 11,
-                                    color: AppColors.secondaryText,
+                                    fontSize: 15,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ),
+                              const Icon(
+                                Icons.chevron_right_rounded,
+                                color: AppColors.hintText,
+                                size: 21,
+                              ),
                             ],
-                          ],
+                          ),
                         ),
                       ),
-                      if (worksWithUs == false) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFEEF0),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            'Не работает с нами',
-                            style: GoogleFonts.manrope(
-                              fontSize: 12,
-                              color: AppColors.error,
-                              fontWeight: FontWeight.w600,
-                            ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // ── Doctors ────────────────────────────────────────────────
+                    Row(
+                      children: [
+                        const SectionLabel(text: 'ВРАЧИ'),
+                        const Spacer(),
+                        Text(
+                          '${_doctors.length}',
+                          style: GoogleFonts.manrope(
+                            fontSize: 13,
+                            color: AppColors.secondaryText,
                           ),
                         ),
                       ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-
-                // ── Info ───────────────────────────────────────────────────
-                const SectionLabel(text: 'ИНФОРМАЦИЯ'),
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.secondaryBg,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: shadowSm,
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    children: [
-                      if ((_org?['city'] as String? ?? '').isNotEmpty)
-                        InfoRow(label: 'Регион', value: _org!['city'] as String),
-                      if (displayAddress.isNotEmpty)
-                        InfoRow(label: 'Адрес', value: displayAddress),
-                      if (phone != null && phone.isNotEmpty)
-                        InfoRow(label: 'Телефон', value: phone, isLink: true, onTap: () => launchPhone(phone)),
-                      if (inn != null && inn.isNotEmpty) InfoRow(label: 'ИНН', value: inn),
-                      if (responsible != null && responsible.isNotEmpty)
-                        InfoRow(label: 'Ответственный', value: responsible),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // ── Call / Route / Edit ───────────────────────────────────
-                Row(
-                  children: [
-                    Expanded(
-                      child: _ActionBtn(
-                        icon: Icons.call_rounded,
-                        label: 'Позвонить',
-                        onTap: hasPhone
-                            ? () async {
-                                if (phone == null || phone.isEmpty) return;
-                                await launchPhone(phone);
-                              }
-                            : null,
-                      ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _ActionBtn(
-                        icon: Icons.near_me_rounded,
-                        label: 'Маршрут',
-                        onTap: _buildYandexRoute,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _ActionBtn(
-                        icon: Icons.edit_rounded,
-                        label: 'Редактировать',
-                        onTap: canEditDirectory ? _openEditOrganizationSheet : null,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-
-                // ── History ────────────────────────────────────────────────
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.secondaryBg,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: shadowSm,
-                  ),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(16),
-                    onTap: () => context.push(
-                      Uri(
-                        path: '/visits/history',
-                        queryParameters: {
-                          'type': 'lpu',
-                          'orgId': '${widget.orgId}',
-                          'openFirst': '1',
-                        },
-                      ).toString(),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: AppColors.iconBgBlue,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Icon(Icons.access_time_filled_rounded,
-                                color: AppColors.primary, size: 20),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'История визитов',
-                              style: GoogleFonts.manrope(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          const Icon(
-                            Icons.chevron_right_rounded,
-                            color: AppColors.hintText,
-                            size: 21,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // ── Doctors ────────────────────────────────────────────────
-                Row(
-                  children: [
-                    const SectionLabel(text: 'ВРАЧИ'),
-                    const Spacer(),
-                    Text(
-                      '${_doctors.length}',
-                      style: GoogleFonts.manrope(
-                          fontSize: 13, color: AppColors.secondaryText),
-                    ),
-                  ],
-                ),
-                if (_doctors.isEmpty)
-                  Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.secondaryBg,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: shadowSm,
-                    ),
-                    child: ListTile(
-                      title: Text(
-                        'Врачи не найдены',
-                        style: GoogleFonts.manrope(
-                          color: AppColors.secondaryText,
+                    if (_doctors.isEmpty)
+                      Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.secondaryBg,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: shadowSm,
                         ),
-                      ),
-                    ),
-                  )
-                else
-                  Column(
-                    children: _doctors.map((d) {
-                      final isFavorite = (d['is_favorite'] ?? 0) == 1;
-                      final name = d['full_name'] as String? ?? '';
-                      final specialty = d['specialty'] as String? ?? '';
-                      final doctorId = (d['id'] as int?) ?? -1;
-                      final expanded = _expandedDoctorIds.contains(doctorId);
-                      final category = 'Категория ${d['category'] ?? 'C'}';
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFDDE3EB),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: AppColors.divider, width: 1),
-                          ),
-                          child: Container(
-                            margin: const EdgeInsets.only(left: 6),
-                            decoration: BoxDecoration(
-                              color: AppColors.secondaryBg,
-                              borderRadius: BorderRadius.circular(14),
-                              boxShadow: shadowSm,
+                        child: ListTile(
+                          title: Text(
+                            'Врачи не найдены',
+                            style: GoogleFonts.manrope(
+                              color: AppColors.secondaryText,
                             ),
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(14),
-                              onTap: () {
-                                setState(() {
-                                  if (expanded) {
-                                    _expandedDoctorIds.remove(doctorId);
-                                  } else {
-                                    _expandedDoctorIds.add(doctorId);
-                                  }
-                                });
-                              },
-                              child: Column(
-                                children: [
-                                  Padding(
-                                    padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            name,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: GoogleFonts.manrope(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
+                          ),
+                        ),
+                      )
+                    else
+                      Column(
+                        children: _doctors.map((d) {
+                          final isFavorite = (d['is_favorite'] ?? 0) == 1;
+                          final name = d['full_name'] as String? ?? '';
+                          final specialty = d['specialty'] as String? ?? '';
+                          final doctorId = (d['id'] as int?) ?? -1;
+                          final expanded = _expandedDoctorIds.contains(
+                            doctorId,
+                          );
+                          final category = 'Категория ${d['category'] ?? 'C'}';
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFDDE3EB),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: AppColors.divider,
+                                  width: 1,
+                                ),
+                              ),
+                              child: Container(
+                                margin: const EdgeInsets.only(left: 6),
+                                decoration: BoxDecoration(
+                                  color: AppColors.secondaryBg,
+                                  borderRadius: BorderRadius.circular(14),
+                                  boxShadow: shadowSm,
+                                ),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(14),
+                                  onTap: () {
+                                    setState(() {
+                                      if (expanded) {
+                                        _expandedDoctorIds.remove(doctorId);
+                                      } else {
+                                        _expandedDoctorIds.add(doctorId);
+                                      }
+                                    });
+                                  },
+                                  child: Column(
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          14,
+                                          14,
+                                          12,
+                                          14,
                                         ),
-                                        GestureDetector(
-                                          onTap: () => _toggleFavorite(d),
-                                          child: Icon(
-                                            isFavorite
-                                                ? Icons.bookmark_rounded
-                                                : Icons.bookmark_border_rounded,
-                                            color: AppColors.primary,
-                                            size: 21,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Icon(
-                                          expanded
-                                              ? Icons.keyboard_arrow_down_rounded
-                                              : Icons.chevron_right_rounded,
-                                          color: AppColors.hintText,
-                                          size: 21,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  if (expanded) ...[
-                                    const Divider(height: 1, color: AppColors.divider),
-                                    Padding(
-                                      padding: const EdgeInsets.fromLTRB(14, 12, 12, 14),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 10,
-                                              vertical: 6,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: AppColors.iconBgBlue,
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: Text(
-                                              category,
-                                              style: GoogleFonts.manrope(
-                                                fontSize: 12,
-                                                color: AppColors.secondaryText,
-                                                fontWeight: FontWeight.w500,
+                                        child: Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: GoogleFonts.manrope(
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
                                               ),
                                             ),
+                                            GestureDetector(
+                                              onTap: () => _toggleFavorite(d),
+                                              child: Icon(
+                                                isFavorite
+                                                    ? Icons.bookmark_rounded
+                                                    : Icons
+                                                          .bookmark_border_rounded,
+                                                color: AppColors.primary,
+                                                size: 21,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Icon(
+                                              expanded
+                                                  ? Icons
+                                                        .keyboard_arrow_down_rounded
+                                                  : Icons.chevron_right_rounded,
+                                              color: AppColors.hintText,
+                                              size: 21,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (expanded) ...[
+                                        const Divider(
+                                          height: 1,
+                                          color: AppColors.divider,
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            14,
+                                            12,
+                                            12,
+                                            14,
                                           ),
-                                          const SizedBox(height: 12),
-                                          Row(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
-                                              const Icon(
-                                                Icons.work_outline_rounded,
-                                                color: AppColors.hintText,
-                                                size: 18,
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Expanded(
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 6,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: AppColors.iconBgBlue,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
                                                 child: Text(
-                                                  specialty.isEmpty ? '—' : specialty,
+                                                  category,
                                                   style: GoogleFonts.manrope(
-                                                    fontSize: 14,
-                                                    color: AppColors.secondaryText,
+                                                    fontSize: 12,
+                                                    color:
+                                                        AppColors.secondaryText,
+                                                    fontWeight: FontWeight.w500,
                                                   ),
                                                 ),
                                               ),
+                                              const SizedBox(height: 12),
+                                              Row(
+                                                children: [
+                                                  const Icon(
+                                                    Icons.work_outline_rounded,
+                                                    color: AppColors.hintText,
+                                                    size: 18,
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: Text(
+                                                      specialty.isEmpty
+                                                          ? '—'
+                                                          : specialty,
+                                                      style:
+                                                          GoogleFonts.manrope(
+                                                            fontSize: 14,
+                                                            color: AppColors
+                                                                .secondaryText,
+                                                          ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
                                             ],
                                           ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ],
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
+                          );
+                        }).toList(),
+                      ),
                   ],
                 ),
               ),
@@ -810,7 +907,8 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 44),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               child: const Text('Начать визит'),
             ),
@@ -856,7 +954,9 @@ class _ActionBtn extends StatelessWidget {
               label,
               style: GoogleFonts.manrope(
                 fontSize: 11,
-                color: onTap == null ? AppColors.hintText : AppColors.primaryText,
+                color: onTap == null
+                    ? AppColors.hintText
+                    : AppColors.primaryText,
               ),
             ),
           ],

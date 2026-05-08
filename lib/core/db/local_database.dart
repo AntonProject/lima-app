@@ -33,7 +33,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 8,
+      version: 10,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -52,7 +52,9 @@ class LocalDatabase {
         address     TEXT,
         type        TEXT,
         city        TEXT,
+        region_id   INTEGER,
         district    TEXT,
+        area_id     INTEGER,
         inn         TEXT,
         category    TEXT,
         responsible TEXT,
@@ -79,6 +81,16 @@ class LocalDatabase {
         updated_at       TEXT,
         sync_id          INTEGER,
         raw_json         TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE doctor_organisations (
+        doctor_id       INTEGER NOT NULL,
+        organisation_id INTEGER NOT NULL,
+        sync_id         INTEGER,
+        raw_json        TEXT,
+        PRIMARY KEY (doctor_id, organisation_id)
       )
     ''');
 
@@ -346,6 +358,12 @@ class LocalDatabase {
         ''');
       } catch (_) {}
     }
+    if (oldVersion < 9) {
+      await _ensureRegionColumns(db);
+    }
+    if (oldVersion < 10) {
+      await _ensureDoctorOrganisationTable(db);
+    }
   }
 
   Future<void> _ensureOptionalColumns() async {
@@ -364,6 +382,7 @@ class LocalDatabase {
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN district TEXT');
     } catch (_) {}
+    await _ensureRegionColumns(db);
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN inn TEXT');
     } catch (_) {}
@@ -389,6 +408,32 @@ class LocalDatabase {
       await db.execute('ALTER TABLE drugs ADD COLUMN binding_drug_id INTEGER');
     } catch (_) {}
     await _ensureRawAndSyncColumns(db);
+    await _ensureDoctorOrganisationTable(db);
+  }
+
+  Future<void> _ensureDoctorOrganisationTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS doctor_organisations (
+        doctor_id       INTEGER NOT NULL,
+        organisation_id INTEGER NOT NULL,
+        sync_id         INTEGER,
+        raw_json        TEXT,
+        PRIMARY KEY (doctor_id, organisation_id)
+      )
+    ''');
+  }
+
+  Future<void> _ensureRegionColumns(Database database) async {
+    try {
+      await database.execute(
+        'ALTER TABLE organisations ADD COLUMN region_id INTEGER',
+      );
+    } catch (_) {}
+    try {
+      await database.execute(
+        'ALTER TABLE organisations ADD COLUMN area_id INTEGER',
+      );
+    } catch (_) {}
   }
 
   Future<void> _ensureRawAndSyncColumns(Database database) async {
@@ -608,6 +653,7 @@ class LocalDatabase {
   Future<void> seedFromRemote({
     required List<Map> orgs,
     required List<Map> doctors,
+    List<Map> doctorOrgLinks = const [],
     required List<Map> drugs,
     required List<Map> materials,
     required List<Map> visits,
@@ -645,6 +691,14 @@ class LocalDatabase {
       batch.insert(
         'doctors',
         Map<String, dynamic>.from(doctor),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    for (final link in doctorOrgLinks) {
+      batch.insert(
+        'doctor_organisations',
+        Map<String, dynamic>.from(link),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
@@ -838,6 +892,7 @@ class LocalDatabase {
   Future<void> replaceRemoteSnapshotPreservingUnsynced({
     required List<Map> orgs,
     required List<Map> doctors,
+    List<Map> doctorOrgLinks = const [],
     required List<Map> drugs,
     required List<Map> materials,
     required List<Map> visits,
@@ -852,6 +907,7 @@ class LocalDatabase {
     await db.transaction((txn) async {
       await txn.delete('organisations');
       await txn.delete('doctors');
+      await txn.delete('doctor_organisations');
       await txn.delete('drugs');
       await txn.delete('drug_materials');
       await txn.delete('visits');
@@ -879,6 +935,14 @@ class LocalDatabase {
         await txn.insert(
           'doctors',
           Map<String, dynamic>.from(doctor),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      for (final link in doctorOrgLinks) {
+        await txn.insert(
+          'doctor_organisations',
+          Map<String, dynamic>.from(link),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
@@ -1091,6 +1155,7 @@ class LocalDatabase {
   Future<List<Map<String, dynamic>>> getDoctors({
     int? orgId,
     String? query,
+    bool includeGlobalFallback = true,
   }) async {
     String queryFilter = '';
     final args = <dynamic>[];
@@ -1102,6 +1167,15 @@ class LocalDatabase {
     }
 
     if (orgId != null) {
+      final linked = await db.rawQuery(
+        '''SELECT DISTINCT d.* FROM doctors d
+           INNER JOIN doctor_organisations rel ON rel.doctor_id = d.id
+           WHERE rel.organisation_id = ?$queryFilter
+           ORDER BY d.full_name''',
+        [orgId, ...args],
+      );
+      if (linked.isNotEmpty) return linked;
+
       // Primary: doctors explicitly linked to this org
       final orgSpecific = await db.rawQuery(
         'SELECT * FROM doctors WHERE organisation_id = ?$queryFilter ORDER BY full_name',
@@ -1118,6 +1192,8 @@ class LocalDatabase {
         [orgId, ...args],
       );
       if (fromVisits.isNotEmpty) return fromVisits;
+
+      if (!includeGlobalFallback) return const <Map<String, dynamic>>[];
 
       // Fallback 2: global doctors (organisation_id = 0 or NULL) — synced without org association
       return db.rawQuery(
@@ -1147,6 +1223,21 @@ class LocalDatabase {
       batch.insert(
         'doctors',
         Map<String, dynamic>.from(row),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<void> upsertDoctorOrganisationLinks(
+    List<Map<String, dynamic>> links,
+  ) async {
+    if (links.isEmpty) return;
+    final batch = db.batch();
+    for (final link in links) {
+      batch.insert(
+        'doctor_organisations',
+        Map<String, dynamic>.from(link),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
