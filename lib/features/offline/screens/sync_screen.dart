@@ -1,16 +1,14 @@
-import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/network/api_client.dart';
-import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/sync_provider.dart';
+import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
 class SyncScreen extends ConsumerStatefulWidget {
@@ -21,40 +19,115 @@ class SyncScreen extends ConsumerStatefulWidget {
 }
 
 class _SyncScreenState extends ConsumerState<SyncScreen> {
+  static const int _unsyncedPageSize = 10;
+
   List<Map<String, dynamic>> _unsyncedVisits = [];
-  List<Map<String, dynamic>> _allVisits = [];
   List<Map<String, dynamic>> _pendingDoctors = [];
   List<Map<String, dynamic>> _pendingOrgUpdates = [];
+  Map<String, int> _localTotals = const {};
   bool _loadingVisits = true;
-  bool _runningApiDiagnostics = false;
+  bool _loadingData = false;
+  int _unsyncedPage = 0;
+  StreamSubscription<Set<String>>? _dbChangesSub;
 
   @override
   void initState() {
     super.initState();
+    _dbChangesSub = ref.read(localDatabaseProvider).changes.listen((tables) {
+      if (!mounted) return;
+      if (tables.intersection(_localDataTables).isEmpty) return;
+      unawaited(_loadData(refreshSyncCount: false));
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadData();
     });
   }
 
-  Future<void> _loadData() async {
-    if (!mounted) return;
+  @override
+  void dispose() {
+    _dbChangesSub?.cancel();
+    super.dispose();
+  }
+
+  static const _localDataTables = {
+    'organisations',
+    'doctors',
+    'doctor_organisations',
+    'drugs',
+    'drug_materials',
+    'visits',
+    'planned_visits',
+    'pending_doctors',
+    'pending_org_updates',
+  };
+
+  Future<void> _loadData({bool refreshSyncCount = true}) async {
+    if (!mounted || _loadingData) return;
+    _loadingData = true;
     final db = ref.read(localDatabaseProvider);
     final syncNotifier = ref.read(syncProvider.notifier);
-    await db.deleteLegacyTestVisits();
-    final unsynced = await db.getVisits(unsyncedOnly: true);
-    final all = await db.getVisits();
-    final pendingDoctors = await db.getPendingDoctors();
-    final pendingOrgUpdates = await db.getPendingOrgUpdates();
-    if (!mounted) return;
-    await syncNotifier.refreshUnsyncedCount();
-    if (!mounted) return;
-    setState(() {
-      _unsyncedVisits = unsynced;
-      _allVisits = all;
-      _pendingDoctors = pendingDoctors;
-      _pendingOrgUpdates = pendingOrgUpdates;
-      _loadingVisits = false;
-    });
+    try {
+      await db.deleteLegacyTestVisits();
+      final unsynced = await db.getVisits(unsyncedOnly: true);
+      final pendingDoctors = await db.getPendingDoctors();
+      final pendingOrgUpdates = await db.getPendingOrgUpdates();
+      final localTotals = await _loadLocalTotals(db);
+      if (!mounted) return;
+      if (refreshSyncCount) {
+        await syncNotifier.refreshUnsyncedCount();
+        if (!mounted) return;
+      }
+      setState(() {
+        _unsyncedVisits = unsynced;
+        _pendingDoctors = pendingDoctors;
+        _pendingOrgUpdates = pendingOrgUpdates;
+        _localTotals = localTotals;
+        _clampUnsyncedPage();
+        _loadingVisits = false;
+      });
+    } finally {
+      _loadingData = false;
+    }
+  }
+
+  Future<Map<String, int>> _loadLocalTotals(LocalDatabase db) async {
+    Future<int> count(String sql) async {
+      final rows = await db.db.rawQuery(sql);
+      return (rows.first['c'] as int?) ?? 0;
+    }
+
+    return {
+      'organizations': await count('SELECT COUNT(*) AS c FROM organisations'),
+      'lpu': await count(
+        "SELECT COUNT(*) AS c FROM organisations WHERE type = 'lpu'",
+      ),
+      'pharmacy': await count(
+        "SELECT COUNT(*) AS c FROM organisations WHERE type = 'pharmacy'",
+      ),
+      'distributor': await count(
+        "SELECT COUNT(*) AS c FROM organisations WHERE type = 'distributor'",
+      ),
+      'doctors': await count('SELECT COUNT(*) AS c FROM doctors'),
+      'visits': await count('SELECT COUNT(*) AS c FROM visits'),
+      'drugs': await count('SELECT COUNT(*) AS c FROM drugs'),
+      'materials': await count('SELECT COUNT(*) AS c FROM drug_materials'),
+    };
+  }
+
+  int get _unsyncedTotalPages {
+    if (_unsyncedVisits.isEmpty) return 1;
+    return ((_unsyncedVisits.length - 1) ~/ _unsyncedPageSize) + 1;
+  }
+
+  List<Map<String, dynamic>> get _visibleUnsyncedVisits {
+    final start = _unsyncedPage * _unsyncedPageSize;
+    return _unsyncedVisits.skip(start).take(_unsyncedPageSize).toList();
+  }
+
+  void _clampUnsyncedPage() {
+    final lastPage = _unsyncedTotalPages - 1;
+    if (_unsyncedPage > lastPage) _unsyncedPage = lastPage;
+    if (_unsyncedPage < 0) _unsyncedPage = 0;
   }
 
   String _formatDateTime(String? isoString) {
@@ -72,401 +145,224 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     }
   }
 
-  Future<void> _showJsonDialog({
-    required String title,
-    required Map<String, dynamic> payload,
-  }) async {
-    final jsonText = const JsonEncoder.withIndent('  ').convert(payload);
-    final ok = payload['ok'] == true;
-    final hasOk = payload.containsKey('ok');
-    final statusCode = payload['status'];
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              title,
-              style: GoogleFonts.manrope(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            if (hasOk)
-              Text(
-                ok ? 'OK' : 'ERROR',
-                style: GoogleFonts.manrope(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  color: ok ? Colors.green[700] : Colors.red[700],
-                ),
-              ),
-            if (statusCode != null)
-              Text(
-                'HTTP: $statusCode',
-                style: GoogleFonts.manrope(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey[700],
-                ),
-              ),
-          ],
-        ),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: SelectableText(
-              jsonText,
-              style: GoogleFonts.robotoMono(fontSize: 12),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: jsonText));
-              if (!ctx.mounted) return;
-              ScaffoldMessenger.of(
-                ctx,
-              ).showSnackBar(const SnackBar(content: Text('JSON скопирован')));
-            },
-            child: const Text('Копировать'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Закрыть'),
-          ),
-        ],
+  void _showSnack(String message) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(_compactSnackMessage(message)),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
 
-  Future<void> _runApiDiagnostics() async {
-    if (_runningApiDiagnostics) return;
-    setState(() => _runningApiDiagnostics = true);
-    final api = ref.read(remoteApiServiceProvider);
-    final startedAt = DateTime.now().toIso8601String();
-
-    final report = <String, dynamic>{
-      'started_at': startedAt,
-      'checks': <String, dynamic>{},
-    };
-    final checks = report['checks'] as Map<String, dynamic>;
-
-    // Cart — probe known candidate endpoints to find the server-side cart
-    final dio = ref.read(apiClientProvider).dio;
-    final cartPaths = [
-      '/api/Cart',
-      '/api/cart',
-      '/api/Orders/cart',
-      '/api/Orders',
-      '/api/Basket',
-      '/api/basket',
-      '/api/Visits/cart',
-      '/api/Orders/active',
-      '/api/Orders/pending',
-    ];
-    final cartProbe = <String, dynamic>{};
-    for (final path in cartPaths) {
-      final sw = Stopwatch()..start();
-      try {
-        final resp = await dio.get(path);
-        sw.stop();
-        cartProbe[path] = {
-          'ok': true,
-          'status': resp.statusCode,
-          'elapsed_ms': sw.elapsedMilliseconds,
-          'data': resp.data,
-        };
-      } catch (e) {
-        sw.stop();
-        cartProbe[path] = {
-          'ok': false,
-          'elapsed_ms': sw.elapsedMilliseconds,
-          'error': '$e',
-        };
-      }
+  String _compactSnackMessage(String message) {
+    final trimmed = message.trim();
+    if (!trimmed.contains('{') && !trimmed.contains('DioException')) {
+      return trimmed;
     }
-    checks['cart_probe'] = cartProbe;
 
-    // Last 10 orders (compact) — fastest way to compare "correct vs incorrect"
-    // order payload/flags directly from API.
+    final serverMessageMatch = RegExp(
+      r'"message"\s*:\s*"([^"]+)"',
+    ).firstMatch(trimmed);
+    final serverMessage = serverMessageMatch?.group(1);
+    if (serverMessage != null && serverMessage.isNotEmpty) {
+      return serverMessage;
+    }
+
+    if (trimmed.contains('VALIDATION_ERROR') ||
+        trimmed.contains('VALIDATION_ERRORS')) {
+      return 'Сервер отклонил данные. Подробности сохранены в диагностике.';
+    }
+    return 'Не удалось отправить данные. Подробности сохранены в диагностике.';
+  }
+
+  Future<void> _runDeltaPull() async {
+    final notifier = ref.read(syncProvider.notifier);
     try {
-      final sw = Stopwatch()..start();
-      final resp = await dio.get(
-        '/api/Orders',
-        queryParameters: const {'page': 1, 'page_size': 10},
+      await notifier.syncLayeredFromRemote(pushPendingFirst: false);
+      await _loadData();
+      if (!mounted) return;
+      _showSnack(ref.read(syncProvider).message ?? 'Данные загружены');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack('Ошибка загрузки: $e');
+    }
+  }
+
+  Future<void> _runFullRefresh() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Подтвердите full refresh'),
+        content: const Text(
+          'Будет выполнено полное обновление локальной БД из API. '
+          'Несинхронизированные визиты будут сохранены.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Обновить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final notifier = ref.read(syncProvider.notifier);
+    try {
+      await notifier.syncLayeredFromRemote(
+        fullRefresh: true,
+        pushPendingFirst: false,
       );
-      sw.stop();
-      final data = resp.data;
-      final rows = (data is Map<String, dynamic> && data['result'] is List)
-          ? (data['result'] as List)
-          : <dynamic>[];
-      final compact = rows.whereType<Map>().take(10).map((e) {
-        final m = Map<String, dynamic>.from(e);
-        final org = m['organization'];
-        final drugs = m['drugs'];
-        return <String, dynamic>{
-          'visit_id': m['visit_id'] ?? m['id'],
-          'date_create': m['date_create'],
-          'visit_type': m['visit_type'],
-          'visit_status': m['visit_status'],
-          'order_status': m['order_status'],
-          'order_status_name': m['order_status_name'],
-          'org_type_id':
-              m['organization_type_id'] ?? (org is Map ? org['type_id'] : null),
-          'organization_name':
-              m['organization_name'] ??
-              (org is Map ? org['organization_name'] : null),
-          'prepayment_percent': m['prepayment_percent'],
-          'is_wholesaler': m['is_wholesaler'],
-          'position_count': m['position_count'],
-          'drugs_count': drugs is List ? drugs.length : 0,
-          'total_sum': m['total_sum'],
-          'comment': m['comment'],
-        };
-      }).toList();
-      checks['last_10_orders'] = {
-        'ok': true,
-        'status': resp.statusCode,
-        'elapsed_ms': sw.elapsedMilliseconds,
-        'count': compact.length,
-        'rows': compact,
-      };
+      await _loadData();
+      if (!mounted) return;
+      _showSnack(ref.read(syncProvider).message ?? 'Выполнен full refresh');
     } catch (e) {
-      checks['last_10_orders'] = {'ok': false, 'error': '$e'};
+      if (!mounted) return;
+      _showSnack('Ошибка full refresh: $e');
     }
+  }
 
-    Future<Map<String, dynamic>> probeHistoryPath(String path) async {
-      final sw = Stopwatch()..start();
-      try {
-        final resp = await dio.get(
-          path,
-          queryParameters: const {'_no_limit': true, 'page': 1},
-        );
-        sw.stop();
-        final data = resp.data;
-        List<dynamic> rows = const <dynamic>[];
-        if (data is List) {
-          rows = data;
-        } else if (data is Map<String, dynamic>) {
-          final candidates = ['items', 'data', 'result', 'results', 'rows'];
-          for (final key in candidates) {
-            final v = data[key];
-            if (v is List) {
-              rows = v;
-              break;
-            }
-          }
-        }
-        final summary = rows.whereType<Map>().take(5).map((e) {
-          final m = Map<String, dynamic>.from(e);
-          final items = m['items'];
-          final org = m['organization'];
-          final visitType = (m['visit_type'] ?? '').toString();
-          final orgTypeId =
-              m['organization_type_id'] ??
-              m['org_type_id'] ??
-              (org is Map ? org['type_id'] : null);
-          final orderStatus = m['order_status'];
-          final hasItems = items is List && items.isNotEmpty;
-          final normalizedGuess = () {
-            if (visitType == '4') return 'stock';
-            if (visitType == '1' && orgTypeId == 1) {
-              return 'pharmacy_order';
-            }
-            if (visitType == '2') return 'lpu_presentation';
-            if (hasItems || orderStatus == 1) return 'pharmacy_order';
-            return 'unknown';
-          }();
-          return <String, dynamic>{
-            'id': m['id'] ?? m['visit_id'],
-            'visit_type': m['visit_type'],
-            'visit_type_name': m['visit_type_name'],
-            'visit_format_name': m['visit_format_name'],
-            'organization_type_id': orgTypeId,
-            'organization_name':
-                m['organization_name'] ??
-                m['org_name'] ??
-                (org is Map ? org['name'] : null),
-            'doctor_id': m['doctor_id'],
-            'doctor_name': m['doctor_name'],
-            'items_count': items is List ? items.length : 0,
-            'has_items': hasItems,
-            'prepayment': m['prepayment'],
-            'buyer_type': m['buyer_type'],
-            'order_status': orderStatus ?? m['order_status_name'],
-            'normalized_guess': normalizedGuess,
-          };
-        }).toList();
-        return {
-          'ok': true,
-          'status': resp.statusCode,
-          'elapsed_ms': sw.elapsedMilliseconds,
-          'count': rows.length,
-          'sample_5': summary,
-          'raw_first': rows.isNotEmpty ? rows.first : null,
-        };
-      } catch (e) {
-        sw.stop();
-        return {
-          'ok': false,
-          'elapsed_ms': sw.elapsedMilliseconds,
-          'error': '$e',
-        };
-      }
-    }
-
-    // Orders (bron) — check raw API response and mapping
-    final ordersRaw = <Map<String, dynamic>>[];
-    final ordersSw = Stopwatch()..start();
+  Future<void> _runPush() async {
+    final notifier = ref.read(syncProvider.notifier);
     try {
-      ordersRaw.addAll(await api.getVisitHistoryOrders());
-      ordersSw.stop();
-      checks['getVisitHistoryOrders'] = {
-        'ok': true,
-        'elapsed_ms': ordersSw.elapsedMilliseconds,
-        'count': ordersRaw.length,
-        'sample_3': ordersRaw.take(3).toList(),
-      };
+      await notifier.pushToRemote();
+      await _loadData();
+      if (!mounted) return;
+      _showSnack(ref.read(syncProvider).message ?? 'Синхронизация завершена');
     } catch (e) {
-      ordersSw.stop();
-      checks['getVisitHistoryOrders'] = {
-        'ok': false,
-        'elapsed_ms': ordersSw.elapsedMilliseconds,
-        'error': '$e',
-      };
+      if (!mounted) return;
+      _showSnack('Ошибка отправки: $e');
     }
+  }
 
-    // Remnant (stock) — check raw API response and mapping
-    final remnantRaw = <Map<String, dynamic>>[];
-    final remnantSw = Stopwatch()..start();
-    try {
-      remnantRaw.addAll(await api.getVisitHistoryRemnant());
-      remnantSw.stop();
-      checks['getVisitHistoryRemnant'] = {
-        'ok': true,
-        'elapsed_ms': remnantSw.elapsedMilliseconds,
-        'count': remnantRaw.length,
-        'sample_3': remnantRaw.take(3).toList(),
-      };
-    } catch (e) {
-      remnantSw.stop();
-      checks['getVisitHistoryRemnant'] = {
-        'ok': false,
-        'elapsed_ms': remnantSw.elapsedMilliseconds,
-        'error': '$e',
-      };
-    }
+  Widget _buildSyncActionTile({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required bool isRunning,
+    required bool isDisabled,
+    required VoidCallback onTap,
+  }) {
+    final effectiveColor = isDisabled && !isRunning ? Colors.grey : color;
+    return ListTile(
+      enabled: !isDisabled || isRunning,
+      leading: Icon(icon, color: effectiveColor),
+      title: Text(
+        title,
+        style: GoogleFonts.manrope(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: isDisabled && !isRunning ? Colors.grey[600] : null,
+        ),
+      ),
+      subtitle: Text(subtitle, style: GoogleFonts.manrope(fontSize: 12)),
+      trailing: isRunning
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.chevron_right),
+      onTap: isDisabled ? null : onTap,
+    );
+  }
 
-    checks['history_type_probe'] = {
-      '/api/Visits/history': await probeHistoryPath('/api/Visits/history'),
-      '/api/Visits/history/orders': await probeHistoryPath(
-        '/api/Visits/history/orders',
+  Widget _buildUnsyncedPager() {
+    final totalPages = _unsyncedTotalPages;
+    if (totalPages <= 1) return const SizedBox.shrink();
+
+    final pageSet = <int>{
+      0,
+      totalPages - 1,
+      _unsyncedPage - 1,
+      _unsyncedPage,
+      _unsyncedPage + 1,
+    }..removeWhere((page) => page < 0 || page >= totalPages);
+    final pages = pageSet.toList()..sort();
+
+    final children = <Widget>[
+      IconButton(
+        onPressed: _unsyncedPage == 0
+            ? null
+            : () => setState(() => _unsyncedPage--),
+        icon: const Icon(Icons.chevron_left_rounded),
+        tooltip: 'Предыдущая страница',
       ),
-      '/api/Visits/history/remnant': await probeHistoryPath(
-        '/api/Visits/history/remnant',
-      ),
-    };
-    final focusIds = <int>{51589, 51591, 51595, 51597, 51598};
-    final focusPaths = [
-      '/api/Visits/history',
-      '/api/Visits/history/orders',
-      '/api/Visits/history/remnant',
     ];
-    final focus = <String, dynamic>{};
-    for (final path in focusPaths) {
-      try {
-        final resp = await dio.get(
-          path,
-          queryParameters: const {'_no_limit': true, 'page': 1},
+
+    var previousPage = -1;
+    for (final page in pages) {
+      if (previousPage >= 0 && page - previousPage > 1) {
+        children.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Text(
+              '…',
+              style: GoogleFonts.manrope(
+                fontSize: 13,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
         );
-        final data = resp.data;
-        List<dynamic> rows = const <dynamic>[];
-        if (data is List) {
-          rows = data;
-        } else if (data is Map<String, dynamic>) {
-          final candidates = ['items', 'data', 'result', 'results', 'rows'];
-          for (final key in candidates) {
-            final v = data[key];
-            if (v is List) {
-              rows = v;
-              break;
-            }
-          }
-        }
-        final selected = rows
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .where((m) {
-              final id =
-                  (m['id'] as num?)?.toInt() ??
-                  (m['visit_id'] as num?)?.toInt();
-              return id != null && focusIds.contains(id);
-            })
-            .map((m) {
-              final org = m['organization'];
-              final drugs = m['drugs'];
-              return {
-                'id':
-                    (m['id'] as num?)?.toInt() ??
-                    (m['visit_id'] as num?)?.toInt(),
-                'visit_type': m['visit_type'],
-                'order_status': m['order_status'],
-                'order_status_name': m['order_status_name'],
-                'organization_type_id':
-                    m['organization_type_id'] ??
-                    (org is Map ? org['type_id'] : null),
-                'organization_name':
-                    m['organization_name'] ??
-                    (org is Map ? org['organization_name'] : null),
-                'drugs_count': drugs is List ? drugs.length : 0,
-                'date_create': m['date_create'],
-              };
-            })
-            .toList();
-        focus[path] = selected;
-      } catch (e) {
-        focus[path] = {'ok': false, 'error': '$e'};
       }
-    }
-    checks['focus_visits_51589_51591_51595_51597_51598'] = focus;
-    try {
-      final db = ref.read(localDatabaseProvider);
-      final localRows = await db.getVisits();
-      final localFocus = localRows
-          .where((r) {
-            final rid = (r['remote_id'] as num?)?.toInt();
-            return rid != null && focusIds.contains(rid);
-          })
-          .map(
-            (r) => {
-              'id': r['id'],
-              'remote_id': r['remote_id'],
-              'visit_type': r['visit_type'],
-              'status': r['status'],
-              'created_at': r['created_at'],
-              'last_push_request_json': r['last_push_request_json'],
-              'last_push_response_json': r['last_push_response_json'],
-            },
-          )
-          .toList();
-      checks['focus_local_push_payload_51589_51591_51595_51597_51598'] =
-          localFocus;
-    } catch (e) {
-      checks['focus_local_push_payload_51589_51591_51595_51597_51598'] = {
-        'ok': false,
-        'error': '$e',
-      };
+      final selected = page == _unsyncedPage;
+      children.add(
+        InkWell(
+          onTap: selected ? null : () => setState(() => _unsyncedPage = page),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            margin: const EdgeInsets.symmetric(horizontal: 2),
+            decoration: BoxDecoration(
+              color: selected ? AppColors.primary : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: selected ? AppColors.primary : Colors.grey.shade300,
+              ),
+            ),
+            child: Text(
+              '${page + 1}',
+              style: GoogleFonts.manrope(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: selected ? Colors.white : Colors.grey[700],
+              ),
+            ),
+          ),
+        ),
+      );
+      previousPage = page;
     }
 
-    report['finished_at'] = DateTime.now().toIso8601String();
-    if (!mounted) return;
-    setState(() => _runningApiDiagnostics = false);
-    await _showJsonDialog(title: 'API диагностика', payload: report);
+    children.add(
+      IconButton(
+        onPressed: _unsyncedPage >= totalPages - 1
+            ? null
+            : () => setState(() => _unsyncedPage++),
+        icon: const Icon(Icons.chevron_right_rounded),
+        tooltip: 'Следующая страница',
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: children,
+      ),
+    );
   }
 
   Widget _buildVisitCard(Map<String, dynamic> visit) {
@@ -507,8 +403,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   ),
                   decoration: BoxDecoration(
                     color: isSynced
-                        ? Colors.green.withOpacity(0.1)
-                        : Colors.orange.withOpacity(0.1),
+                        ? Colors.green.withValues(alpha: 0.1)
+                        : Colors.orange.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
@@ -532,7 +428,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.1),
+                      color: AppColors.primary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
@@ -581,55 +477,35 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   }
 
   Widget _buildSyncSummaryCard(SyncState syncState) {
-    final debug = syncState.lastGetDebug;
-    if (debug == null) return const SizedBox.shrink();
+    String value(String localKey, List<String> debugKeys) {
+      final local = _localTotals[localKey];
+      if (local != null) return local.toString();
+      final debug = syncState.lastGetDebug;
+      if (debug != null) {
+        for (final key in debugKeys) {
+          final raw = debug[key];
+          if (raw is int) return raw.toString();
+          if (raw is num) return raw.round().toString();
+          if (raw is String) {
+            final parsed = int.tryParse(raw);
+            if (parsed != null) return parsed.toString();
+          }
+        }
+      }
+      return '—';
+    }
 
-    final mode = (debug['mode'] ?? '').toString();
-    final isDelta = mode == 'delta';
-    final isFull = mode == 'full_refresh' || mode == 'seed_pull';
-
-    String title = 'Итог загрузки';
-    if (isDelta) title = 'Итог дельта-синхронизации';
-    if (mode == 'full_refresh') title = 'Итог full refresh';
-
-    final fetchedOrg =
-        (debug['delta_organizations_count'] ??
-                debug['fetched_organizations_count'])
-            ?.toString();
-    final fetchedLpu = (debug['delta_lpu_count'] ?? debug['fetched_lpu_count'])
-        ?.toString();
-    final fetchedPharmacy =
-        (debug['delta_pharmacy_count'] ?? debug['fetched_pharmacy_count'])
-            ?.toString();
-    final fetchedDistributor =
-        (debug['delta_distributor_count'] ?? debug['fetched_distributor_count'])
-            ?.toString();
-    final fetchedDoctors =
-        (debug['delta_doctors_count'] ?? debug['fetched_doctors_count'])
-            ?.toString();
-    final fetchedDrugs =
-        (debug['delta_drugs_count'] ?? debug['fetched_drugs_count'])
-            ?.toString();
-    final fetchedVisits =
-        (debug['delta_visits_count'] ??
-                debug['fetched_visits_count'] ??
-                debug['live_visits_count'])
-            ?.toString();
-    final fetchedMaterials =
-        (debug['delta_materials_count'] ??
-                debug['fetched_materials_count'] ??
-                debug['live_materials_count'])
-            ?.toString();
-
-    final localOrg = debug['local_organizations_total']?.toString() ?? '—';
-    final localLpu = debug['local_lpu_total']?.toString();
-    final localPharmacy = debug['local_pharmacy_total']?.toString();
-    final localDistributor = debug['local_distributor_total']?.toString();
-    final localDoctors = debug['local_doctors_total']?.toString() ?? '—';
-    final localDrugs = debug['local_drugs_total']?.toString() ?? '—';
-
-    final beforeSyncId = debug['last_sync_id_before']?.toString();
-    final afterSyncId = debug['last_sync_id_after']?.toString();
+    final lpu = value('lpu', const ['local_lpu_total']);
+    final pharmacy = value('pharmacy', const ['local_pharmacy_total']);
+    final doctors = value('doctors', const ['local_doctors_total']);
+    final visits = value('visits', const [
+      'local_visits_total',
+      'live_visits_count',
+      'fetched_visits_count',
+      'delta_visits_count',
+      'visits_count',
+    ]);
+    final unsynced = syncState.unsyncedCount;
 
     return Container(
       decoration: BoxDecoration(
@@ -648,47 +524,27 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            title,
+            'Локальные данные',
             style: GoogleFonts.manrope(
               fontSize: 14,
               fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 8),
-          if (isDelta || isFull) ...[
-            Text(
-              'Получено с API: организации ${fetchedOrg ?? "—"}'
-              '${fetchedLpu == null ? "" : ", ЛПУ $fetchedLpu"}'
-              '${fetchedPharmacy == null ? "" : ", аптеки $fetchedPharmacy"}'
-              '${fetchedDistributor == null ? "" : ", дистрибьюторы $fetchedDistributor"}',
-              style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[700]),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Данные: врачи $fetchedDoctors, препараты $fetchedDrugs, визиты ${fetchedVisits ?? "—"}, материалы ${fetchedMaterials ?? "—"}',
-              style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[700]),
-            ),
-            const SizedBox(height: 4),
-          ],
           Text(
-            'Локально сейчас: организации $localOrg'
-            '${localLpu == null ? "" : ", ЛПУ $localLpu"}'
-            '${localPharmacy == null ? "" : ", аптеки $localPharmacy"}'
-            '${localDistributor == null ? "" : ", дистрибьюторы $localDistributor"}',
+            'ЛПУ: $lpu, аптеки: $pharmacy',
             style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[800]),
           ),
           const SizedBox(height: 4),
           Text(
-            'Локальные данные: врачи $localDoctors, препараты $localDrugs',
+            'Врачи: $doctors, визиты: $visits',
             style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[800]),
           ),
-          if (isDelta && (beforeSyncId != null || afterSyncId != null)) ...[
-            const SizedBox(height: 4),
-            Text(
-              'sync_id: ${beforeSyncId ?? "—"} → ${afterSyncId ?? "—"}',
-              style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[700]),
-            ),
-          ],
+          const SizedBox(height: 4),
+          Text(
+            'Не отправлено: $unsynced',
+            style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[800]),
+          ),
         ],
       ),
     );
@@ -698,7 +554,12 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     final current = syncState.progressCurrent;
     final total = syncState.progressTotal;
     final hasProgress = current != null && total != null && total > 0;
-    final value = hasProgress ? (current / total).clamp(0.0, 1.0) : null;
+    final progressValue = hasProgress
+        ? (current / total).clamp(0.0, 1.0)
+        : null;
+    final percentText = hasProgress
+        ? '${(progressValue! * 100).round().clamp(0, 100)}%'
+        : null;
     final label = syncState.message ?? 'Синхронизация выполняется…';
 
     return Container(
@@ -734,24 +595,24 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   ),
                 ),
               ),
-              if (hasProgress)
+              if (percentText != null)
                 Text(
-                  '$current/$total',
+                  percentText,
                   style: GoogleFonts.manrope(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey[700],
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.primary,
                   ),
                 ),
             ],
           ),
           const SizedBox(height: 10),
-          LinearProgressIndicator(value: value),
+          LinearProgressIndicator(value: progressValue),
           const SizedBox(height: 8),
           Text(
-            hasProgress
-                ? 'Не закрывайте приложение до завершения загрузки.'
-                : 'Подождите, идет обмен с сервером.',
+            !hasProgress
+                ? 'Обновляем данные'
+                : 'Не закрывайте приложение до завершения загрузки.',
             style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[600]),
           ),
         ],
@@ -762,7 +623,26 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   @override
   Widget build(BuildContext context) {
     final syncState = ref.watch(syncProvider);
-    final isSyncLoading = syncState.status == SyncStatus.loading;
+    final user = ref.watch(authProvider).user;
+    final isAdmin = user?.role == 'admin';
+    final activeOperation = syncState.activeOperation;
+    final isSyncLoading = activeOperation != null;
+    final isPullLoading = activeOperation == SyncOperation.pull;
+    final isFullRefreshLoading = activeOperation == SyncOperation.fullRefresh;
+    final isPushLoading = activeOperation == SyncOperation.push;
+
+    ref.listen<SyncState>(syncProvider, (prev, next) {
+      final prevAt = prev?.lastSyncAt;
+      final nextAt = next.lastSyncAt;
+      final syncTimeChanged =
+          nextAt != null &&
+          (prevAt == null ||
+              nextAt.millisecondsSinceEpoch != prevAt.millisecondsSinceEpoch);
+      if (!syncTimeChanged && prev?.unsyncedCount == next.unsyncedCount) {
+        return;
+      }
+      unawaited(_loadData(refreshSyncCount: false));
+    });
 
     String? lastSyncTime;
     if (syncState.lastSyncAt != null) {
@@ -787,7 +667,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   color: Colors.white,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.06),
+                      color: Colors.black.withValues(alpha: 0.06),
                       blurRadius: 4,
                       offset: const Offset(0, 1),
                     ),
@@ -849,7 +729,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.06),
+                        color: Colors.black.withValues(alpha: 0.06),
                         blurRadius: 4,
                         offset: const Offset(0, 1),
                       ),
@@ -967,7 +847,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                               color: Colors.orange,
                             ),
                             title: Text(
-                              'Изменения организаций',
+                              'Изменения ЛПУ/аптек',
                               style: GoogleFonts.manrope(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
@@ -1006,14 +886,11 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   const SizedBox(height: 16),
                 ],
 
-                if (syncState.lastGetDebug != null) ...[
-                  SectionLabel(text: 'ИТОГ ЗАГРУЗКИ'),
-                  const SizedBox(height: 8),
-                  _buildSyncSummaryCard(syncState),
-                  const SizedBox(height: 16),
-                ],
+                SectionLabel(text: 'ЛОКАЛЬНЫЕ ДАННЫЕ'),
+                const SizedBox(height: 8),
+                _buildSyncSummaryCard(syncState),
+                const SizedBox(height: 16),
 
-                // Section: ДЕЙСТВИЯ
                 SectionLabel(text: 'ДЕЙСТВИЯ'),
                 const SizedBox(height: 8),
                 Container(
@@ -1022,7 +899,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.06),
+                        color: Colors.black.withValues(alpha: 0.06),
                         blurRadius: 4,
                         offset: const Offset(0, 1),
                       ),
@@ -1030,246 +907,62 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   ),
                   child: Column(
                     children: [
-                      ListTile(
-                        leading: const Icon(
-                          Icons.cloud_download,
-                          color: Colors.blue,
-                        ),
-                        title: Text(
-                          'Загрузить с сервера',
-                          style: GoogleFonts.manrope(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        subtitle: Text(
-                          isSyncLoading
-                              ? (syncState.message ?? 'Загрузка выполняется…')
-                              : 'Перезаписать локальные данные из API',
-                          style: GoogleFonts.manrope(fontSize: 12),
-                        ),
-                        trailing: isSyncLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.chevron_right),
-                        onTap: isSyncLoading
-                            ? null
-                            : () async {
-                                if (!mounted) return;
-                                final notifier = ref.read(
-                                  syncProvider.notifier,
-                                );
-                                try {
-                                  await notifier.pullFromRemote();
-                                } catch (e) {
-                                  if (!mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Ошибка загрузки: $e'),
-                                    ),
-                                  );
-                                  return;
-                                }
-                                await _loadData();
-                                if (!mounted) return;
-                                final latest = ref.read(syncProvider);
-                                if (latest.lastGetDebug != null && mounted) {
-                                  await _showJsonDialog(
-                                    title: 'GET sync response',
-                                    payload: latest.lastGetDebug!,
-                                  );
-                                }
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Данные загружены'),
-                                    ),
-                                  );
-                                }
-                              },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.restart_alt_rounded,
-                          color: Colors.deepPurple,
-                        ),
-                        title: Text(
-                          'Принудительный full refresh',
-                          style: GoogleFonts.manrope(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: Text(
-                          isSyncLoading
-                              ? (syncState.message ??
-                                    'Full refresh выполняется…')
-                              : 'Полностью обновить локальный снапшот из API',
-                          style: GoogleFonts.manrope(fontSize: 12),
-                        ),
-                        trailing: isSyncLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.chevron_right),
-                        onTap: isSyncLoading
-                            ? null
-                            : () async {
-                                final confirmed = await showDialog<bool>(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    title: const Text(
-                                      'Подтвердите full refresh',
-                                    ),
-                                    content: const Text(
-                                      'Будет выполнено полное обновление локальной БД из API. '
-                                      'Несинхронизированные визиты будут сохранены.',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () =>
-                                            Navigator.pop(ctx, false),
-                                        child: const Text('Отмена'),
-                                      ),
-                                      ElevatedButton(
-                                        onPressed: () =>
-                                            Navigator.pop(ctx, true),
-                                        child: const Text('Обновить'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                                if (confirmed != true) return;
-                                if (!mounted) return;
-                                final notifier = ref.read(
-                                  syncProvider.notifier,
-                                );
-                                try {
-                                  await notifier.pullFromRemote(
-                                    fullRefresh: true,
-                                  );
-                                } catch (e) {
-                                  if (!mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Ошибка full refresh: $e'),
-                                    ),
-                                  );
-                                  return;
-                                }
-                                await _loadData();
-                                if (!mounted) return;
-                                final latest = ref.read(syncProvider);
-                                if (latest.lastGetDebug != null && mounted) {
-                                  await _showJsonDialog(
-                                    title: 'GET sync response',
-                                    payload: latest.lastGetDebug!,
-                                  );
-                                }
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Выполнен full refresh'),
-                                    ),
-                                  );
-                                }
-                              },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(
-                          Icons.cloud_upload,
-                          color: Colors.green,
-                        ),
-                        title: Text(
-                          'Отправить на сервер',
-                          style: GoogleFonts.manrope(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '${_unsyncedVisits.length} визитов ожидают',
-                          style: GoogleFonts.manrope(fontSize: 12),
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () async {
-                          if (!mounted) return;
-                          final notifier = ref.read(syncProvider.notifier);
-                          await notifier.pushToRemote();
-                          await _loadData();
-                          if (!mounted) return;
-                          final latest = ref.read(syncProvider);
-                          if (latest.lastPostDebug != null && mounted) {
-                            await _showJsonDialog(
-                              title: 'POST sync response',
-                              payload: latest.lastPostDebug!,
-                            );
-                          }
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  latest.message ?? 'Синхронизация завершена',
-                                ),
-                              ),
-                            );
-                          }
+                      _buildSyncActionTile(
+                        icon: Icons.cloud_download,
+                        color: Colors.blue,
+                        title: 'Обновить данные с сервера',
+                        subtitle: isPullLoading
+                            ? (syncState.message ?? 'Загрузка выполняется…')
+                            : 'Загрузить изменения из API в локальную БД',
+                        isRunning: isPullLoading,
+                        isDisabled: isSyncLoading,
+                        onTap: () {
+                          _runDeltaPull();
                         },
                       ),
                       const Divider(height: 1),
-                      ListTile(
-                        leading: Icon(
-                          Icons.science_outlined,
-                          color: _runningApiDiagnostics
-                              ? Colors.orange
-                              : Colors.indigo,
-                        ),
-                        title: Text(
-                          'Диагностика API',
-                          style: GoogleFonts.manrope(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: Text(
-                          _runningApiDiagnostics
-                              ? 'Выполняются API вызовы...'
-                              : 'Прогнать ключевые API и показать ответы',
-                          style: GoogleFonts.manrope(fontSize: 12),
-                        ),
-                        trailing: _runningApiDiagnostics
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.chevron_right),
-                        onTap: _runningApiDiagnostics
-                            ? null
-                            : _runApiDiagnostics,
+                      _buildSyncActionTile(
+                        icon: Icons.cloud_upload,
+                        color: Colors.green,
+                        title: 'Отправить на сервер',
+                        subtitle: isPushLoading
+                            ? (syncState.message ?? 'Отправка выполняется…')
+                            : '${_unsyncedVisits.length} визитов ожидают',
+                        isRunning: isPushLoading,
+                        isDisabled: isSyncLoading,
+                        onTap: () {
+                          _runPush();
+                        },
                       ),
+                      if (isAdmin) ...[
+                        const Divider(height: 1),
+                        _buildSyncActionTile(
+                          icon: Icons.restart_alt_rounded,
+                          color: Colors.deepPurple,
+                          title: 'Принудительный full refresh',
+                          subtitle: isFullRefreshLoading
+                              ? (syncState.message ??
+                                    'Full refresh выполняется…')
+                              : 'Полностью обновить локальный снапшот из API',
+                          isRunning: isFullRefreshLoading,
+                          isDisabled: isSyncLoading,
+                          onTap: () {
+                            _runFullRefresh();
+                          },
+                        ),
+                      ],
                     ],
                   ),
                 ),
                 const SizedBox(height: 16),
 
-                // Section: ОФЛАЙН ВИЗИТЫ
                 Row(
                   children: [
-                    Expanded(child: SectionLabel(text: 'ОФЛАЙН ВИЗИТЫ')),
+                    Expanded(
+                      child: SectionLabel(
+                        text: 'ОФЛАЙН ВИЗИТЫ (${_unsyncedVisits.length})',
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -1286,14 +979,11 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                       ),
                     ),
                   )
-                else
-                  ...(_unsyncedVisits.map((v) => _buildVisitCard(v))),
+                else ...[
+                  ...(_visibleUnsyncedVisits.map((v) => _buildVisitCard(v))),
+                  _buildUnsyncedPager(),
+                ],
                 const SizedBox(height: 16),
-
-                // Section: ВСЕ ВИЗИТЫ
-                SectionLabel(text: 'ВСЕ ВИЗИТЫ (${_allVisits.length})'),
-                const SizedBox(height: 8),
-                ...(_allVisits.map((v) => _buildVisitCard(v))),
               ],
             ),
           ),

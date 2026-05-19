@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -17,26 +18,58 @@ import 'package:lima/shell/nav_bar_layout.dart';
 class VisitsHubScreen extends ConsumerStatefulWidget {
   const VisitsHubScreen({super.key});
 
+  /// Loads LPU + pharmacy lists from the local DB into the static cache so
+  /// the screen renders instantly on first navigation. Safe to call multiple
+  /// times — re-reads to pick up server-side updates.
+  static Future<void> preload(LocalDatabase db) async {
+    try {
+      final rows = await Future.wait([
+        db.getOrganisations(type: 'lpu'),
+        db.getOrganisations(type: 'pharmacy'),
+      ]).timeout(const Duration(seconds: 8));
+      _VisitsHubScreenState._cachedLpuRows = rows[0]
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+      _VisitsHubScreenState._cachedPharmacyRows = rows[1]
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+    } catch (_) {
+      // Best-effort prewarm — UI will retry via its own _load() on init.
+    }
+  }
+
   @override
   ConsumerState<VisitsHubScreen> createState() => _VisitsHubScreenState();
 }
 
 class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
+  static List<Map<String, dynamic>>? _cachedLpuRows;
+  static List<Map<String, dynamic>>? _cachedPharmacyRows;
+
   bool _isLpu = true;
   String _query = '';
   bool _allRegions = false;
   List<Map<String, dynamic>> _orgs = [];
+  List<Map<String, dynamic>> _lpuCache = [];
+  List<Map<String, dynamic>> _pharmacyCache = [];
   Map<int, double> _nearbyDistances = {};
   bool _nearbyMode = false;
-  bool _loading = false;
+  bool _localCacheLoaded = false;
   bool _isFindingNearby = false;
   Position? _lastNearbyPosition;
   String? _lastResetToken;
+  int _loadGeneration = 0;
+  StreamSubscription<Set<String>>? _dbChangesSub;
   final TextEditingController _searchCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    _hydrateLocalCache();
+    _dbChangesSub = ref.read(localDatabaseProvider).changes.listen((tables) {
+      if (!mounted || !tables.contains('organisations')) return;
+      _load();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _load();
     });
@@ -44,6 +77,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
 
   @override
   void dispose() {
+    _dbChangesSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -68,27 +102,85 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
       _nearbyMode = false;
       _nearbyDistances = {};
       _lastNearbyPosition = null;
-      _orgs = [];
+      _orgs = _localCacheLoaded ? _buildOrgList() : [];
     });
     _searchCtrl.clear();
-    _load();
+    if (!_localCacheLoaded) _load();
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    final generation = ++_loadGeneration;
     final db = ref.read(localDatabaseProvider);
-    final type = _isLpu ? 'lpu' : 'pharmacy';
+    final rows =
+        await Future.wait([
+          db.getOrganisations(type: 'lpu'),
+          db.getOrganisations(type: 'pharmacy'),
+        ]).timeout(
+          const Duration(seconds: 6),
+          onTimeout: () => const <List<Map<String, dynamic>>>[
+            <Map<String, dynamic>>[],
+            <Map<String, dynamic>>[],
+          ],
+        );
+    final lpu = rows[0];
+    final pharmacies = rows[1];
+    if (!mounted || generation != _loadGeneration) return;
+    final lpuRows = _cloneRows(lpu);
+    final pharmacyRows = _cloneRows(pharmacies);
+    _cachedLpuRows = _cloneRows(lpuRows);
+    _cachedPharmacyRows = _cloneRows(pharmacyRows);
+    setState(() {
+      _lpuCache = lpuRows;
+      _pharmacyCache = pharmacyRows;
+      _localCacheLoaded = true;
+      _orgs = _buildOrgList();
+    });
+  }
+
+  void _hydrateLocalCache() {
+    final lpuRows = _cachedLpuRows;
+    final pharmacyRows = _cachedPharmacyRows;
+    if (lpuRows == null || pharmacyRows == null) return;
+    if (lpuRows.isEmpty && pharmacyRows.isEmpty) return;
+    _lpuCache = _cloneRows(lpuRows);
+    _pharmacyCache = _cloneRows(pharmacyRows);
+    _localCacheLoaded = true;
+    _orgs = _buildOrgList();
+  }
+
+  static List<Map<String, dynamic>> _cloneRows(
+    List<Map<String, dynamic>> rows,
+  ) {
+    return rows.map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  List<Map<String, dynamic>> _buildOrgList() {
     final user = ref.read(authProvider).user;
-    List<Map<String, dynamic>> orgs;
-    final local = await db.getOrganisations(
-      type: type,
-      query: _query.isEmpty ? null : _query,
-    );
-    orgs = List<Map<String, dynamic>>.from(local);
+    final query = _query.trim().toLowerCase();
+    var orgs = (_isLpu ? _lpuCache : _pharmacyCache)
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    if (query.isNotEmpty) {
+      orgs = orgs.where((o) {
+        final haystack = [
+          o['name'],
+          o['address'],
+          o['city'],
+        ].whereType<Object>().join(' ').toLowerCase();
+        return haystack.contains(query);
+      }).toList();
+    }
     if (!_allRegions) {
       orgs = orgs.where((o) => _belongsToUserRegion(o, user)).toList();
     }
     orgs.sort((a, b) {
+      final aId = (a['id'] as num?)?.toInt() ?? 0;
+      final bId = (b['id'] as num?)?.toInt() ?? 0;
+      final ad = _nearbyMode ? _nearbyDistances[aId] : null;
+      final bd = _nearbyMode ? _nearbyDistances[bId] : null;
+      if (ad != null || bd != null) {
+        return (ad ?? double.infinity).compareTo(bd ?? double.infinity);
+      }
       final an = (a['name']?.toString() ?? '').toLowerCase();
       final bn = (b['name']?.toString() ?? '').toLowerCase();
       return an.compareTo(bn);
@@ -98,11 +190,12 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
         (o) => !_nearbyDistances.containsKey((o['id'] as num?)?.toInt() ?? 0),
       );
     }
-    if (!mounted) return;
-    setState(() {
-      _orgs = orgs;
-      _loading = false;
-    });
+    for (final org in orgs) {
+      final id = (org['id'] as num?)?.toInt() ?? 0;
+      final distance = _nearbyDistances[id];
+      if (distance != null) org['distance_m'] = distance;
+    }
+    return orgs;
   }
 
   void _onTabChange(bool isLpu) {
@@ -112,9 +205,9 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
       _nearbyMode = false;
       _nearbyDistances = {};
       _lastNearbyPosition = null;
-      _orgs = [];
+      _orgs = _buildOrgList();
     });
-    _load();
+    if (!_localCacheLoaded) _load();
   }
 
   void _handleHorizontalSwipe(DragEndDetails details) {
@@ -129,22 +222,24 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
   }
 
   void _onQueryChange(String q) {
-    setState(() => _query = q);
+    setState(() {
+      _query = q;
+      if (!_nearbyMode) _orgs = _buildOrgList();
+    });
     final pos = _lastNearbyPosition;
     if (_nearbyMode && pos != null) {
       _loadNearbyForPosition(pos);
-    } else {
-      _load();
     }
   }
 
   void _toggleAllRegions(bool value) {
-    setState(() => _allRegions = value);
+    setState(() {
+      _allRegions = value;
+      if (!_nearbyMode) _orgs = _buildOrgList();
+    });
     final pos = _lastNearbyPosition;
     if (_nearbyMode && pos != null) {
       _loadNearbyForPosition(pos);
-    } else {
-      _load();
     }
   }
 
@@ -199,14 +294,25 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
   }
 
   Future<void> _loadNearbyForPosition(Position pos) async {
-    setState(() => _loading = true);
-    final db = ref.read(localDatabaseProvider);
-    final type = _isLpu ? 'lpu' : 'pharmacy';
+    if (!_localCacheLoaded) {
+      await _load();
+      if (!mounted) return;
+    }
     final user = ref.read(authProvider).user;
-    final rows = await db.getOrganisations(
-      type: type,
-      query: _query.isEmpty ? null : _query,
-    );
+    final query = _query.trim().toLowerCase();
+    var rows = (_isLpu ? _lpuCache : _pharmacyCache)
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    if (query.isNotEmpty) {
+      rows = rows.where((o) {
+        final haystack = [
+          o['name'],
+          o['address'],
+          o['city'],
+        ].whereType<Object>().join(' ').toLowerCase();
+        return haystack.contains(query);
+      }).toList();
+    }
     final filteredRows = !_allRegions
         ? rows.where((o) => _belongsToUserRegion(o, user)).toList()
         : rows;
@@ -244,7 +350,6 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
       _nearbyMode = map.isNotEmpty;
       _nearbyDistances = map;
       _orgs = orgs;
-      _loading = false;
     });
     if (map.isEmpty && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -365,8 +470,12 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
 
                 // List
                 Expanded(
-                  child: _loading
-                      ? const Center(child: CircularProgressIndicator())
+                  child: !_localCacheLoaded
+                      ? const Center(
+                          child: CircularProgressIndicator(
+                            color: AppColors.primary,
+                          ),
+                        )
                       : _orgs.isEmpty
                       ? EmptyState(
                           icon: (!_nearbyMode && _query.isEmpty)

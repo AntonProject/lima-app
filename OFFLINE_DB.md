@@ -201,6 +201,8 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 - `last_pull_at`
 - `last_push_at`
 - `last_sync_id`
+- `doctor_directory_sync_id`
+- `doctor_directory_expected_total`
 - `full_pull_bootstrap_v3_done`
 - `owner_user_id`
 - `owner_login`
@@ -295,13 +297,13 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 Обычный pull сначала пробует delta sync:
 
 - `getOrganizationsSync(syncId: last_sync_id)`
-- `getDoctorsSync(syncId: last_sync_id)`
+- `getDoctorsSync(syncId: doctor_directory_sync_id)` через `/dict/doctors/sync?batch_size=1000`
 - `getDrugsSync(syncId: last_sync_id)`
 
 Если delta sync недоступен или завершился ошибкой, приложение откатывается на full seed:
 
 - организации;
-- врачи: full seed читает `/api/dict/Doctors` постранично, потому что API возвращает по 30 записей на страницу;
+- врачи: initial/delta загрузка идет пачками по `sync_id` и сохраняет `doctor_directory_sync_id`; fallback `/api/dict/Doctors` используется только если batch sync недоступен;
 - препараты;
 - материалы препаратов;
 - история визитов;

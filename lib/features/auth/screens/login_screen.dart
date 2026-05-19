@@ -103,7 +103,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   width: 36,
                                   height: 36,
                                 ),
-                                const SizedBox(width: 8),
                                 Text(
                                   'LIMA',
                                   style: GoogleFonts.figtree(

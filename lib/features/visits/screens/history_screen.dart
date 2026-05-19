@@ -596,24 +596,25 @@ class _VisitItem extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryBg,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '#${visit.id}',
-                            style: GoogleFonts.manrope(
-                              fontSize: 11,
-                              color: AppColors.secondaryText,
-                              fontWeight: FontWeight.w500,
+                        if (visit.hasServerId)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryBg,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '#${visit.id}',
+                              style: GoogleFonts.manrope(
+                                fontSize: 11,
+                                color: AppColors.secondaryText,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 3),

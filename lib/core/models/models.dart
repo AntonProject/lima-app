@@ -8,6 +8,7 @@ class UserModel {
   final int? regionId;
   final String? phone;
   final String? company;
+  final int? companyId;
   final int visitsCount;
   final double salesAmount;
   final int doctorsCount;
@@ -20,6 +21,7 @@ class UserModel {
     this.regionId,
     this.phone,
     this.company,
+    this.companyId,
     this.visitsCount = 0,
     this.salesAmount = 0,
     this.doctorsCount = 0,
@@ -50,6 +52,7 @@ class UserModel {
     regionId: _toInt(json['region_id']),
     phone: json['phone'] as String?,
     company: json['company'] as String?,
+    companyId: _toInt(json['company_id']),
     visitsCount: json['visits_count'] as int? ?? 0,
     salesAmount: (json['sales_amount'] as num?)?.toDouble() ?? 0,
     doctorsCount: json['doctors_count'] as int? ?? 0,
@@ -63,6 +66,7 @@ class UserModel {
     'region_id': regionId,
     'phone': phone,
     'company': company,
+    'company_id': companyId,
     'visits_count': visitsCount,
     'sales_amount': salesAmount,
     'doctors_count': doctorsCount,
@@ -138,7 +142,13 @@ class Drug {
   final String? serialNumber;
   final String? expiryDate;
   final double price;
+
+  /// Общий остаток на основном складе.
+  final int? mainStock;
+
+  /// Доступный остаток по конкретной складской позиции/серии.
   final int? stock;
+  final int? remainsStock;
   final int documentsCount;
 
   /// income_detailing_id from the price-list (= current_stock_id in cart).
@@ -155,7 +165,9 @@ class Drug {
     this.serialNumber,
     this.expiryDate,
     required this.price,
+    this.mainStock,
     this.stock,
+    this.remainsStock,
     this.documentsCount = 0,
     this.currentStockId,
     this.bindingDrugId,
@@ -168,7 +180,9 @@ class Drug {
     serialNumber: json['serial_number'] as String?,
     expiryDate: json['expiry_date'] as String?,
     price: (json['price'] as num).toDouble(),
-    stock: json['stock'] as int?,
+    mainStock: (json['main_stock'] as num?)?.toInt(),
+    stock: (json['stock'] as num?)?.toInt(),
+    remainsStock: (json['remains_stock'] as num?)?.toInt(),
     documentsCount: json['documents_count'] as int? ?? 0,
     currentStockId: json['current_stock_id'] as int?,
     bindingDrugId: json['binding_drug_id'] as int?,
@@ -219,8 +233,11 @@ class PlannedVisit {
   final String? doctorName;
   final String assignedBy;
   final String? city;
+  final String? district;
   final DateTime date;
   final VisitStatus status;
+  // 'circle' | 'double' | 'group' | null
+  final String? visitFormat;
 
   const PlannedVisit({
     required this.id,
@@ -230,8 +247,10 @@ class PlannedVisit {
     this.doctorName,
     required this.assignedBy,
     this.city,
+    this.district,
     required this.date,
     required this.status,
+    this.visitFormat,
   });
 
   factory PlannedVisit.fromJson(Map<String, dynamic> json) => PlannedVisit(
@@ -246,6 +265,7 @@ class PlannedVisit {
     doctorName: json['doctor_name'] as String?,
     assignedBy: json['assigned_by'] as String,
     city: json['city'] as String?,
+    district: json['district'] as String?,
     date: DateTime.parse(json['date'] as String),
     status: json['status'] == 'completed'
         ? VisitStatus.completed

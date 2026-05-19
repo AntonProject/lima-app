@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +17,15 @@ class LocalDatabase {
   LocalDatabase._internal();
 
   Database? _db;
+  final _changes = StreamController<Set<String>>.broadcast();
+
+  Stream<Set<String>> get changes => _changes.stream;
+
+  void _notifyChanged(Iterable<String> tables) {
+    final changed = tables.where((table) => table.isNotEmpty).toSet();
+    if (changed.isEmpty || _changes.isClosed) return;
+    _changes.add(Set.unmodifiable(changed));
+  }
 
   Database get db {
     if (_db == null) {
@@ -33,7 +43,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 10,
+      version: 13,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -102,7 +112,9 @@ class LocalDatabase {
         price            REAL DEFAULT 0,
         serial_number    TEXT,
         expiry_date      TEXT,
+        main_stock       INTEGER,
         stock            INTEGER,
+        remains_stock    INTEGER,
         current_stock_id INTEGER,
         binding_drug_id  INTEGER,
         documents_count  INTEGER DEFAULT 0,
@@ -165,6 +177,7 @@ class LocalDatabase {
         doctor_name  TEXT,
         assigned_by  TEXT,
         city         TEXT,
+        district     TEXT,
         visit_date   TEXT NOT NULL,
         status       TEXT DEFAULT 'planned',
         comment      TEXT,
@@ -226,6 +239,22 @@ class LocalDatabase {
         longitude   REAL,
         created_at  TEXT NOT NULL,
         UNIQUE(org_id)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_plans (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        local_plan_id   INTEGER NOT NULL,
+        org_id          INTEGER NOT NULL,
+        org_type        TEXT,
+        doctor_ids_json TEXT,
+        visit_format_id INTEGER NOT NULL,
+        start_date      TEXT NOT NULL,
+        end_date        TEXT NOT NULL,
+        comment         TEXT,
+        created_at      TEXT NOT NULL,
+        UNIQUE(local_plan_id)
       )
     ''');
   }
@@ -402,6 +431,12 @@ class LocalDatabase {
       await db.execute('ALTER TABLE drugs ADD COLUMN stock INTEGER');
     } catch (_) {}
     try {
+      await db.execute('ALTER TABLE drugs ADD COLUMN main_stock INTEGER');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE drugs ADD COLUMN remains_stock INTEGER');
+    } catch (_) {}
+    try {
       await db.execute('ALTER TABLE drugs ADD COLUMN current_stock_id INTEGER');
     } catch (_) {}
     try {
@@ -519,6 +554,33 @@ class LocalDatabase {
         )
       ''');
     } catch (_) {}
+    try {
+      await database.execute('''
+        CREATE TABLE IF NOT EXISTS pending_plans (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          local_plan_id   INTEGER NOT NULL,
+          org_id          INTEGER NOT NULL,
+          org_type        TEXT,
+          doctor_ids_json TEXT,
+          visit_format_id INTEGER NOT NULL,
+          start_date      TEXT NOT NULL,
+          end_date        TEXT NOT NULL,
+          comment         TEXT,
+          created_at      TEXT NOT NULL,
+          UNIQUE(local_plan_id)
+        )
+      ''');
+    } catch (_) {}
+    try {
+      await database.execute(
+        'ALTER TABLE planned_visits ADD COLUMN district TEXT',
+      );
+    } catch (_) {}
+    try {
+      await database.execute(
+        'ALTER TABLE planned_visits ADD COLUMN visit_format TEXT',
+      );
+    } catch (_) {}
   }
 
   // ── Pending favorites queue ───────────────────────────────────────────────
@@ -535,6 +597,7 @@ class LocalDatabase {
       'action': add ? 'add' : 'remove',
       'created_at': DateTime.now().toIso8601String(),
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+    _notifyChanged(['pending_favorites']);
   }
 
   Future<List<Map<String, dynamic>>> getPendingFavorites() async {
@@ -543,6 +606,7 @@ class LocalDatabase {
 
   Future<void> deletePendingFavorite(int id) async {
     await db.delete('pending_favorites', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['pending_favorites']);
   }
 
   // ── Pending feedback queue ────────────────────────────────────────────────
@@ -553,6 +617,7 @@ class LocalDatabase {
       'photo_paths': jsonEncode(photoPaths),
       'created_at': DateTime.now().toIso8601String(),
     });
+    _notifyChanged(['pending_feedback']);
   }
 
   Future<List<Map<String, dynamic>>> getPendingFeedback() async {
@@ -561,6 +626,7 @@ class LocalDatabase {
 
   Future<void> deletePendingFeedback(int id) async {
     await db.delete('pending_feedback', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['pending_feedback']);
   }
 
   // ── Pending doctors queue ─────────────────────────────────────────────────
@@ -582,6 +648,7 @@ class LocalDatabase {
       'phone': phone,
       'created_at': DateTime.now().toIso8601String(),
     });
+    _notifyChanged(['pending_doctors']);
   }
 
   Future<List<Map<String, dynamic>>> getPendingDoctors() async {
@@ -590,6 +657,7 @@ class LocalDatabase {
 
   Future<void> deletePendingDoctor(int id) async {
     await db.delete('pending_doctors', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['pending_doctors']);
   }
 
   /// После успешной синхронизации заменяет temp id на реальный remote id во всех таблицах.
@@ -606,6 +674,7 @@ class LocalDatabase {
       where: 'doctor_id = ?',
       whereArgs: [tempId],
     );
+    _notifyChanged(['doctors', 'visits']);
   }
 
   // ── Pending org updates queue ─────────────────────────────────────────────
@@ -638,6 +707,7 @@ class LocalDatabase {
       'longitude': longitude,
       'created_at': DateTime.now().toIso8601String(),
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+    _notifyChanged(['pending_org_updates']);
   }
 
   Future<List<Map<String, dynamic>>> getPendingOrgUpdates() async {
@@ -646,6 +716,7 @@ class LocalDatabase {
 
   Future<void> deletePendingOrgUpdate(int id) async {
     await db.delete('pending_org_updates', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['pending_org_updates']);
   }
 
   // ── Seed from remote ──────────────────────────────────────────────────────
@@ -751,6 +822,18 @@ class LocalDatabase {
     }
 
     await batch.commit(noResult: true);
+    _notifyChanged([
+      'organisations',
+      'doctors',
+      'doctor_organisations',
+      'drugs',
+      'drug_materials',
+      'visits',
+      'planned_visits',
+      'day_types',
+      'managers',
+      if (dailyStats != null) 'cached_stats',
+    ]);
 
     if (dailyStats != null) {
       await setCachedStat('daily_stats', dailyStats);
@@ -770,30 +853,117 @@ class LocalDatabase {
       );
     }
     await batch.commit(noResult: true);
+    _notifyChanged(['planned_visits']);
   }
 
   Future<List<Map<String, dynamic>>> getPlannedVisits({
     bool? completedOnly,
   }) async {
-    if (completedOnly == true) {
-      return db.query(
-        'planned_visits',
-        where: "status = 'completed'",
-        orderBy: 'visit_date DESC',
-      );
-    }
-    if (completedOnly == false) {
-      return db.query(
-        'planned_visits',
-        where: "status != 'completed'",
-        orderBy: 'visit_date DESC',
-      );
-    }
-    return db.query('planned_visits', orderBy: 'visit_date DESC');
+    String where = '';
+    if (completedOnly == true) where = "WHERE pv.status = 'completed'";
+    if (completedOnly == false) where = "WHERE pv.status != 'completed'";
+    // JOIN with organisations to enrich city/district when not present in planned_visits.
+    return db.rawQuery('''
+      SELECT
+        pv.id, pv.remote_id, pv.org_id, pv.org_name, pv.org_type,
+        pv.doctor_id, pv.doctor_name, pv.assigned_by,
+        pv.visit_date, pv.status, pv.comment, pv.raw_json, pv.visit_format,
+        COALESCE(NULLIF(TRIM(COALESCE(pv.city, '')), ''), o.city, '') AS city,
+        COALESCE(NULLIF(TRIM(COALESCE(pv.district, '')), ''), o.district, '') AS district
+      FROM planned_visits pv
+      LEFT JOIN organisations o ON pv.org_id = o.id
+      $where
+      ORDER BY pv.visit_date DESC
+    ''');
   }
 
   Future<void> clearPlannedVisits() async {
     await db.delete('planned_visits');
+    _notifyChanged(['planned_visits']);
+  }
+
+  /// Inserts a locally-created planned visit row. Returns its local autoincrement id.
+  Future<int> insertLocalPlannedVisit(Map<String, dynamic> row) async {
+    final id = await db.insert(
+      'planned_visits',
+      Map<String, dynamic>.from(row),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    _notifyChanged(['planned_visits']);
+    return id;
+  }
+
+  /// Stamps a server-assigned [remoteId] onto a locally-created planned visit row.
+  Future<void> setPlannedVisitRemoteId({
+    required int localId,
+    required int remoteId,
+    Map<String, dynamic>? rawJson,
+  }) async {
+    final values = <String, dynamic>{'remote_id': remoteId};
+    if (rawJson != null) values['raw_json'] = jsonEncode(rawJson);
+    await db.update(
+      'planned_visits',
+      values,
+      where: 'id = ?',
+      whereArgs: [localId],
+    );
+    _notifyChanged(['planned_visits']);
+  }
+
+  Future<void> deleteLocalPlannedVisit(int localId) async {
+    await db.delete('planned_visits', where: 'id = ?', whereArgs: [localId]);
+    _notifyChanged(['planned_visits']);
+  }
+
+  // ── Pending planned visits queue ──────────────────────────────────────────
+
+  Future<void> enqueuePendingPlan({
+    required int localPlanId,
+    required int orgId,
+    required String orgType,
+    required List<int> doctorIds,
+    required int visitFormatId,
+    required DateTime visitDate,
+    String? comment,
+  }) async {
+    final isoDate = _isoYmd(visitDate);
+    await db.insert(
+      'pending_plans',
+      {
+        'local_plan_id': localPlanId,
+        'org_id': orgId,
+        'org_type': orgType,
+        'doctor_ids_json': jsonEncode(doctorIds),
+        'visit_format_id': visitFormatId,
+        'start_date': isoDate,
+        'end_date': isoDate,
+        'comment': comment ?? '',
+        'created_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    _notifyChanged(['pending_plans']);
+  }
+
+  Future<List<Map<String, dynamic>>> getPendingPlans() async {
+    return db.query('pending_plans', orderBy: 'id ASC');
+  }
+
+  Future<void> deletePendingPlan(int id) async {
+    await db.delete('pending_plans', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['pending_plans']);
+  }
+
+  Future<int> pendingPlansCount() async {
+    final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM pending_plans');
+    return (rows.first['c'] as int?) ?? 0;
+  }
+
+  static String _isoYmd(DateTime d) {
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '$y-$m-$day';
   }
 
   // ── Day Types ─────────────────────────────────────────────────────────────
@@ -809,6 +979,7 @@ class LocalDatabase {
       );
     }
     await batch.commit(noResult: true);
+    _notifyChanged(['day_types']);
   }
 
   Future<List<Map<String, dynamic>>> getDayTypes() async {
@@ -828,6 +999,7 @@ class LocalDatabase {
       );
     }
     await batch.commit(noResult: true);
+    _notifyChanged(['managers']);
   }
 
   Future<List<Map<String, dynamic>>> getManagers() async {
@@ -842,6 +1014,7 @@ class LocalDatabase {
       'value': jsonEncode(value),
       'updated_at': DateTime.now().toIso8601String(),
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+    _notifyChanged(['cached_stats']);
   }
 
   Future<Map<String, dynamic>?> getCachedStat(String key) async {
@@ -870,10 +1043,12 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [orgId],
     );
+    _notifyChanged(['organisations']);
   }
 
   Future<void> clearOrgFavorites() async {
     await db.update('organisations', {'is_favorite': 0});
+    _notifyChanged(['organisations']);
   }
 
   Future<List<Map<String, dynamic>>> getFavoriteOrgs({String? type}) async {
@@ -893,6 +1068,7 @@ class LocalDatabase {
     required List<Map> orgs,
     required List<Map> doctors,
     List<Map> doctorOrgLinks = const [],
+    bool replaceDoctors = true,
     required List<Map> drugs,
     required List<Map> materials,
     required List<Map> visits,
@@ -906,8 +1082,10 @@ class LocalDatabase {
 
     await db.transaction((txn) async {
       await txn.delete('organisations');
-      await txn.delete('doctors');
-      await txn.delete('doctor_organisations');
+      if (replaceDoctors) {
+        await txn.delete('doctors');
+        await txn.delete('doctor_organisations');
+      }
       await txn.delete('drugs');
       await txn.delete('drug_materials');
       await txn.delete('visits');
@@ -1008,6 +1186,18 @@ class LocalDatabase {
     if (dailyStats != null) {
       await setCachedStat('daily_stats', dailyStats);
     }
+    _notifyChanged([
+      'organisations',
+      if (replaceDoctors) 'doctors',
+      if (replaceDoctors) 'doctor_organisations',
+      'drugs',
+      'drug_materials',
+      'visits',
+      'planned_visits',
+      'day_types',
+      'managers',
+      if (dailyStats != null) 'cached_stats',
+    ]);
   }
 
   // ── isEmpty ───────────────────────────────────────────────────────────────
@@ -1058,10 +1248,20 @@ class LocalDatabase {
 
   Future<void> clearUserScopedData() async {
     await db.transaction((txn) async {
-      for (final table in const [
+      await txn.update(
         'organisations',
+        {'is_favorite': 0},
+        where: 'is_favorite = ?',
+        whereArgs: [1],
+      );
+      await txn.update(
         'doctors',
-        'drugs',
+        {'is_favorite': 0},
+        where: 'is_favorite = ?',
+        whereArgs: [1],
+      );
+      await txn.update('drugs', {'documents_count': 0});
+      for (final table in const [
         'drug_materials',
         'visits',
         'planned_visits',
@@ -1070,11 +1270,40 @@ class LocalDatabase {
         'cached_stats',
         'pending_feedback',
         'pending_favorites',
+        'pending_doctors',
+        'pending_org_updates',
       ]) {
         await txn.delete(table);
       }
-      await txn.delete('sync_meta');
+      await txn.delete(
+        'sync_meta',
+        where: 'key IN (?, ?, ?, ?, ?, ?, ?)',
+        whereArgs: [
+          _ownerUserIdKey,
+          _ownerLoginKey,
+          _ownerRoleKey,
+          'last_pull_at',
+          'last_delta_pull_at',
+          'last_app_activity_at',
+          'last_push_at',
+        ],
+      );
     });
+    _notifyChanged([
+      'organisations',
+      'doctors',
+      'drugs',
+      'drug_materials',
+      'visits',
+      'planned_visits',
+      'day_types',
+      'managers',
+      'cached_stats',
+      'pending_feedback',
+      'pending_favorites',
+      'pending_doctors',
+      'pending_org_updates',
+    ]);
   }
 
   // ── Organisations ─────────────────────────────────────────────────────────
@@ -1148,6 +1377,7 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [id],
     );
+    _notifyChanged(['organisations']);
   }
 
   // ── Doctors ───────────────────────────────────────────────────────────────
@@ -1209,24 +1439,31 @@ class LocalDatabase {
   }
 
   Future<int> insertDoctor(Map<String, dynamic> doctor) async {
-    return db.insert(
+    final id = await db.insert(
       'doctors',
       doctor,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    _notifyChanged(['doctors']);
+    return id;
   }
 
   Future<void> upsertDoctors(List<Map<String, dynamic>> doctors) async {
     if (doctors.isEmpty) return;
     final batch = db.batch();
     for (final row in doctors) {
-      batch.insert(
-        'doctors',
-        Map<String, dynamic>.from(row),
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      final id = row['id'];
+      if (row['is_deleted'] == true || row['is_deleted'] == 1) {
+        if (id != null) {
+          batch.delete('doctors', where: 'id = ?', whereArgs: [id]);
+        }
+      } else {
+        final r = Map<String, dynamic>.from(row)..remove('is_deleted');
+        batch.insert('doctors', r, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
     }
     await batch.commit(noResult: true);
+    _notifyChanged(['doctors']);
   }
 
   Future<void> upsertDoctorOrganisationLinks(
@@ -1242,10 +1479,11 @@ class LocalDatabase {
       );
     }
     await batch.commit(noResult: true);
+    _notifyChanged(['doctor_organisations']);
   }
 
   Future<int> updateDoctorFavorite(int doctorId, bool isFavorite) async {
-    return db.update(
+    final count = await db.update(
       'doctors',
       {
         'is_favorite': isFavorite ? 1 : 0,
@@ -1254,6 +1492,21 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [doctorId],
     );
+    _notifyChanged(['doctors']);
+    return count;
+  }
+
+  Future<List<Map<String, dynamic>>> getFavoriteDoctors() {
+    return db.rawQuery(
+      'SELECT * FROM doctors WHERE is_favorite = 1 ORDER BY full_name',
+    );
+  }
+
+  Future<int> getFavoriteDoctorsCount() async {
+    final rows = await db.rawQuery(
+      'SELECT COUNT(*) AS c FROM doctors WHERE is_favorite = 1',
+    );
+    return (rows.first['c'] as int?) ?? 0;
   }
 
   Future<void> clearDoctorFavorites() async {
@@ -1261,6 +1514,7 @@ class LocalDatabase {
       'is_favorite': 0,
       'updated_at': DateTime.now().toIso8601String(),
     });
+    _notifyChanged(['doctors']);
   }
 
   // ── Drugs ─────────────────────────────────────────────────────────────────
@@ -1308,6 +1562,20 @@ class LocalDatabase {
         if (!r.containsKey('binding_drug_id') || r['binding_drug_id'] == null) {
           r.remove('binding_drug_id');
         }
+        for (final stockKey in ['stock', 'main_stock', 'remains_stock']) {
+          if (!r.containsKey(stockKey) || r[stockKey] == null) {
+            r.remove(stockKey);
+          }
+        }
+        final documentsCount = r['documents_count'];
+        final documentsCountValue = documentsCount is num
+            ? documentsCount.toInt()
+            : int.tryParse('${documentsCount ?? ''}');
+        if (!r.containsKey('documents_count') ||
+            documentsCountValue == null ||
+            documentsCountValue <= 0) {
+          r.remove('documents_count');
+        }
 
         final existing = await txn.query(
           'drugs',
@@ -1326,6 +1594,7 @@ class LocalDatabase {
         }
       }
     });
+    _notifyChanged(['drugs']);
   }
 
   Future<void> upsertDrugMaterials(List<Map<String, dynamic>> materials) async {
@@ -1367,6 +1636,7 @@ class LocalDatabase {
         await txn.insert('drug_materials', r);
       }
     });
+    _notifyChanged(['drug_materials']);
   }
 
   Future<void> updateMaterialCachedPath(int id, String localPath) async {
@@ -1376,6 +1646,7 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [id],
     );
+    _notifyChanged(['drug_materials']);
   }
 
   Future<List<Map<String, dynamic>>> getMaterialsToCache() async {
@@ -1393,6 +1664,7 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [drugId],
     );
+    _notifyChanged(['drugs']);
   }
 
   Future<void> updateDrugName(int drugId, String name) async {
@@ -1402,19 +1674,29 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [drugId],
     );
+    _notifyChanged(['drugs']);
   }
 
   Future<void> upsertOrganisations(List<Map<String, dynamic>> orgs) async {
     if (orgs.isEmpty) return;
     final batch = db.batch();
     for (final row in orgs) {
-      batch.insert(
-        'organisations',
-        Map<String, dynamic>.from(row),
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      final id = row['id'];
+      if (row['is_deleted'] == true || row['is_deleted'] == 1) {
+        if (id != null) {
+          batch.delete('organisations', where: 'id = ?', whereArgs: [id]);
+        }
+      } else {
+        final r = Map<String, dynamic>.from(row)..remove('is_deleted');
+        batch.insert(
+          'organisations',
+          r,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
     }
     await batch.commit(noResult: true);
+    _notifyChanged(['organisations']);
   }
 
   // ── Drug Materials ────────────────────────────────────────────────────────
@@ -1466,16 +1748,29 @@ class LocalDatabase {
   Future<int> insertVisit(Map<String, dynamic> visit) async {
     final v = Map<String, dynamic>.from(visit);
     v['is_synced'] = 0;
-    return db.insert('visits', v, conflictAlgorithm: ConflictAlgorithm.replace);
+    final id = await db.insert(
+      'visits',
+      v,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    _notifyChanged(['visits']);
+    return id;
+  }
+
+  Future<void> deleteVisit(int id) async {
+    await db.delete('visits', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['visits']);
   }
 
   Future<int> deleteLegacyTestVisits() async {
-    return db.delete(
+    final count = await db.delete(
       'visits',
       where:
           "org_name = ? OR notes LIKE ? OR (visit_type = ? AND doctor_id IS NULL AND remote_id IS NULL)",
       whereArgs: ['Тестовая организация', 'Офлайн визит %', 'lpu'],
     );
+    if (count > 0) _notifyChanged(['visits']);
+    return count;
   }
 
   Future<void> updateVisitStatus(int id, String status, {String? notes}) async {
@@ -1487,6 +1782,7 @@ class LocalDatabase {
     if (notes != null) values['notes'] = notes;
 
     await db.update('visits', values, where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['visits']);
   }
 
   Future<void> updateVisitStatusByRemoteId(
@@ -1507,6 +1803,7 @@ class LocalDatabase {
       where: 'remote_id = ?',
       whereArgs: [remoteId],
     );
+    _notifyChanged(['visits']);
   }
 
   Future<void> markSynced(List<int> ids) async {
@@ -1516,6 +1813,7 @@ class LocalDatabase {
       'UPDATE visits SET is_synced = 1 WHERE id IN ($placeholders)',
       ids,
     );
+    _notifyChanged(['visits']);
   }
 
   Future<void> setVisitPushPayload({
@@ -1532,6 +1830,7 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [visitId],
     );
+    _notifyChanged(['visits']);
   }
 
   Future<void> updateVisitRemoteId({
@@ -1548,6 +1847,7 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [localVisitId],
     );
+    _notifyChanged(['visits']);
   }
 
   Future<void> updateVisitRawJson({
@@ -1560,13 +1860,20 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [localVisitId],
     );
+    _notifyChanged(['visits']);
   }
 
   Future<int> unsyncedCount() async {
-    final result = await db.rawQuery(
+    final visits = await db.rawQuery(
       'SELECT COUNT(*) AS cnt FROM visits WHERE is_synced = 0',
     );
-    return Sqflite.firstIntValue(result) ?? 0;
+    // Pending plan submissions also count as "ожидают отправки" so the badge
+    // accurately reflects everything that still needs to reach the server.
+    final plans = await db.rawQuery(
+      'SELECT COUNT(*) AS cnt FROM pending_plans',
+    );
+    return (Sqflite.firstIntValue(visits) ?? 0) +
+        (Sqflite.firstIntValue(plans) ?? 0);
   }
 
   // ── Sync Meta ─────────────────────────────────────────────────────────────
@@ -1587,5 +1894,20 @@ class LocalDatabase {
     );
     if (rows.isEmpty) return null;
     return rows.first['value'] as String?;
+  }
+
+  Future<int> getMaxLocalSyncId() async {
+    Future<int> maxFrom(String table) async {
+      final rows = await db.rawQuery('SELECT MAX(sync_id) AS m FROM $table');
+      return Sqflite.firstIntValue(rows) ?? 0;
+    }
+
+    final values = await Future.wait([
+      maxFrom('organisations'),
+      maxFrom('doctors'),
+      maxFrom('doctor_organisations'),
+      maxFrom('drugs'),
+    ]);
+    return values.fold<int>(0, (max, value) => value > max ? value : max);
   }
 }

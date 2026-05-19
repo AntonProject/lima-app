@@ -101,9 +101,9 @@ class SpecificationExportService {
     }
 
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Файл сохранен: ${saved.path}')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Файл сохранен: ${saved.path}')));
   }
 
   Future<File> _saveFile(Uint8List bytes, String name) async {
@@ -118,7 +118,9 @@ class SpecificationExportService {
   }
 
   Future<Uint8List> _buildXlsx(SpecificationData data) async {
-    final templateBytes = await rootBundle.load('assets/docs/specification_template.xlsx');
+    final templateBytes = await rootBundle.load(
+      'assets/docs/specification_template.xlsx',
+    );
     final excel = ex.Excel.decodeBytes(templateBytes.buffer.asUint8List());
     final sheet = excel['Спецификация'];
     ex.Data cell(String addr) => sheet.cell(ex.CellIndex.indexByString(addr));
@@ -143,7 +145,7 @@ class SpecificationExportService {
     final buyerBottomStyle = cell('L22').cellStyle;
 
     cell('A2').value = ex.TextCellValue('СПЕЦИФИКАЦИЯ №${data.orderId}');
-    cell('A3').value = ex.TextCellValue('от ${_englishDate(data.date)}');
+    cell('A3').value = ex.TextCellValue('от ${_russianDate(data.date)}');
     cell('C6').value = ex.TextCellValue(data.seller);
     cell('C8').value = ex.TextCellValue(data.buyer);
     if (headerStyleA2 != null) cell('A2').cellStyle = headerStyleA2;
@@ -153,7 +155,24 @@ class SpecificationExportService {
 
     final templateStyles = <String, ex.CellStyle?>{};
     final totalTemplateStyles = <String, ex.CellStyle?>{};
-    for (final col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']) {
+    for (final col in [
+      'A',
+      'B',
+      'C',
+      'D',
+      'E',
+      'F',
+      'G',
+      'H',
+      'I',
+      'J',
+      'K',
+      'L',
+      'M',
+      'N',
+      'O',
+      'P',
+    ]) {
       templateStyles[col] = cell('${col}13').cellStyle;
       totalTemplateStyles[col] = cell('${col}14').cellStyle;
     }
@@ -207,10 +226,14 @@ class SpecificationExportService {
       cell('E$row').value = ex.TextCellValue(item.unit);
       cell('F$row').value = ex.IntCellValue(item.quantity);
       cell('G$row').value = ex.DoubleCellValue(item.basePrice);
-      cell('H$row').value = ex.TextCellValue('${item.markupPercent.toStringAsFixed(2)}%');
+      cell('H$row').value = ex.TextCellValue(
+        '${item.markupPercent.toStringAsFixed(2)}%',
+      );
       cell('I$row').value = ex.DoubleCellValue(supplyPrice);
       cell('K$row').value = ex.DoubleCellValue(supplySum);
-      cell('M$row').value = ex.TextCellValue('${data.vatRatePercent.toStringAsFixed(0)}%');
+      cell('M$row').value = ex.TextCellValue(
+        '${data.vatRatePercent.toStringAsFixed(0)}%',
+      );
       cell('N$row').value = ex.DoubleCellValue(vatSum);
       cell('O$row').value = ex.DoubleCellValue(withVat);
     }
@@ -232,8 +255,12 @@ class SpecificationExportService {
     final footerValueRow = 22 + (items.length - 1);
     cell('A$footerValueRow').value = ex.TextCellValue(data.seller);
     cell('L$footerValueRow').value = ex.TextCellValue(data.buyer);
-    if (sellerBottomStyle != null) cell('A$footerValueRow').cellStyle = sellerBottomStyle;
-    if (buyerBottomStyle != null) cell('L$footerValueRow').cellStyle = buyerBottomStyle;
+    if (sellerBottomStyle != null) {
+      cell('A$footerValueRow').cellStyle = sellerBottomStyle;
+    }
+    if (buyerBottomStyle != null) {
+      cell('L$footerValueRow').cellStyle = buyerBottomStyle;
+    }
 
     final encoded = excel.encode();
     return Uint8List.fromList(encoded ?? <int>[]);
@@ -275,7 +302,10 @@ class SpecificationExportService {
   }
 
   void _reinforceMergedBorders(ex.Data Function(String) cell, int row) {
-    final thin = ex.Border(borderStyle: ex.BorderStyle.Thin, borderColorHex: ex.ExcelColor.black);
+    final thin = ex.Border(
+      borderStyle: ex.BorderStyle.Thin,
+      borderColorHex: ex.ExcelColor.black,
+    );
 
     void patchRight(String col) {
       final current = cell('$col$row').cellStyle;
@@ -327,7 +357,10 @@ class SpecificationExportService {
       ..color = const Color(0xFF282828)
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
-    canvas.drawRect(Rect.fromLTWH(0, 0, pageWidth, canvasHeight.toDouble()), whitePaint);
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, pageWidth, canvasHeight.toDouble()),
+      whitePaint,
+    );
     final tableTop = 205;
     final headerBottom = 274;
     final itemTop = headerBottom;
@@ -348,7 +381,7 @@ class SpecificationExportService {
     );
     _drawText(
       canvas,
-      text: 'от ${_englishDate(data.date)}',
+      text: 'от ${_russianDate(data.date)}',
       x: 0,
       y: 52,
       width: pageWidth,
@@ -357,9 +390,23 @@ class SpecificationExportService {
       bold: true,
     );
     _drawText(canvas, text: 'Продавец ', x: 130, y: 126, fontSize: 24);
-    _drawText(canvas, text: data.seller, x: 310, y: 126, fontSize: 24, bold: true);
+    _drawText(
+      canvas,
+      text: data.seller,
+      x: 310,
+      y: 126,
+      fontSize: 24,
+      bold: true,
+    );
     _drawText(canvas, text: 'Покупатель ', x: 130, y: 170, fontSize: 24);
-    _drawText(canvas, text: data.buyer, x: 310, y: 170, fontSize: 24, bold: true);
+    _drawText(
+      canvas,
+      text: data.buyer,
+      x: 310,
+      y: 170,
+      fontSize: 24,
+      bold: true,
+    );
 
     canvas.drawRect(
       Rect.fromLTRB(5, tableTop.toDouble(), 1590, tableBottom.toDouble()),
@@ -372,9 +419,17 @@ class SpecificationExportService {
     );
     for (var i = 1; i < items.length; i++) {
       final y = itemTop + (i * rowHeight);
-      canvas.drawLine(Offset(5, y.toDouble()), Offset(1590, y.toDouble()), linePaint);
+      canvas.drawLine(
+        Offset(5, y.toDouble()),
+        Offset(1590, y.toDouble()),
+        linePaint,
+      );
     }
-    canvas.drawLine(Offset(5, totalTop.toDouble()), Offset(1590, totalTop.toDouble()), linePaint);
+    canvas.drawLine(
+      Offset(5, totalTop.toDouble()),
+      Offset(1590, totalTop.toDouble()),
+      linePaint,
+    );
     for (final x in [100, 390, 487, 583, 710, 806, 999, 1192, 1401]) {
       canvas.drawLine(
         Offset(x.toDouble(), tableTop.toDouble()),
@@ -383,20 +438,132 @@ class SpecificationExportService {
       );
     }
     canvas.drawLine(Offset(1192, 251), Offset(1401, 251), linePaint);
-    canvas.drawLine(Offset(1290, 251), Offset(1290, tableBottom.toDouble()), linePaint);
+    canvas.drawLine(
+      Offset(1290, 251),
+      Offset(1290, tableBottom.toDouble()),
+      linePaint,
+    );
 
     // Column boundaries: 5|100|390|487|583|710|806|999|1192|1290|1401|1590
-    _drawText(canvas, text: '№', x: 5, y: 230, width: 95, align: TextAlign.center, bold: true, fontSize: 20);
-    _drawText(canvas, text: 'Наименование товара', x: 100, y: 230, width: 290, align: TextAlign.center, bold: true, fontSize: 17);
-    _drawText(canvas, text: 'Ед.', x: 390, y: 230, width: 97, align: TextAlign.center, bold: true, fontSize: 17, maxLines: 1);
-    _drawText(canvas, text: 'Кол-во', x: 487, y: 230, width: 96, align: TextAlign.center, bold: true, fontSize: 17, maxLines: 1);
-    _drawText(canvas, text: 'Базовая\nцена', x: 583, y: 222, width: 127, align: TextAlign.center, bold: true, fontSize: 17, maxLines: 2);
-    _drawText(canvas, text: 'Торговая\nнаценка', x: 710, y: 222, width: 96, align: TextAlign.center, bold: true, fontSize: 16, maxLines: 2);
-    _drawText(canvas, text: 'Цена поставки', x: 806, y: 230, width: 193, align: TextAlign.center, bold: true, fontSize: 17, maxLines: 1);
-    _drawText(canvas, text: 'Сумма поставки', x: 999, y: 230, width: 193, align: TextAlign.center, bold: true, fontSize: 17, maxLines: 1);
-    _drawText(canvas, text: 'НДС', x: 1192, y: 222, width: 209, align: TextAlign.center, bold: true, fontSize: 17, maxLines: 1);
-    _drawText(canvas, text: 'Ставка', x: 1192, y: 256, width: 98, align: TextAlign.center, bold: true, fontSize: 16, maxLines: 1);
-    _drawText(canvas, text: 'Сумма', x: 1290, y: 256, width: 111, align: TextAlign.center, bold: true, fontSize: 16, maxLines: 1);
+    _drawText(
+      canvas,
+      text: '№',
+      x: 5,
+      y: 230,
+      width: 95,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 20,
+    );
+    _drawText(
+      canvas,
+      text: 'Наименование товара',
+      x: 100,
+      y: 230,
+      width: 290,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 17,
+    );
+    _drawText(
+      canvas,
+      text: 'Ед.',
+      x: 390,
+      y: 230,
+      width: 97,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 17,
+      maxLines: 1,
+    );
+    _drawText(
+      canvas,
+      text: 'Кол-во',
+      x: 487,
+      y: 230,
+      width: 96,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 17,
+      maxLines: 1,
+    );
+    _drawText(
+      canvas,
+      text: 'Базовая\nцена',
+      x: 583,
+      y: 222,
+      width: 127,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 17,
+      maxLines: 2,
+    );
+    _drawText(
+      canvas,
+      text: 'Торговая\nнаценка',
+      x: 710,
+      y: 222,
+      width: 96,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 16,
+      maxLines: 2,
+    );
+    _drawText(
+      canvas,
+      text: 'Цена поставки',
+      x: 806,
+      y: 230,
+      width: 193,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 17,
+      maxLines: 1,
+    );
+    _drawText(
+      canvas,
+      text: 'Сумма поставки',
+      x: 999,
+      y: 230,
+      width: 193,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 17,
+      maxLines: 1,
+    );
+    _drawText(
+      canvas,
+      text: 'НДС',
+      x: 1192,
+      y: 222,
+      width: 209,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 17,
+      maxLines: 1,
+    );
+    _drawText(
+      canvas,
+      text: 'Ставка',
+      x: 1192,
+      y: 256,
+      width: 98,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 16,
+      maxLines: 1,
+    );
+    _drawText(
+      canvas,
+      text: 'Сумма',
+      x: 1290,
+      y: 256,
+      width: 111,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 16,
+      maxLines: 1,
+    );
     _drawText(
       canvas,
       text: 'Стоимость поставки\nс учётом НДС',
@@ -435,7 +602,8 @@ class SpecificationExportService {
       );
       _drawText(
         canvas,
-        text: '${item.name}\nПроизводитель: ${item.manufacturer.isEmpty ? '—' : item.manufacturer}\nСерия:${item.serialNumber}\nСрок годности: ${item.expiryDate}',
+        text:
+            '${item.name}\nПроизводитель: ${item.manufacturer.isEmpty ? '—' : item.manufacturer}\nСерия:${item.serialNumber}\nСрок годности: ${item.expiryDate}',
         x: 108,
         y: rowY + 4,
         width: 274,
@@ -443,25 +611,159 @@ class SpecificationExportService {
         fontSize: 16,
         maxLines: 4,
       );
-      _drawText(canvas, text: '${item.quantity}', x: 495, y: rowY + 28, width: 80, align: TextAlign.center, fontSize: 18);
-      _drawText(canvas, text: _money(item.basePrice), x: 591, y: rowY + 28, width: 111, align: TextAlign.center, fontSize: 18);
-      _drawText(canvas, text: '${item.markupPercent.toStringAsFixed(2)}%', x: 718, y: rowY + 28, width: 80, align: TextAlign.center, fontSize: 18);
-      _drawText(canvas, text: _money(supplyPrice), x: 814, y: rowY + 28, width: 177, align: TextAlign.center, fontSize: 18);
-      _drawText(canvas, text: _money(supplySum), x: 1007, y: rowY + 28, width: 177, align: TextAlign.center, fontSize: 18);
-      _drawText(canvas, text: '${data.vatRatePercent.toStringAsFixed(0)}%', x: 1200, y: rowY + 28, width: 82, align: TextAlign.center, fontSize: 18);
-      _drawText(canvas, text: _money(vat), x: 1298, y: rowY + 28, width: 95, align: TextAlign.center, fontSize: 18);
-      _drawText(canvas, text: _money(total), x: 1409, y: rowY + 28, width: 173, align: TextAlign.center, fontSize: 18);
+      _drawText(
+        canvas,
+        text: '${item.quantity}',
+        x: 495,
+        y: rowY + 28,
+        width: 80,
+        align: TextAlign.center,
+        fontSize: 18,
+      );
+      _drawText(
+        canvas,
+        text: _money(item.basePrice),
+        x: 591,
+        y: rowY + 28,
+        width: 111,
+        align: TextAlign.center,
+        fontSize: 18,
+      );
+      _drawText(
+        canvas,
+        text: '${item.markupPercent.toStringAsFixed(2)}%',
+        x: 718,
+        y: rowY + 28,
+        width: 80,
+        align: TextAlign.center,
+        fontSize: 18,
+      );
+      _drawText(
+        canvas,
+        text: _money(supplyPrice),
+        x: 814,
+        y: rowY + 28,
+        width: 177,
+        align: TextAlign.center,
+        fontSize: 18,
+      );
+      _drawText(
+        canvas,
+        text: _money(supplySum),
+        x: 1007,
+        y: rowY + 28,
+        width: 177,
+        align: TextAlign.center,
+        fontSize: 18,
+      );
+      _drawText(
+        canvas,
+        text: '${data.vatRatePercent.toStringAsFixed(0)}%',
+        x: 1200,
+        y: rowY + 28,
+        width: 82,
+        align: TextAlign.center,
+        fontSize: 18,
+      );
+      _drawText(
+        canvas,
+        text: _money(vat),
+        x: 1298,
+        y: rowY + 28,
+        width: 95,
+        align: TextAlign.center,
+        fontSize: 18,
+      );
+      _drawText(
+        canvas,
+        text: _money(total),
+        x: 1409,
+        y: rowY + 28,
+        width: 173,
+        align: TextAlign.center,
+        fontSize: 18,
+      );
     }
 
-    _drawText(canvas, text: 'Всего к оплате:', x: 108, y: totalTop + 6, width: 274, align: TextAlign.left, bold: true, fontSize: 16);
-    _drawText(canvas, text: _money(totalSupply), x: 1007, y: totalTop + 6, width: 177, align: TextAlign.center, bold: true, fontSize: 16);
-    _drawText(canvas, text: _money(totalVat), x: 1298, y: totalTop + 6, width: 95, align: TextAlign.center, bold: true, fontSize: 16);
-    _drawText(canvas, text: _money(totalWithVat), x: 1409, y: totalTop + 6, width: 173, align: TextAlign.center, bold: true, fontSize: 16);
+    _drawText(
+      canvas,
+      text: 'Всего к оплате:',
+      x: 108,
+      y: totalTop + 6,
+      width: 274,
+      align: TextAlign.left,
+      bold: true,
+      fontSize: 16,
+    );
+    _drawText(
+      canvas,
+      text: _money(totalSupply),
+      x: 1007,
+      y: totalTop + 6,
+      width: 177,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 16,
+    );
+    _drawText(
+      canvas,
+      text: _money(totalVat),
+      x: 1298,
+      y: totalTop + 6,
+      width: 95,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 16,
+    );
+    _drawText(
+      canvas,
+      text: _money(totalWithVat),
+      x: 1409,
+      y: totalTop + 6,
+      width: 173,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 16,
+    );
 
-    _drawText(canvas, text: 'Продавец', x: 0, y: signY.toDouble(), width: 800, align: TextAlign.center, fontSize: 24);
-    _drawText(canvas, text: 'Покупатель', x: 800, y: signY.toDouble(), width: 800, align: TextAlign.center, fontSize: 24);
-    _drawText(canvas, text: data.seller, x: 0, y: signNameY.toDouble(), width: 800, align: TextAlign.center, bold: true, fontSize: 24);
-    _drawText(canvas, text: data.buyer, x: 800, y: signNameY.toDouble(), width: 800, align: TextAlign.center, bold: true, fontSize: 24);
+    _drawText(
+      canvas,
+      text: 'Продавец',
+      x: 0,
+      y: signY.toDouble(),
+      width: 800,
+      align: TextAlign.center,
+      fontSize: 24,
+    );
+    _drawText(
+      canvas,
+      text: 'Покупатель',
+      x: 800,
+      y: signY.toDouble(),
+      width: 800,
+      align: TextAlign.center,
+      fontSize: 24,
+    );
+    _drawText(
+      canvas,
+      text: data.seller,
+      x: 0,
+      y: signNameY.toDouble(),
+      width: 800,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 24,
+    );
+    _drawText(
+      canvas,
+      text: data.buyer,
+      x: 800,
+      y: signNameY.toDouble(),
+      width: 800,
+      align: TextAlign.center,
+      bold: true,
+      fontSize: 24,
+    );
 
     final picture = recorder.endRecording();
     final image = await picture.toImage(pageWidth.toInt(), canvasHeight);
@@ -508,33 +810,23 @@ class SpecificationExportService {
     painter.paint(canvas, Offset(dx, y));
   }
 
-  static String _englishDate(DateTime date) {
-    const days = [
-      'Monday',
-      'Tuesday',
-      'Wednesday',
-      'Thursday',
-      'Friday',
-      'Saturday',
-      'Sunday',
-    ];
+  static String _russianDate(DateTime date) {
     const months = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
     ];
-    final day = days[date.weekday - 1];
     final month = months[date.month - 1];
-    return '$day, ${date.day} $month ${date.year}';
+    return '${date.day} $month ${date.year} г.';
   }
 
   static String _money(double value) {

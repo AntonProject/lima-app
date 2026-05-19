@@ -107,6 +107,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
               data['company_title'] ??
               data['organization_name'],
         ),
+        companyId: _extractCompanyId(
+          data['company_id'] ??
+              data['companyId'] ??
+              data['company'] ??
+              data['sale_company'],
+        ),
         visitsCount: stats.visitsCount,
         salesAmount: stats.salesAmount,
         doctorsCount: stats.doctorsCount,
@@ -211,15 +217,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> _tryOfflineLogin(String username, String password) async {
     final saved = await _creds.loadForLogin(username);
-    final ownerMatches = await _db.matchesCurrentUserOwner(login: username);
-    final hasOwnedData = await _db.hasUsableOfflineSessionForLogin(username);
     final cachedJson = _api.prefs.getString(_cachedUserKeyFor(username));
 
-    if (saved == null || cachedJson == null || !ownerMatches || !hasOwnedData) {
-      // No cached profile at all — need internet for first login
+    if (saved == null || cachedJson == null) {
+      // No cached profile at all — need internet for first login.
       state = state.copyWith(
         status: AuthStatus.error,
-        errorMessage: 'Нет подключения к интернету',
+        errorMessage: 'Не удалось подключиться к серверу',
       );
       return;
     }
@@ -239,12 +243,21 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final user = UserModel.fromJson(
         jsonDecode(cachedJson) as Map<String, dynamic>,
       );
+      final owner = await _db.getCurrentUserOwner();
+      if (owner.login != null && owner.login != username) {
+        await _db.clearUserScopedData();
+      }
+      await _db.setCurrentUserOwner(
+        userId: user.id,
+        login: username,
+        role: user.role,
+      );
       await _creds.setCurrentLogin(username);
       state = state.copyWith(status: AuthStatus.authenticated, user: user);
     } catch (_) {
       state = state.copyWith(
         status: AuthStatus.error,
-        errorMessage: 'Нет подключения к интернету',
+        errorMessage: 'Не удалось открыть сохранённый профиль',
       );
     }
   }
@@ -253,6 +266,17 @@ class AuthNotifier extends StateNotifier<AuthState> {
     if (value == null) return null;
     if (value is Map) return value['name']?.toString();
     return value.toString();
+  }
+
+  static int? _extractCompanyId(dynamic value) {
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    if (value is Map) {
+      final id = value['id'] ?? value['company_id'];
+      if (id is num) return id.toInt();
+      if (id is String) return int.tryParse(id);
+    }
+    return null;
   }
 
   static String _extractFullName(Map<String, dynamic> data) {
@@ -324,13 +348,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<bool> loginOfflineWithCache() async {
     final saved = await _creds.load();
     if (saved == null) return false;
-    if (!await _db.hasUsableOfflineSessionForLogin(saved.login)) return false;
     final cachedJson = _api.prefs.getString(_cachedUserKeyFor(saved.login));
     if (cachedJson == null) return false;
     try {
       final user = UserModel.fromJson(
         jsonDecode(cachedJson) as Map<String, dynamic>,
       );
+      final owner = await _db.getCurrentUserOwner();
+      if (owner.login != null && owner.login != saved.login) {
+        await _db.clearUserScopedData();
+      }
+      await _db.setCurrentUserOwner(
+        userId: user.id,
+        login: saved.login,
+        role: user.role,
+      );
+      await _creds.setCurrentLogin(saved.login);
       state = state.copyWith(status: AuthStatus.authenticated, user: user);
       return true;
     } catch (_) {

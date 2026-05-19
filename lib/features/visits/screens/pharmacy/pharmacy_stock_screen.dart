@@ -35,6 +35,13 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
   String _query = '';
   bool _actionLocked = false;
   int get _selectedCount => _qtyByDrugId.values.fold<int>(0, (a, b) => a + b);
+  bool get _hasInvalidSelectedQty => _qtyByDrugId.entries.any((e) {
+    final drug = _drugs.cast<Drug?>().firstWhere(
+      (d) => d?.id == e.key,
+      orElse: () => null,
+    );
+    return drug != null && _isOverStock(drug, e.value);
+  });
 
   List<Drug> get _filtered => _drugs
       .where((d) => d.name.toLowerCase().contains(_query.toLowerCase()))
@@ -60,6 +67,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
   Future<void> _openQtyDialog(Drug drug) async {
     final initial = _qtyByDrugId[drug.id] ?? 0;
     var qtyStr = initial > 0 ? initial.toString() : '0';
+    final available = _availableStock(drug);
     final result = await showModalBottomSheet<int>(
       context: context,
       useRootNavigator: true,
@@ -71,6 +79,11 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (_, setModal) {
           final qty = int.tryParse(qtyStr) ?? 0;
+          final isOverStock = qty > available;
+          final canIncrease = qty < available;
+          final counterColor = isOverStock
+              ? AppColors.error
+              : const Color(0xFFE49351);
           void onKey(String key) {
             setModal(() {
               if (key == 'C') {
@@ -150,8 +163,14 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                             ? drug.serialNumber!
                             : '—',
                       ),
-                      _line('На основном складе', '${drug.stock ?? 0} шт.'),
-                      _line('Остаток', '${drug.stock ?? 0} шт.'),
+                      _line(
+                        'На основном складе',
+                        '${drug.mainStock ?? drug.stock ?? 0} шт.',
+                      ),
+                      _line(
+                        'Остаток',
+                        '${drug.remainsStock ?? drug.stock ?? 0} шт.',
+                      ),
                       _line('Цена', formatUzs(drug.price)),
                     ],
                   ),
@@ -173,10 +192,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                           height: 52,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: const Color(0xFFE49351),
-                              width: 2,
-                            ),
+                            border: Border.all(color: counterColor, width: 2),
                           ),
                           child: Center(
                             child: Text(
@@ -184,7 +200,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                               style: GoogleFonts.manrope(
                                 fontSize: 22,
                                 fontWeight: FontWeight.w700,
-                                color: const Color(0xFFE49351),
+                                color: counterColor,
                               ),
                             ),
                           ),
@@ -193,14 +209,31 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                       const SizedBox(width: 10),
                       _QtyBtn(
                         icon: Icons.add_rounded,
-                        onTap: () => setModal(() {
-                          final cur = int.tryParse(qtyStr) ?? 0;
-                          qtyStr = (cur + 1).toString();
-                        }),
+                        onTap: canIncrease
+                            ? () => setModal(() {
+                                final cur = int.tryParse(qtyStr) ?? 0;
+                                qtyStr = (cur + 1).toString();
+                              })
+                            : null,
                       ),
                     ],
                   ),
                 ),
+                if (isOverStock) ...[
+                  const SizedBox(height: 6),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(
+                      'Доступно: $available шт.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.error,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -210,7 +243,9 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: ElevatedButton(
-                    onPressed: () => Navigator.pop(ctx, qty),
+                    onPressed: qty <= 0 || isOverStock
+                        ? null
+                        : () => Navigator.pop(ctx, qty),
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 52),
                       shape: RoundedRectangleBorder(
@@ -235,6 +270,10 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
     if (result == null || !mounted) return;
     setState(() => _qtyByDrugId[drug.id] = result);
   }
+
+  int _availableStock(Drug drug) => drug.remainsStock ?? drug.stock ?? 0;
+
+  bool _isOverStock(Drug drug, int qty) => qty > _availableStock(drug);
 
   Widget _line(String label, String value) {
     return Padding(
@@ -277,7 +316,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
         if (e.value > 0 && _drugs.any((d) => d.id == e.key))
           e.key: _drugs.firstWhere((d) => d.id == e.key),
     };
-    if (selected.isEmpty) return;
+    if (selected.isEmpty || _hasInvalidSelectedQty) return;
     final result = await Navigator.of(context).push<_StockSubmitPayload>(
       MaterialPageRoute(
         builder: (_) => _StockConfirmScreen(
@@ -298,9 +337,21 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
 
   Future<void> _submitStock(_StockSubmitPayload payload) async {
     if (_actionLocked) return;
+    final hasInvalidQty = payload.qtyByDrugId.entries.any((e) {
+      final drug = payload.drugsById[e.key];
+      return drug != null && _isOverStock(drug, e.value);
+    });
+    if (hasInvalidQty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Количество больше доступного остатка')),
+        );
+      }
+      return;
+    }
     setState(() => _actionLocked = true);
     final now = DateTime.now().toIso8601String();
-    final itemsPayload = payload.qtyByDrugId.entries
+    final stockItemsPayload = payload.qtyByDrugId.entries
         .where((e) => e.value > 0 && payload.drugsById.containsKey(e.key))
         .map((e) {
           final d = payload.drugsById[e.key]!;
@@ -315,15 +366,32 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
           };
         })
         .toList();
+    final drugsPayload = payload.qtyByDrugId.entries
+        .where((e) => e.value > 0 && payload.drugsById.containsKey(e.key))
+        .map((e) {
+          final d = payload.drugsById[e.key]!;
+          return <String, dynamic>{
+            'income_detailing_id': d.currentStockId,
+            'drug_id': d.bindingDrugId ?? d.id,
+            'package': e.value,
+            'sale_price': d.price,
+            'sale_price_without_nds': _priceWithoutNds(d.price),
+            'serial_no': d.serialNumber,
+            'expire_date': d.expiryDate,
+          };
+        })
+        .toList();
     int? localId;
     try {
       final rawVisitJson = jsonEncode({
         'organization_id': widget.pharmacyId,
         'organization_name': widget.pharmacyName,
-        'visit_type': 'stock',
+        'visit_type': 4,
         'status': 'completed',
         'comment': payload.comment.trim(),
-        'items': itemsPayload,
+        'stock_items': stockItemsPayload,
+        // Swagger VisitRequest uses DrugRequest[] for stock/remnant visits.
+        'drugs': drugsPayload,
         'start_date': now,
         'end_date': now,
       });
@@ -380,8 +448,51 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
             await ref
                 .read(localDatabaseProvider)
                 .updateVisitRemoteId(localVisitId: localId, remoteId: remoteId);
+            try {
+              final remoteRow = await ref
+                  .read(remoteApiServiceProvider)
+                  .getVisitHistoryRemnantById(remoteId);
+              if (remoteRow != null) {
+                final serverRaw = remoteRow['raw_json'];
+                var mergedRaw = <String, dynamic>{};
+                if (serverRaw is String && serverRaw.isNotEmpty) {
+                  final decoded = jsonDecode(serverRaw);
+                  if (decoded is Map) {
+                    mergedRaw = Map<String, dynamic>.from(decoded);
+                  }
+                } else {
+                  mergedRaw = Map<String, dynamic>.from(remoteRow);
+                }
+                mergedRaw.putIfAbsent('stock_items', () => stockItemsPayload);
+                final serverDrugs = mergedRaw['drugs'];
+                if ((serverDrugs is! List || serverDrugs.isEmpty) &&
+                    drugsPayload.isNotEmpty) {
+                  mergedRaw['drugs'] = drugsPayload;
+                }
+                await ref
+                    .read(localDatabaseProvider)
+                    .updateVisitRawJson(
+                      localVisitId: localId,
+                      rawJson: jsonEncode(mergedRaw),
+                    );
+              }
+            } catch (_) {}
           }
-        } catch (_) {}
+          await ref
+              .read(localDatabaseProvider)
+              .setVisitPushPayload(
+                visitId: localId,
+                requestJson: jsonEncode(pushResult['request']),
+                responseJson: jsonEncode(pushResult['response']),
+              );
+        } catch (e) {
+          await ref
+              .read(localDatabaseProvider)
+              .setVisitPushPayload(
+                visitId: localId,
+                responseJson: jsonEncode({'error': '$e'}),
+              );
+        }
       }
     } catch (_) {}
     if (ref.read(isOfflineProvider)) {
@@ -389,6 +500,10 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
     }
     if (!mounted) return;
     await _showSuccessDialog();
+  }
+
+  double _priceWithoutNds(double value) {
+    return double.parse((value / 1.12).toStringAsFixed(2));
   }
 
   Future<void> _showSuccessDialog() async {
@@ -574,6 +689,8 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                     itemBuilder: (_, i) {
                       final drug = _filtered[i];
                       final qty = _qtyByDrugId[drug.id];
+                      final isOverStock =
+                          qty != null && _isOverStock(drug, qty);
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 10),
                         child: GestureDetector(
@@ -649,15 +766,22 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                                       vertical: 6,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: AppColors.iconBgBlue,
+                                      color: isOverStock
+                                          ? const Color(0xFFFFE8E8)
+                                          : AppColors.iconBgBlue,
                                       borderRadius: BorderRadius.circular(8),
+                                      border: isOverStock
+                                          ? Border.all(color: AppColors.error)
+                                          : null,
                                     ),
                                     child: Text(
                                       '$qty',
                                       style: GoogleFonts.manrope(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w700,
-                                        color: AppColors.primary,
+                                        color: isOverStock
+                                            ? AppColors.error
+                                            : AppColors.primary,
                                       ),
                                     ),
                                   ),
@@ -685,7 +809,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                 MediaQuery.of(context).padding.bottom + 8,
               ),
               child: ElevatedButton(
-                onPressed: _openConfirmScreen,
+                onPressed: _hasInvalidSelectedQty ? null : _openConfirmScreen,
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 52),
                   shape: RoundedRectangleBorder(
@@ -742,6 +866,11 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
   int get _itemsCount => _qtyByDrugId.values.fold<int>(0, (a, b) => a + b);
   List<int> get _ids =>
       _qtyByDrugId.keys.where((id) => (_qtyByDrugId[id] ?? 0) > 0).toList();
+  bool get _hasInvalidQty => _ids.any((id) {
+    final drug = widget.drugsById[id];
+    if (drug == null) return false;
+    return _isOverStock(drug, _qtyByDrugId[id] ?? 0);
+  });
 
   @override
   void dispose() {
@@ -856,7 +985,7 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
           MediaQuery.of(context).padding.bottom + 8,
         ),
         child: ElevatedButton(
-          onPressed: _ids.isEmpty
+          onPressed: _ids.isEmpty || _hasInvalidQty
               ? null
               : () => Navigator.pop(
                   context,
@@ -887,10 +1016,12 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
   Widget _stockItemCard(int id) {
     final drug = widget.drugsById[id]!;
     final qty = _qtyByDrugId[id] ?? 0;
+    final isOverStock = _isOverStock(drug, qty);
     return Container(
       decoration: BoxDecoration(
         color: AppColors.secondaryBg,
         borderRadius: BorderRadius.circular(12),
+        border: isOverStock ? Border.all(color: AppColors.error) : null,
       ),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       child: Row(
@@ -925,13 +1056,15 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFE9A165)),
+              border: Border.all(
+                color: isOverStock ? AppColors.error : const Color(0xFFE9A165),
+              ),
             ),
             child: Text(
               '$qty',
               style: GoogleFonts.manrope(
                 fontSize: 16,
-                color: const Color(0xFFE9A165),
+                color: isOverStock ? AppColors.error : const Color(0xFFE9A165),
               ),
             ),
           ),
@@ -969,6 +1102,8 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
   }
 
   Future<void> _editQty(int id) async {
+    final drug = widget.drugsById[id]!;
+    final available = _availableStock(drug);
     final initial = _qtyByDrugId[id] ?? 1;
     var qtyStr = initial.toString();
     final result = await showModalBottomSheet<int>(
@@ -981,6 +1116,11 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
         return StatefulBuilder(
           builder: (ctx, setModal) {
             final qty = int.tryParse(qtyStr) ?? 0;
+            final isOverStock = qty > available;
+            final canIncrease = qty < available;
+            final counterColor = isOverStock
+                ? AppColors.error
+                : const Color(0xFFE9A165);
             void onKey(String key) {
               setModal(() {
                 if (key == 'C') {
@@ -1031,17 +1171,14 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: const Color(0xFFE9A165),
-                              width: 1.5,
-                            ),
+                            border: Border.all(color: counterColor, width: 1.5),
                           ),
                           child: Text(
                             qtyStr,
                             style: GoogleFonts.manrope(
                               fontSize: 20,
                               fontWeight: FontWeight.w700,
-                              color: const Color(0xFFE9A165),
+                              color: counterColor,
                             ),
                           ),
                         ),
@@ -1049,18 +1186,33 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
                       const SizedBox(width: 10),
                       _QtyBtn(
                         icon: Icons.add_rounded,
-                        onTap: () => setModal(() {
-                          final cur = int.tryParse(qtyStr) ?? 0;
-                          qtyStr = (cur + 1).toString();
-                        }),
+                        onTap: canIncrease
+                            ? () => setModal(() {
+                                final cur = int.tryParse(qtyStr) ?? 0;
+                                qtyStr = (cur + 1).toString();
+                              })
+                            : null,
                       ),
                     ],
                   ),
+                  if (isOverStock) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Доступно: $available шт.',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.error,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   _NumKeypad(onKey: onKey),
                   const SizedBox(height: 12),
                   ElevatedButton(
-                    onPressed: () => Navigator.pop(ctx, qty),
+                    onPressed: qty <= 0 || isOverStock
+                        ? null
+                        : () => Navigator.pop(ctx, qty),
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
                       shape: RoundedRectangleBorder(
@@ -1091,6 +1243,10 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
       }
     });
   }
+
+  int _availableStock(Drug drug) => drug.remainsStock ?? drug.stock ?? 0;
+
+  bool _isOverStock(Drug drug, int qty) => qty > _availableStock(drug);
 }
 
 class _NumKeypad extends StatelessWidget {

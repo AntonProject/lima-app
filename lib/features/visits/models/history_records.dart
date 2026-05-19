@@ -59,8 +59,11 @@ class HistoryVisitRecord {
     this.rawJson = '{}',
   });
 
+  bool get hasServerId => id.trim().isNotEmpty;
+
   factory HistoryVisitRecord.fromVisitMap(Map<String, dynamic> row) {
     final raw = _decodeRaw(row['raw_json']);
+    final pushRequest = _decodeRaw(row['last_push_request_json']);
     final createdAt = _firstDate([
       row['created_at'],
       row['date'],
@@ -86,11 +89,7 @@ class HistoryVisitRecord {
     final typeRaw = _asLower(
       raw['visit_type'] ?? raw['type'] ?? row['visit_type'] ?? row['type'],
     );
-    final mappedType = _resolveType(
-      row: row,
-      raw: raw,
-      typeRaw: typeRaw,
-    );
+    final mappedType = _resolveType(row: row, raw: raw, typeRaw: typeRaw);
     final normalizedType = mappedType.$1;
     final subType = mappedType.$2;
 
@@ -112,7 +111,10 @@ class HistoryVisitRecord {
       'user_name',
     ]);
     final medicalRep = medRepRaw == '—' && raw['medrep'] is Map
-        ? _pick(Map<String, dynamic>.from(raw['medrep'] as Map), const ['name', 'full_name'])
+        ? _pick(Map<String, dynamic>.from(raw['medrep'] as Map), const [
+            'name',
+            'full_name',
+          ])
         : medRepRaw;
 
     final statusRaw = _asLower(
@@ -154,7 +156,8 @@ class HistoryVisitRecord {
     );
     // Some backend rows can contain total_sum=0 while line items contain
     // valid sale_price/package. Prefer computed items total in that case.
-    final orderTotal = ((totalSum != null && totalSum > 0) ? totalSum : null) ??
+    final orderTotal =
+        ((totalSum != null && totalSum > 0) ? totalSum : null) ??
         itemsTotal ??
         price ??
         totalSum ??
@@ -165,13 +168,17 @@ class HistoryVisitRecord {
           row['organization_id'] ??
           raw['organization_id'] ??
           raw['org_id'] ??
-          (raw['organization'] is Map ? (raw['organization'] as Map)['organization_id'] : null),
+          (raw['organization'] is Map
+              ? (raw['organization'] as Map)['organization_id']
+              : null),
     );
     final org = _firstNonEmptyString([
       row['org_name'],
       row['organization_name'],
       row['organisation_name'],
-      (raw['organization'] is Map ? (raw['organization'] as Map)['organization_name'] : null),
+      (raw['organization'] is Map
+          ? (raw['organization'] as Map)['organization_name']
+          : null),
       raw['organization_name'],
       raw['organisation_name'],
       raw['org_name'],
@@ -182,7 +189,12 @@ class HistoryVisitRecord {
         ? Map<String, dynamic>.from(raw['visit_pharm_circle'] as Map)
         : const <String, dynamic>{};
     return HistoryVisitRecord(
-      id: '${row['remote_id'] ?? row['id'] ?? '—'}',
+      id: () {
+        final remoteId =
+            _toInt(row['remote_id']) ??
+            _extractRemoteId(row['last_push_response_json']);
+        return remoteId?.toString() ?? '';
+      }(),
       orgId: orgId,
       org: org,
       date: _formatDate(createdAt),
@@ -199,39 +211,83 @@ class HistoryVisitRecord {
       doctor: doctor,
       presentations: presentations,
       stockItems: stockItems,
-      pharmacistsFio: _pick(raw, const ['pharmacists_fio', 'pharmacists', 'pharmacist_names', 'participants_fio']) == '—'
+      pharmacistsFio:
+          _pick(raw, const [
+                'pharmacists_fio',
+                'pharmacists',
+                'pharmacist_names',
+                'participants_fio',
+              ]) ==
+              '—'
           ? _pick(pharmCircle, const ['pharmacist_names', 'name'])
-          : _pick(raw, const ['pharmacists_fio', 'pharmacists', 'pharmacist_names', 'participants_fio']),
-      participantsCount: _toInt(
+          : _pick(raw, const [
+              'pharmacists_fio',
+              'pharmacists',
+              'pharmacist_names',
+              'participants_fio',
+            ]),
+      participantsCount:
+          _toInt(
             raw['participants_count'] ??
                 raw['participants'] ??
                 pharmCircle['number_of_participants'],
           ) ??
           0,
-      discussedDrugsCount: _toInt(raw['discussed_drugs_count'] ?? raw['discussed_count']) ?? presentations.length,
-      materialsShownCount: _toInt(raw['materials_shown_count'] ?? raw['shown_materials_count']) ?? 0,
+      discussedDrugsCount:
+          _toInt(raw['discussed_drugs_count'] ?? raw['discussed_count']) ??
+          presentations.length,
+      materialsShownCount:
+          _toInt(
+            raw['materials_shown_count'] ?? raw['shown_materials_count'],
+          ) ??
+          0,
       orderTotal: orderTotal,
-      prepaymentPercent: _toInt(
-        raw['prepayment'] ?? raw['prepayment_percent'] ?? row['prepayment'],
+      prepaymentPercent:
+          _toInt(
+            pushRequest['prepayment_percent'] ?? pushRequest['prepayment'],
+          ) ??
+          _toInt(
+            raw['prepayment'] ?? raw['prepayment_percent'] ?? row['prepayment'],
+          ),
+      buyerType:
+          _buyerTypeFrom(pushRequest) ??
+          _buyerTypeFrom(raw) ??
+          _toInt(row['buyer_type']) ??
+          (_toBool(row['is_wholesaler']) == true ? 1 : null),
+      markupPercent: _toDouble(
+        raw['markup'] ??
+            raw['markup_percent'] ??
+            raw['margin_percent'] ??
+            row['markup'],
       ),
-      buyerType: _toInt(raw['buyer_type'] ?? raw['client_type'] ?? row['buyer_type']),
-      markupPercent: _toDouble(raw['markup'] ?? raw['markup_percent'] ?? row['markup']),
-      orderStatus: _pick(raw, const ['order_status', 'status_name']).trim() == '—'
-          ? (_pick(raw, const ['order_status_name', 'visit_status_name']).trim() == '—'
+      orderStatus:
+          _pick(raw, const ['order_status', 'status_name']).trim() == '—'
+          ? (_pick(raw, const [
+                      'order_status_name',
+                      'visit_status_name',
+                    ]).trim() ==
+                    '—'
                 ? 'Новая заявка'
-                : _pick(raw, const ['order_status_name', 'visit_status_name']).trim())
+                : _pick(raw, const [
+                    'order_status_name',
+                    'visit_status_name',
+                  ]).trim())
           : _pick(raw, const ['order_status', 'status_name']).trim(),
       serialNumber: () {
-        final direct = _pick(
-          raw,
-          const ['serial_number', 'series', 'series_number', 'serial_no'],
-        );
+        final direct = _pick(raw, const [
+          'serial_number',
+          'series',
+          'series_number',
+          'serial_no',
+        ]);
         if (direct != '—') return direct;
         final stockSerial = firstStock?.serialNumber ?? '';
         return stockSerial.isEmpty || stockSerial == '—' ? '' : stockSerial;
       }(),
       quantity: qty ?? (firstStock?.quantity ?? 1),
-      rawJson: row['raw_json'] is String ? row['raw_json'] as String : jsonEncode(raw),
+      rawJson: row['raw_json'] is String
+          ? row['raw_json'] as String
+          : jsonEncode(raw),
     );
   }
 
@@ -240,6 +296,24 @@ class HistoryVisitRecord {
     required Map<String, dynamic> raw,
     required String typeRaw,
   }) {
+    // Use visit_format_name from API directly — most reliable signal.
+    // Must be checked before any heuristics that look at order_status/total_sum,
+    // because the server always includes those fields even for circle visits.
+    final fmtName = _asLower(raw['visit_format_name'] ?? '');
+    if (fmtName.contains('фармкруж') || fmtName.contains('pharm')) {
+      return ('pharmacy', 'circle');
+    }
+    if (fmtName.contains('груп') || fmtName.contains('group')) {
+      return ('lpu', 'group');
+    }
+    if (fmtName.contains('двойн') || fmtName.contains('double')) {
+      return ('lpu', 'lpu');
+    }
+
+    // visit_pharm_circle object presence is a reliable circle signal.
+    final pharmCircle = raw['visit_pharm_circle'];
+    final hasPharmCircle = pharmCircle is Map && pharmCircle.isNotEmpty;
+
     final hasOrderItems =
         raw['items'] is List && (raw['items'] as List).isNotEmpty;
     final hasOrderFields =
@@ -253,37 +327,36 @@ class HistoryVisitRecord {
             '—' ||
         _extractDoctorNames(raw).isNotEmpty;
     final hasCirclePayload =
+        hasPharmCircle ||
         _toInt(raw['participants_count'] ?? raw['participants']) != null ||
-        _pick(
-              raw,
-              const ['pharmacists_fio', 'pharmacists', 'pharmacist_names'],
-            ) !=
+        _pick(raw, const [
+              'pharmacists_fio',
+              'pharmacists',
+              'pharmacist_names',
+            ]) !=
             '—';
-    // Defensive rule: if backend flags are inconsistent (e.g. visit_type says
-    // presentation) but payload carries order fields/items for a pharmacy flow,
-    // keep it as pharmacy order to avoid "Презентация" in pharmacy history.
-    if ((hasOrderItems || hasOrderFields) && !hasDoctorSignals && !hasCirclePayload) {
-      return ('pharmacy', 'order');
-    }
     if (typeRaw == 'stock' || typeRaw == '4' || typeRaw == 'remnant') {
       return ('stock', 'stock');
     }
     if (typeRaw == 'circle' || typeRaw == 'pharmcircle') {
       return ('pharmacy', 'circle');
     }
-    if (_asLower(raw['visit_format_name']).contains('фармкруж')) {
-      return ('pharmacy', 'circle');
+    // Defensive rule: visit_type says pharmacy but no circle payload → order.
+    // Safe here because format_name was already checked above.
+    if ((hasOrderItems || hasOrderFields) &&
+        !hasDoctorSignals &&
+        !hasCirclePayload) {
+      return ('pharmacy', 'order');
     }
     if (typeRaw == 'order' || typeRaw == '1' || typeRaw == 'pharmacy') {
-      // If payload has explicit circle fields, treat as pharm circle.
       return hasCirclePayload ? ('pharmacy', 'circle') : ('pharmacy', 'order');
     }
     if (typeRaw == '2' || typeRaw == 'lpu' || typeRaw == 'presentation') {
       final doctors = _extractDoctorNames(raw);
-      final isGroup = _toBool(raw['is_group']) == true ||
+      final isGroup =
+          _toBool(raw['is_group']) == true ||
           _asLower(raw['visit_subtype']).contains('group') ||
           _asLower(raw['presentation_type']).contains('group') ||
-          _asLower(raw['visit_format_name']).contains('груп') ||
           _asLower(raw['visit_type_name']).contains('груп') ||
           doctors.length > 1;
       return ('lpu', isGroup ? 'group' : 'lpu');
@@ -291,7 +364,9 @@ class HistoryVisitRecord {
 
     final rowType = _asLower(row['type']);
     if (rowType == 'stock') return ('stock', 'stock');
-    if (rowType == 'order' || rowType == 'pharmacy') return ('pharmacy', 'order');
+    if (rowType == 'order' || rowType == 'pharmacy') {
+      return ('pharmacy', 'order');
+    }
     final doctors = _extractDoctorNames(raw);
     final isGroup = doctors.length > 1;
     return ('lpu', isGroup ? 'group' : 'lpu');
@@ -321,6 +396,16 @@ class HistoryVisitRecord {
       }
     }
     return const <String, dynamic>{};
+  }
+
+  static int? _extractRemoteId(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String && int.tryParse(raw.trim()) != null) {
+      return int.tryParse(raw.trim());
+    }
+    final decoded = _decodeRaw(raw);
+    return _toInt(decoded['id'] ?? decoded['visit_id']);
   }
 
   static String _pick(Map<String, dynamic> raw, List<String> keys) {
@@ -360,7 +445,12 @@ class HistoryVisitRecord {
           if (item is String && item.trim().isNotEmpty) out.add(item.trim());
           if (item is Map) {
             final m = Map<String, dynamic>.from(item);
-            final name = _pick(m, const ['full_name', 'doctor_name', 'name', 'fio']);
+            final name = _pick(m, const [
+              'full_name',
+              'doctor_name',
+              'name',
+              'fio',
+            ]);
             if (name != '—') out.add(name);
           }
         }
@@ -396,24 +486,23 @@ class HistoryVisitRecord {
         break;
       }
     }
-    if (list == null || list.isEmpty) return const <HistoryPresentationRecord>[];
+    if (list == null || list.isEmpty) {
+      return const <HistoryPresentationRecord>[];
+    }
 
     final result = <HistoryPresentationRecord>[];
     for (final item in list) {
       if (item is! Map) continue;
       final m = Map<String, dynamic>.from(item);
       final name = _pick(m, const ['drug_name', 'name', 'title']);
-      final manufacturer = _pick(
-        m,
-        const [
-          'manufacturer',
-          'producer_name',
-          'producer',
-          'company',
-          'drug_manufacturer',
-          'manufacturer_name',
-        ],
-      );
+      final manufacturer = _pick(m, const [
+        'manufacturer',
+        'producer_name',
+        'producer',
+        'company',
+        'drug_manufacturer',
+        'manufacturer_name',
+      ]);
       final status = _statusKey(
         '${m['status'] ?? m['result'] ?? m['prescribe_status'] ?? m['familiarity_status'] ?? m['familiarity_status_name'] ?? (m['is_familiar'] == true ? 'completed' : '') ?? (m['prescribes'] == true ? 'completed' : '')}',
       );
@@ -439,10 +528,10 @@ class HistoryVisitRecord {
     Map<String, dynamic> raw,
   ) {
     final candidates = <dynamic>[
+      raw['stock_items'],
       raw['items'],
       raw['drugs'],
       raw['products'],
-      raw['stock_items'],
     ];
     List<dynamic>? list;
     for (final c in candidates) {
@@ -460,7 +549,12 @@ class HistoryVisitRecord {
       result.add(
         HistoryStockItemRecord(
           name: _pick(m, const ['drug_name', 'name', 'title']),
-          serialNumber: _pick(m, const ['serial_number', 'series', 'series_number', 'serial_no']),
+          serialNumber: _pick(m, const [
+            'serial_number',
+            'series',
+            'series_number',
+            'serial_no',
+          ]),
           quantity: _toInt(m['package'] ?? m['quantity'] ?? m['qty']) ?? 1,
         ),
       );
@@ -470,10 +564,10 @@ class HistoryVisitRecord {
 
   static double? _extractItemsTotal(Map<String, dynamic> raw) {
     final candidates = <dynamic>[
+      raw['stock_items'],
       raw['items'],
       raw['drugs'],
       raw['products'],
-      raw['stock_items'],
     ];
     for (final c in candidates) {
       if (c is! List || c.isEmpty) continue;
@@ -488,7 +582,9 @@ class HistoryVisitRecord {
           hasAny = true;
           continue;
         }
-        final price = _toDouble(m['price'] ?? m['sale_price'] ?? m['base_price']);
+        final price = _toDouble(
+          m['price'] ?? m['sale_price'] ?? m['base_price'],
+        );
         final qty = _toDouble(m['package'] ?? m['quantity'] ?? m['qty']) ?? 1;
         if (price != null) {
           sum += price * qty;
@@ -527,7 +623,9 @@ class HistoryVisitRecord {
       if (s.contains('не выписывает')) return 'familiar_not_prescribes';
       return 'completed';
     }
-    if (s.contains('не знаком') || s.contains('not_familiar')) return 'cancelled';
+    if (s.contains('не знаком') || s.contains('not_familiar')) {
+      return 'cancelled';
+    }
     if (s.contains('коммент') || s.contains('other')) return 'planned';
     if (s.contains('заплан')) return 'planned';
     switch (s) {
@@ -592,7 +690,16 @@ class HistoryVisitRecord {
     return '—';
   }
 
-  static String _asLower(dynamic value) => '${value ?? ''}'.trim().toLowerCase();
+  static String _asLower(dynamic value) =>
+      '${value ?? ''}'.trim().toLowerCase();
+
+  static int? _buyerTypeFrom(Map<String, dynamic> raw) {
+    final direct = _toInt(raw['buyer_type'] ?? raw['client_type']);
+    if (direct != null) return direct;
+    final isWholesaler = _toBool(raw['is_wholesaler']);
+    if (isWholesaler == null) return null;
+    return isWholesaler ? 1 : 0;
+  }
 
   static int? _toInt(dynamic value) {
     if (value == null) return null;

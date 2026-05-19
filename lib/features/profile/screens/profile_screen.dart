@@ -13,6 +13,7 @@ import 'package:lima/core/services/app_actions.dart';
 import 'package:lima/core/dialogs/feedback_dialog.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/providers/dashboard_counts_provider.dart';
+import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/network/api_client.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/services/material_cache_service.dart';
@@ -68,6 +69,13 @@ String _doctorsLabel(BuildContext context, int count) {
   return context.l10n.t('doctors');
 }
 
+final favoriteDoctorsCountProvider = FutureProvider.autoDispose<int>((
+  ref,
+) async {
+  final db = ref.watch(localDatabaseProvider);
+  return db.getFavoriteDoctorsCount();
+});
+
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
@@ -76,9 +84,21 @@ class ProfileScreen extends ConsumerWidget {
     final user = ref.watch(authProvider).user;
     final collections = ref.watch(appCollectionsProvider);
     final counts = ref.watch(dashboardCountsProvider).valueOrNull;
+    final favoriteDoctorsCount = ref
+        .watch(favoriteDoctorsCountProvider)
+        .maybeWhen(data: (value) => value, orElse: () => 0);
     final visitsCount = counts?.visitsTotalCount ?? user?.visitsCount ?? 0;
-    final doctorsCount =
-        counts?.uniqueVisitedDoctorsCount ?? user?.doctorsCount ?? 0;
+    final doctorsCount = favoriteDoctorsCount;
+    ref.listen<SyncState>(syncProvider, (prev, next) {
+      final prevAt = prev?.lastSyncAt;
+      final nextAt = next.lastSyncAt;
+      if (nextAt == null) return;
+      if (prevAt == null ||
+          nextAt.millisecondsSinceEpoch != prevAt.millisecondsSinceEpoch) {
+        ref.invalidate(favoriteDoctorsCountProvider);
+        ref.invalidate(dashboardCountsProvider);
+      }
+    });
 
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
@@ -116,9 +136,9 @@ class ProfileScreen extends ConsumerWidget {
                           style: GoogleFonts.manrope(
                             color: Colors.white,
                             fontSize: 24,
-                              fontWeight: FontWeight.w600,
-                            ),
+                            fontWeight: FontWeight.w600,
                           ),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 14),
@@ -221,7 +241,12 @@ class ProfileScreen extends ConsumerWidget {
                         onTap: () => launchPhone(user.phone!),
                       ),
                     if (user?.phone != null && user?.company != null)
-                      const Divider(height: 1, thickness: 0.5, indent: 56, color: AppColors.divider),
+                      const Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        indent: 56,
+                        color: AppColors.divider,
+                      ),
                     if (user?.company != null)
                       _ContactRow(
                         icon: LucideIcons.building2,
@@ -324,7 +349,9 @@ class ProfileScreen extends ConsumerWidget {
                     iconBg: AppColors.iconBgOrange,
                     iconColor: AppColors.accent,
                     onTap: () async {
-                      await ref.read(appCollectionsProvider.notifier).clearCart();
+                      await ref
+                          .read(appCollectionsProvider.notifier)
+                          .clearCart();
                       final db = ref.read(localDatabaseProvider);
                       final apiClient = ref.read(apiClientProvider);
                       final cacheService = MaterialCacheService(
@@ -336,7 +363,9 @@ class ProfileScreen extends ConsumerWidget {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('Кеш очищен: корзина, офлайн-файлы и временные данные'),
+                            content: Text(
+                              'Кеш очищен: корзина, офлайн-файлы и временные данные',
+                            ),
                           ),
                         );
                       }
@@ -397,7 +426,11 @@ class ProfileScreen extends ConsumerWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(LucideIcons.logOut, color: AppColors.error, size: 17),
+                    const Icon(
+                      LucideIcons.logOut,
+                      color: AppColors.error,
+                      size: 17,
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       context.l10n.t('logout'),
@@ -421,7 +454,12 @@ class ProfileScreen extends ConsumerWidget {
   }
 }
 
-const _divider = Divider(height: 1, thickness: 0.5, indent: 56, color: AppColors.divider);
+const _divider = Divider(
+  height: 1,
+  thickness: 0.5,
+  indent: 56,
+  color: AppColors.divider,
+);
 
 class _SectionHeader extends StatelessWidget {
   final String text;
@@ -579,7 +617,11 @@ class _ContactRow extends StatelessWidget {
               ),
             ),
             if (isLink)
-              const Icon(Icons.chevron_right, color: AppColors.hintText, size: 20),
+              const Icon(
+                Icons.chevron_right,
+                color: AppColors.hintText,
+                size: 20,
+              ),
           ],
         ),
       ),
@@ -629,7 +671,10 @@ class _ActionTile extends StatelessWidget {
       subtitle: subtitle != null
           ? Text(
               subtitle!,
-              style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText),
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                color: AppColors.secondaryText,
+              ),
             )
           : null,
       trailing: onTap != null
@@ -681,7 +726,9 @@ class _NotificationTileState extends State<_NotificationTile> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('notifications_enabled', granted);
       if (mounted) setState(() => _enabled = granted);
-      if (!granted && (status.isPermanentlyDenied || status.isRestricted) && mounted) {
+      if (!granted &&
+          (status.isPermanentlyDenied || status.isRestricted) &&
+          mounted) {
         final openSettings = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -721,7 +768,11 @@ class _NotificationTileState extends State<_NotificationTile> {
           color: AppColors.iconBgBlue,
           borderRadius: BorderRadius.circular(10),
         ),
-        child: const Icon(Icons.notifications_rounded, color: AppColors.primary, size: 18),
+        child: const Icon(
+          Icons.notifications_rounded,
+          color: AppColors.primary,
+          size: 18,
+        ),
       ),
       title: Text(
         AppI18n.of(context).t('notifications'),
@@ -754,9 +805,13 @@ class _AppVersionLabelState extends State<_AppVersionLabel> {
   @override
   void initState() {
     super.initState();
-    PackageInfo.fromPlatform().then((info) {
-      if (mounted) setState(() => _version = '${info.version}+${info.buildNumber}');
-    }).catchError((_) {});
+    PackageInfo.fromPlatform()
+        .then((info) {
+          if (mounted) {
+            setState(() => _version = '${info.version}+${info.buildNumber}');
+          }
+        })
+        .catchError((_) {});
   }
 
   @override

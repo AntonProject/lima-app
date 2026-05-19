@@ -18,6 +18,7 @@ class CartScreen extends ConsumerStatefulWidget {
 
 class _CartScreenState extends ConsumerState<CartScreen> {
   Timer? _ticker;
+  String? _checkingOutKey;
 
   @override
   void initState() {
@@ -40,13 +41,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(appCollectionsProvider);
     final notifier = ref.read(appCollectionsProvider.notifier);
-
-    final first = state.cartItems.isNotEmpty ? state.cartItems.first : null;
-    final pharmacy = (first?.pharmacyName?.isNotEmpty == true)
-        ? first!.pharmacyName!
-        : 'Аптека';
-    final timer = _remainingLabel(first?.addedAt);
-    final orderId = _orderIdFromDate(first?.addedAt);
+    final groups = _cartGroups(state.cartItems);
 
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
@@ -107,278 +102,12 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                 : ListView(
                     padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
                     children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.secondaryBg,
-                          borderRadius: BorderRadius.circular(AppUi.cardRadius),
-                          border: Border.all(color: AppColors.divider),
-                          boxShadow: shadowSm,
-                        ),
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  'Заказ #$orderId',
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.primaryText,
-                                  ),
-                                ),
-                                const Spacer(),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFFF3DB),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    timer,
-                                    style: GoogleFonts.manrope(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: const Color(0xFFE3A335),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              pharmacy,
-                              style: GoogleFonts.manrope(
-                                fontSize: 14,
-                                color: AppColors.secondaryText,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            const Divider(height: 1, color: AppColors.divider),
-                            const SizedBox(height: 8),
-                            ...state.cartItems.map(
-                              (item) => Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: Container(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    10,
-                                    8,
-                                    10,
-                                    8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.secondaryBg,
-                                    borderRadius: BorderRadius.circular(
-                                      AppUi.buttonRadius,
-                                    ),
-                                    border: Border.all(
-                                      color: AppColors.divider,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              item.name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: GoogleFonts.manrope(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.w600,
-                                                color: AppColors.primaryText,
-                                              ),
-                                            ),
-                                            Text(
-                                              item.manufacturer.isEmpty
-                                                  ? '—'
-                                                  : item.manufacturer,
-                                              style: GoogleFonts.manrope(
-                                                fontSize: 12,
-                                                color: AppColors.secondaryText,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        '${item.quantity} шт.',
-                                        style: GoogleFonts.manrope(
-                                          fontSize: 13,
-                                          color: AppColors.secondaryText,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        formatUzs(item.total),
-                                        style: GoogleFonts.manrope(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w700,
-                                          color: AppColors.primaryText,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      AppTapScale(
-                                        onTap: () => notifier
-                                            .updateCartQuantity(item.drugId, 0),
-                                        child: const Icon(
-                                          Icons.delete_rounded,
-                                          color: AppColors.error,
-                                          size: 20,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const Divider(height: 1, color: AppColors.divider),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Итого:',
-                                        style: GoogleFonts.manrope(
-                                          fontSize: 14,
-                                          color: AppColors.secondaryText,
-                                        ),
-                                      ),
-                                      Text(
-                                        formatUzs(state.cartTotal),
-                                        style: GoogleFonts.manrope(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w700,
-                                          color: AppColors.primary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                SizedBox(
-                                  width: 102,
-                                  child: AppTapScale(
-                                    pressedScale: 0.97,
-                                    onTap: notifier.clearCart,
-                                    child: OutlinedButton(
-                                      onPressed: null,
-                                      style: OutlinedButton.styleFrom(
-                                        minimumSize: const Size(
-                                          double.infinity,
-                                          AppUi.buttonHeight,
-                                        ),
-                                        disabledForegroundColor:
-                                            AppColors.primary,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            AppUi.buttonRadius,
-                                          ),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        'Удалить',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: GoogleFonts.manrope(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                SizedBox(
-                                  width: 116,
-                                  child: AppTapScale(
-                                    pressedScale: 0.97,
-                                    onTap: () {
-                                      final first = state.cartItems.isNotEmpty
-                                          ? state.cartItems.first
-                                          : null;
-                                      final pharmacyId = first?.pharmacyId;
-                                      if (pharmacyId == null ||
-                                          pharmacyId <= 0) {
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              'Не удалось определить аптеку заказа',
-                                            ),
-                                          ),
-                                        );
-                                        return;
-                                      }
-                                      final items = state.cartItems
-                                          .map(
-                                            (e) => '${e.drugId}:${e.quantity}',
-                                          )
-                                          .join(';');
-                                      if (ref.read(isOfflineProvider)) {
-                                        pulseOfflineBanner(ref);
-                                      }
-                                      context.push(
-                                        Uri(
-                                          path:
-                                              '/visits/pharmacy/detail/$pharmacyId/type/checkout',
-                                          queryParameters: {
-                                            'name': first?.pharmacyName ?? '',
-                                            'items': items,
-                                            'prepayment': '100',
-                                            'buyerType': '0',
-                                          },
-                                        ).toString(),
-                                      );
-                                    },
-                                    child: ElevatedButton(
-                                      onPressed: null,
-                                      style: ElevatedButton.styleFrom(
-                                        minimumSize: const Size(
-                                          double.infinity,
-                                          AppUi.buttonHeight,
-                                        ),
-                                        disabledBackgroundColor:
-                                            AppColors.primary,
-                                        disabledForegroundColor: Colors.white,
-                                        elevation: 1,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            AppUi.buttonRadius,
-                                          ),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        'Оформить',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: GoogleFonts.manrope(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
+                      ...groups.map(
+                        (group) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: _cartGroupCard(context, ref, notifier, group),
                         ),
                       ),
-                      const SizedBox(height: 10),
                       Container(
                         decoration: BoxDecoration(
                           color: AppColors.secondaryBg,
@@ -391,7 +120,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                         ),
                         child: Column(
                           children: [
-                            _summaryRow('Всего заказов:', '1'),
+                            _summaryRow('Всего заказов:', '${groups.length}'),
                             const Divider(height: 10, color: AppColors.divider),
                             _summaryRow('Товаров:', '${state.cartCount}'),
                             const Divider(height: 10, color: AppColors.divider),
@@ -411,6 +140,319 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       ),
       bottomNavigationBar: const _CartBottomNav(),
     );
+  }
+
+  Widget _cartGroupCard(
+    BuildContext context,
+    WidgetRef ref,
+    AppCollectionsNotifier notifier,
+    _CartGroup group,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.secondaryBg,
+        borderRadius: BorderRadius.circular(AppUi.cardRadius),
+        border: Border.all(color: AppColors.divider),
+        boxShadow: shadowSm,
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Заказ #${_orderIdFromDate(group.addedAt)}',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primaryText,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3DB),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _remainingLabel(group.addedAt),
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFFE3A335),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            group.pharmacyName,
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              color: AppColors.secondaryText,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Предоплата ${group.prepaymentPercent}% • ${group.buyerLabel}',
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.secondaryText,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Divider(height: 1, color: AppColors.divider),
+          const SizedBox(height: 8),
+          ...group.items.map(
+            (item) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _cartItemRow(notifier, item, group),
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.divider),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Итого:',
+                      style: GoogleFonts.manrope(
+                        fontSize: 14,
+                        color: AppColors.secondaryText,
+                      ),
+                    ),
+                    Text(
+                      formatUzs(group.total),
+                      style: GoogleFonts.manrope(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 102,
+                child: AppTapScale(
+                  pressedScale: 0.97,
+                  onTap: () => notifier.clearCartGroup(
+                    pharmacyId: group.pharmacyId,
+                    pharmacyName: group.pharmacyName,
+                    cartId: group.cartId,
+                    prepaymentPercent: group.prepaymentPercent,
+                    buyerType: group.buyerType,
+                  ),
+                  child: OutlinedButton(
+                    onPressed: null,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(
+                        double.infinity,
+                        AppUi.buttonHeight,
+                      ),
+                      disabledForegroundColor: AppColors.primary,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppUi.buttonRadius),
+                      ),
+                    ),
+                    child: Text(
+                      'Удалить',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.manrope(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 116,
+                child: AppTapScale(
+                  pressedScale: 0.97,
+                  onTap: _checkingOutKey == group.identityKey
+                      ? null
+                      : () => _checkoutGroup(context, ref, group),
+                  child: ElevatedButton(
+                    onPressed: null,
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(
+                        double.infinity,
+                        AppUi.buttonHeight,
+                      ),
+                      disabledBackgroundColor: AppColors.primary,
+                      disabledForegroundColor: Colors.white,
+                      elevation: 1,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppUi.buttonRadius),
+                      ),
+                    ),
+                    child: _checkingOutKey == group.identityKey
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(
+                            'Оформить',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.manrope(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _cartItemRow(
+    AppCollectionsNotifier notifier,
+    CartItemSnapshot item,
+    _CartGroup group,
+  ) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: AppColors.secondaryBg,
+        borderRadius: BorderRadius.circular(AppUi.buttonRadius),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.primaryText,
+                  ),
+                ),
+                Text(
+                  item.manufacturer.isEmpty ? '—' : item.manufacturer,
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    color: AppColors.secondaryText,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${item.quantity} шт.',
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              color: AppColors.secondaryText,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            formatUzs(item.total),
+            style: GoogleFonts.manrope(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppColors.primaryText,
+            ),
+          ),
+          const SizedBox(width: 6),
+          AppTapScale(
+            onTap: () => notifier.updateCartQuantity(
+              item.drugId,
+              0,
+              pharmacyId: item.pharmacyId,
+              cartId: item.cartId,
+              prepaymentPercent: group.prepaymentPercent,
+              buyerType: group.buyerType,
+            ),
+            child: const Icon(
+              Icons.delete_rounded,
+              color: AppColors.error,
+              size: 20,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _checkoutGroup(BuildContext context, WidgetRef ref, _CartGroup group) {
+    final pharmacyId = group.pharmacyId;
+    if (pharmacyId == null || pharmacyId <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось определить аптеку заказа')),
+      );
+      return;
+    }
+    if (_checkingOutKey != null) return;
+    setState(() => _checkingOutKey = group.identityKey);
+    final items = group.items.map((e) => '${e.drugId}:${e.quantity}').join(';');
+    final itemsData = group.items
+        .map(
+          (item) => <String, dynamic>{
+            'id': item.drugId,
+            'name': item.name,
+            'manufacturer': item.manufacturer,
+            'price': item.price,
+            'serial_number': item.serialNumber,
+            'expiry_date': item.expiryDate,
+            'stock': item.stock,
+            'current_stock_id': item.currentStockId,
+            'binding_drug_id': item.bindingDrugId,
+          },
+        )
+        .toList();
+    if (ref.read(isOfflineProvider)) {
+      pulseOfflineBanner(ref);
+    }
+    try {
+      context.go(
+        Uri(
+          path: '/visits/pharmacy/detail/$pharmacyId/type/checkout',
+          queryParameters: {'name': group.pharmacyName},
+        ).toString(),
+        extra: {
+          'items': items,
+          'items_data': itemsData,
+          'prepayment': group.prepaymentPercent,
+          'buyerType': group.buyerType,
+          if (group.cartId != null) 'cart_id': group.cartId,
+        },
+      );
+    } catch (e) {
+      if (mounted) setState(() => _checkingOutKey = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось открыть оформление: $e')),
+      );
+    }
   }
 
   Widget _summaryRow(
@@ -460,6 +502,67 @@ class _CartScreenState extends ConsumerState<CartScreen> {
     final hh = h.toString().padLeft(2, '0');
     final mm = m.toString().padLeft(2, '0');
     return '$hh ч $mm мин';
+  }
+
+  static List<_CartGroup> _cartGroups(List<CartItemSnapshot> items) {
+    final byKey = <String, List<CartItemSnapshot>>{};
+    for (final item in items) {
+      final prepayment = item.prepaymentPercent ?? 100;
+      final buyerType = item.buyerType ?? 0;
+      final key = item.cartId != null
+          ? 'server:${item.cartId}:$prepayment:$buyerType'
+          : 'pharmacy:${item.pharmacyId ?? 0}:${item.pharmacyName ?? ''}:$prepayment:$buyerType';
+      byKey.putIfAbsent(key, () => <CartItemSnapshot>[]).add(item);
+    }
+    final groups = byKey.values.map(_CartGroup.fromItems).toList();
+    groups.sort((a, b) {
+      final aDate = DateTime.tryParse(a.addedAt ?? '') ?? DateTime(1970);
+      final bDate = DateTime.tryParse(b.addedAt ?? '') ?? DateTime(1970);
+      return aDate.compareTo(bDate);
+    });
+    return groups;
+  }
+}
+
+class _CartGroup {
+  final int? pharmacyId;
+  final String pharmacyName;
+  final String? addedAt;
+  final int? cartId;
+  final int prepaymentPercent;
+  final int buyerType;
+  final List<CartItemSnapshot> items;
+
+  const _CartGroup({
+    required this.pharmacyId,
+    required this.pharmacyName,
+    required this.addedAt,
+    required this.cartId,
+    required this.prepaymentPercent,
+    required this.buyerType,
+    required this.items,
+  });
+
+  String get identityKey =>
+      '${cartId ?? 0}:${pharmacyId ?? 0}:$prepaymentPercent:$buyerType:$pharmacyName';
+
+  int get count => items.fold(0, (sum, item) => sum + item.quantity);
+  double get total => items.fold(0, (sum, item) => sum + item.total);
+  String get buyerLabel => buyerType == 1 ? 'Опт' : 'Розница';
+
+  factory _CartGroup.fromItems(List<CartItemSnapshot> items) {
+    final first = items.first;
+    return _CartGroup(
+      pharmacyId: first.pharmacyId,
+      pharmacyName: first.pharmacyName?.isNotEmpty == true
+          ? first.pharmacyName!
+          : 'Аптека',
+      addedAt: first.addedAt,
+      cartId: first.cartId,
+      prepaymentPercent: first.prepaymentPercent ?? 100,
+      buyerType: first.buyerType ?? 0,
+      items: List.unmodifiable(items),
+    );
   }
 }
 

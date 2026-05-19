@@ -32,10 +32,15 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
   bool _loading = true;
   String _query = '';
   bool _actionLocked = false;
+  final Map<int, Set<int>> _shownDocumentIdsByDrug = {};
+  final Map<int, String> _shownDrugNamesByDrug = {};
 
   List<Drug> get _filtered => _drugs
       .where((d) => d.name.toLowerCase().contains(_query.toLowerCase()))
       .toList();
+
+  int get _shownMaterialsCount =>
+      _shownDocumentIdsByDrug.values.fold(0, (sum, ids) => sum + ids.length);
 
   @override
   void initState() {
@@ -45,7 +50,13 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
 
   Future<void> _loadDrugs() async {
     final db = ref.read(localDatabaseProvider);
-    final rows = await db.getDrugs();
+    var rows = await db.getDrugs(
+      onlyWithPositivePrice: false,
+      onlyWithDocuments: true,
+    );
+    if (rows.isEmpty) {
+      rows = await db.getDrugs(onlyWithPositivePrice: false);
+    }
     final loaded = rows.map(Drug.fromJson).toList();
     if (!mounted) return;
     setState(() {
@@ -137,46 +148,75 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                     itemCount: _filtered.length,
                     itemBuilder: (_, i) {
                       final drug = _filtered[i];
+                      final shownCount =
+                          _shownDocumentIdsByDrug[drug.id]?.length ?? 0;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 10),
                         child: GestureDetector(
-                          onTap: drug.documentsCount == 0
-                          ? () => ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Материалы не найдены'),
-                                  duration: Duration(seconds: 2),
-                                ),
-                              )
-                          : () => context.push(
-                                '/knowledge/drug/${drug.id}/materials',
-                              ),
+                          onTap: () => _openMaterials(drug),
                           child: Container(
                             decoration: BoxDecoration(
                               color: AppColors.secondaryBg,
                               borderRadius: BorderRadius.circular(14),
+                              border: shownCount > 0
+                                  ? Border.all(color: AppColors.primary)
+                                  : Border.all(color: Colors.transparent),
                               boxShadow: shadowSm,
                             ),
                             padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            child: Row(
                               children: [
-                                Text(
-                                  drug.name,
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.primaryText,
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        drug.name,
+                                        style: GoogleFonts.manrope(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.primaryText,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        drug.manufacturer.isNotEmpty
+                                            ? '${drug.manufacturer} • Материалов: ${drug.documentsCount}'
+                                            : 'Материалов: ${drug.documentsCount}',
+                                        style: GoogleFonts.manrope(
+                                          fontSize: 12,
+                                          color: AppColors.secondaryText,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  drug.manufacturer.isNotEmpty
-                                      ? drug.manufacturer
-                                      : '—',
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 12,
-                                    color: AppColors.secondaryText,
+                                if (shownCount > 0) ...[
+                                  const SizedBox(width: 10),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFEAF0FF),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '$shownCount',
+                                      style: GoogleFonts.manrope(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
                                   ),
+                                ],
+                                const SizedBox(width: 8),
+                                const Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: AppColors.hintText,
                                 ),
                               ],
                             ),
@@ -220,6 +260,200 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
     );
   }
 
+  Future<void> _openMaterials(Drug drug) async {
+    if ((_shownDocumentIdsByDrug[drug.id]?.isNotEmpty ?? false)) {
+      setState(() {
+        _shownDocumentIdsByDrug.remove(drug.id);
+        _shownDrugNamesByDrug.remove(drug.id);
+      });
+      return;
+    }
+
+    final db = ref.read(localDatabaseProvider);
+    final materials = await db.getDrugMaterials(drug.id);
+    if (!mounted) return;
+    if (materials.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Материалы не найдены'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final selectedIndex = materials.length == 1
+        ? 0
+        : await showModalBottomSheet<int>(
+            context: context,
+            useRootNavigator: true,
+            backgroundColor: AppColors.secondaryBg,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            builder: (ctx) => SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Материалы',
+                            style: GoogleFonts.manrope(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primaryText,
+                            ),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () => Navigator.pop(ctx),
+                          child: const Icon(
+                            Icons.close_rounded,
+                            color: AppColors.secondaryText,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      drug.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        color: AppColors.secondaryText,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(ctx).size.height * 0.5,
+                      ),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: materials.length,
+                        itemBuilder: (_, index) {
+                          final material = materials[index];
+                          final title = _materialTitle(material);
+                          final type = _materialType(material);
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: AppTapScale(
+                              onTap: () => Navigator.pop(ctx, index),
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primaryBg,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.description_outlined,
+                                      color: AppColors.primary,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        title,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: GoogleFonts.manrope(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.primaryText,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      type.toUpperCase(),
+                                      style: GoogleFonts.manrope(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.secondaryText,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+    if (selectedIndex == null || !mounted) return;
+
+    final material = materials[selectedIndex];
+    final documentId = _remoteDocumentId(material);
+    if (documentId != null) {
+      setState(() {
+        _shownDocumentIdsByDrug
+            .putIfAbsent(drug.id, () => <int>{})
+            .add(documentId);
+        _shownDrugNamesByDrug[drug.id] = drug.name;
+      });
+    }
+
+    await context.push(
+      Uri(
+        path: '/knowledge/drug/${drug.id}/materials',
+        queryParameters: {'index': '$selectedIndex'},
+      ).toString(),
+    );
+  }
+
+  String _materialTitle(Map<String, dynamic> material) {
+    return (material['title'] as String?)?.trim().isNotEmpty == true
+        ? material['title'] as String
+        : 'Материал';
+  }
+
+  String _materialType(Map<String, dynamic> material) {
+    final raw = material['file_type'];
+    if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+    final rawJson = material['raw_json'];
+    if (rawJson is String && rawJson.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawJson);
+        if (decoded is Map) {
+          final type = decoded['document_type_name'] ?? decoded['file_name'];
+          if (type is String && type.trim().isNotEmpty) return type.trim();
+        }
+      } catch (_) {}
+    }
+    return 'file';
+  }
+
+  int? _remoteDocumentId(Map<String, dynamic> material) {
+    final rawJson = material['raw_json'];
+    if (rawJson is String && rawJson.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawJson);
+        if (decoded is Map) {
+          return _asInt(decoded['id'] ?? decoded['document_id']);
+        }
+      } catch (_) {}
+    }
+    return _asInt(material['document_id'] ?? material['remote_id']);
+  }
+
+  int? _asInt(dynamic value) {
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
   Future<void> _openFinishSheet() async {
     final payload = await showModalBottomSheet<_CircleFinishPayload>(
       context: context,
@@ -229,7 +463,10 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => _CircleFinishSheet(drugsCount: 0),
+      builder: (ctx) => _CircleFinishSheet(
+        drugsCount: _shownDocumentIdsByDrug.length,
+        materialsCount: _shownMaterialsCount,
+      ),
     );
     if (payload == null || !mounted) return;
     await _finishCircle(payload);
@@ -241,15 +478,31 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
     final now = DateTime.now().toIso8601String();
     int? localId;
     try {
+      final talkedAboutDrugs = _shownDocumentIdsByDrug.entries
+          .where((entry) => entry.value.isNotEmpty)
+          .map((entry) {
+            final documentIds = entry.value.toList()..sort();
+            return {'drug_id': entry.key, 'document_ids': documentIds};
+          })
+          .toList();
       final rawVisitJson = jsonEncode({
         'organization_id': widget.pharmacyId,
         'organization_name': widget.pharmacyName,
-        'visit_type': 'circle',
+        'visit_type': 1,
+        'visit_format': 1,
+        'visit_format_name': 'Фармкружок',
         'status': 'completed',
         'pharmacists_fio': payload.fio.trim(),
         'participants_count': payload.participantsCount,
-        'discussed_drugs_count': 0,
-        'materials_shown_count': 0,
+        'discussed_drugs_count': talkedAboutDrugs.length,
+        'materials_shown_count': _shownMaterialsCount,
+        'visit_pharm_circle': {
+          'pharmacist_names': payload.fio.trim(),
+          'start': now,
+          'end': now,
+          'number_of_participants': payload.participantsCount,
+        },
+        'talked_about_drugs': talkedAboutDrugs,
         'start_date': now,
         'end_date': now,
       });
@@ -368,9 +621,14 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                 ),
                 _summaryLine(
                   'Обсуждено препаратов',
-                  'Препараты не обсуждались',
+                  _shownDrugNamesByDrug.isEmpty
+                      ? 'Препараты не обсуждались'
+                      : '${_shownDrugNamesByDrug.length} шт.',
                 ),
-                _summaryLine('Показано материалов', '0 шт.'),
+                _summaryLine(
+                  'Показано материалов',
+                  '$_shownMaterialsCount шт.',
+                ),
                 _summaryLine(
                   'Статус',
                   'Завершён',
@@ -477,8 +735,12 @@ class _CircleFinishPayload {
 
 class _CircleFinishSheet extends StatefulWidget {
   final int drugsCount;
+  final int materialsCount;
 
-  const _CircleFinishSheet({required this.drugsCount});
+  const _CircleFinishSheet({
+    required this.drugsCount,
+    required this.materialsCount,
+  });
 
   @override
   State<_CircleFinishSheet> createState() => _CircleFinishSheetState();
@@ -653,6 +915,8 @@ class _CircleFinishSheetState extends State<_CircleFinishSheet> {
                       _meta('Окончание:', dateTime),
                       const Divider(height: 10),
                       _meta('Обсуждено препаратов:', '${widget.drugsCount}'),
+                      const Divider(height: 10),
+                      _meta('Показано материалов:', '${widget.materialsCount}'),
                     ],
                   ),
                 ),

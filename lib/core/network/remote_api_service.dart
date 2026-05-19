@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -11,6 +12,60 @@ import 'api_client.dart';
 final remoteApiServiceProvider = Provider<RemoteApiService>((ref) {
   return RemoteApiService(ref.watch(apiClientProvider));
 });
+
+class RemotePushException implements Exception {
+  final String message;
+  final Map<String, dynamic>? request;
+  final Map<String, dynamic> response;
+
+  const RemotePushException({
+    required this.message,
+    this.request,
+    required this.response,
+  });
+
+  String get displayMessage {
+    final data = response['data'];
+    if (data is Map) {
+      final serverMessage = data['message'];
+      if (serverMessage is String && serverMessage.trim().isNotEmpty) {
+        return serverMessage.trim();
+      }
+    }
+    final responseMessage = response['message'];
+    if (responseMessage is String && responseMessage.trim().isNotEmpty) {
+      return responseMessage.trim();
+    }
+    return message;
+  }
+
+  int? get statusCode {
+    final status = response['status'];
+    if (status is int) return status;
+    if (status is num) return status.toInt();
+    if (status is String) return int.tryParse(status);
+    return null;
+  }
+
+  bool get isValidationFailure {
+    final data = response['data'];
+    if (data is Map) {
+      final tag = data['tag']?.toString().trim().toUpperCase();
+      if (tag == 'VALIDATION_ERROR') return true;
+    }
+    final status = statusCode;
+    return status == 400 || status == 404 || status == 422;
+  }
+
+  @override
+  String toString() => displayMessage;
+}
+
+bool isPermanentVisitPushFailure(Object error) {
+  if (error is FormatException) return true;
+  if (error is RemotePushException) return error.isValidationFailure;
+  return false;
+}
 
 class NearbySearchDebugResult {
   final List<Map<String, dynamic>> organizations;
@@ -67,13 +122,14 @@ class RemoteApiService {
 
   Future<RemoteSeedBundle> fetchOfflineSeed({
     int? regionId,
+    int? companyId,
     bool includeDoctors = true,
     void Function(String message, {int? current, int? total})? onProgress,
   }) async {
     onProgress?.call('Загружаем организации…');
     final orgsRaw = await _getList(
       '/api/dict/Organizations',
-      queryParameters: {'_no_limit': true, 'region_id': ?regionId},
+      queryParameters: {'_no_limit': true},
     );
     final orgs = orgsRaw
         .map(_mapOrg)
@@ -89,51 +145,69 @@ class RemoteApiService {
       final relationRows = await getDoctorOrganisationRelations(syncId: 0);
       doctorOrgLinks = relationRows.where((row) {
         final orgId = (row['organisation_id'] as num?)?.toInt();
-        return orgId != null && (regionId == null || orgIds.contains(orgId));
+        return orgId != null && orgIds.contains(orgId);
       }).toList();
-      final scopedDoctorIds = doctorOrgLinks
-          .map((e) => (e['doctor_id'] as num?)?.toInt())
-          .whereType<int>()
-          .toSet();
       final doctors = await getDoctorsDictionary(
-        regionId: regionId,
-        onPage: (current, total, loaded) {
+        onPage: (currentPage, totalPages, loaded, totalCount) {
+          final progressCurrent = totalCount == null ? currentPage : loaded;
+          final progressTotal = totalCount ?? totalPages;
+          final percent = _progressPercent(progressCurrent, progressTotal);
           onProgress?.call(
-            'Загружаем врачей: $loaded записей, страница $current из ${total ?? '…'}',
-            current: current,
-            total: total,
+            percent == null
+                ? 'Загружаем врачей…'
+                : 'Загружаем врачей: $percent%',
+            current: progressCurrent,
+            total: progressTotal,
           );
         },
       );
-      scopedDoctors = doctors.where((row) {
-        if (regionId == null) return true;
-        final doctorId = (row['id'] as num?)?.toInt();
-        return doctorId != null && scopedDoctorIds.contains(doctorId);
-      }).toList();
+      scopedDoctors = doctors;
     }
 
     onProgress?.call('Загружаем препараты и материалы…');
     // Use the stock price-list endpoint so drugs have real price/stock data.
     final stockDrugs = await getStockPriceListDrugs();
     // Use the bulk Documents endpoint to get all materials + counts efficiently.
-    final docsResult = await getDrugDocuments();
+    final docsResult = await getDrugDocuments(companyId: companyId);
 
     final now = DateTime.now().toIso8601String();
-    final drugs = stockDrugs
-        .map(
-          (d) => <String, dynamic>{
-            'id': d.id,
-            'name': d.name,
-            'manufacturer': d.manufacturer,
-            'price': d.price,
-            'serial_number': d.serialNumber ?? '',
-            'expiry_date': d.expiryDate ?? '',
-            'stock': d.stock ?? 0,
-            'documents_count': docsResult.counts[d.id] ?? 0,
-            'updated_at': now,
-          },
-        )
-        .toList();
+    final stockDrugIds = <int>{};
+    final drugs = stockDrugs.map((d) {
+      stockDrugIds.add(d.id);
+      return <String, dynamic>{
+        'id': d.id,
+        'name': d.name,
+        'manufacturer': d.manufacturer,
+        'price': d.price,
+        'serial_number': d.serialNumber ?? '',
+        'expiry_date': d.expiryDate ?? '',
+        'main_stock': d.mainStock ?? d.stock ?? 0,
+        'stock': d.stock ?? 0,
+        'remains_stock': d.remainsStock ?? d.stock ?? 0,
+        'current_stock_id': d.currentStockId,
+        'binding_drug_id': d.bindingDrugId,
+        'documents_count': docsResult.counts[d.id] ?? 0,
+        'updated_at': now,
+      };
+    }).toList();
+    for (final entry in docsResult.counts.entries) {
+      if (stockDrugIds.contains(entry.key)) continue;
+      drugs.add({
+        'id': entry.key,
+        'name': docsResult.drugNames[entry.key] ?? 'Препарат #${entry.key}',
+        'manufacturer': '',
+        'price': 0,
+        'serial_number': '',
+        'expiry_date': '',
+        'main_stock': 0,
+        'stock': 0,
+        'remains_stock': 0,
+        'current_stock_id': null,
+        'binding_drug_id': entry.key,
+        'documents_count': entry.value,
+        'updated_at': now,
+      });
+    }
 
     // ── Visit history (all types) ──────────────────────────────────────────
     final allVisitsRaw = <dynamic>[];
@@ -247,37 +321,105 @@ class RemoteApiService {
     if (raw is! Map) return null;
     final m = Map<String, dynamic>.from(raw);
     final id = _toInt(m['id'] ?? m['visit_id']);
+
+    // GET /api/visits/plans returns nested objects
+    final orgObj = m['organization'] is Map
+        ? Map<String, dynamic>.from(m['organization'] as Map)
+        : const <String, dynamic>{};
+    final medRepObj = m['medrep'] is Map
+        ? Map<String, dynamic>.from(m['medrep'] as Map)
+        : const <String, dynamic>{};
+
     final orgName = _toString(
+      orgObj['organization_name'] ?? orgObj['name'] ??
       m['organization_name'] ?? m['organisation_name'] ?? m['org_name'],
     );
     if (id == null || orgName == null || orgName.isEmpty) return null;
 
+    final orgTypeId = _toInt(
+      orgObj['type_id'] ?? m['organization_type_id'] ?? m['type_id'],
+    );
     final orgTypeRaw = _toString(
-      m['organization_type'] ?? m['org_type'],
+      orgObj['organization_type'] ?? orgObj['type'] ?? m['organization_type'] ?? m['org_type'],
     )?.toLowerCase();
-    final orgTypeId = _toInt(m['organization_type_id'] ?? m['type_id']);
-    final orgType = (orgTypeId == 1 || orgTypeRaw == 'pharmacy')
-        ? 'pharmacy'
-        : 'lpu';
+    final orgType = (orgTypeId == 1 || orgTypeRaw == 'pharmacy') ? 'pharmacy' : 'lpu';
 
-    final dateRaw = _toString(m['date'] ?? m['start_date'] ?? m['visit_date']);
-    final date =
-        (dateRaw != null ? DateTime.tryParse(dateRaw) : null) ?? DateTime.now();
+    // Doctors: nested array (GET) or flat field (older endpoints)
+    final doctorsArr = m['doctors'];
+    String? doctorNamesCsv;
+    if (doctorsArr is List && doctorsArr.isNotEmpty) {
+      doctorNamesCsv = doctorsArr
+          .whereType<Map>()
+          .map((d) => _toString(d['doctor_name'] ?? d['full_name'] ?? d['name']) ?? '')
+          .where((s) => s.isNotEmpty)
+          .join(', ');
+      if (doctorNamesCsv.isEmpty) doctorNamesCsv = null;
+    }
+    doctorNamesCsv ??= _toString(m['doctor_name'] ?? m['doctor_full_name']);
+
+    final assignedBy = _toString(
+      medRepObj['name'] ?? m['assigned_by'] ?? m['manager_name'],
+    ) ?? '';
+
+    final city = _toString(
+      orgObj['region_name'] ?? orgObj['city'] ?? m['city'],
+    );
+    final district = _toString(
+      orgObj['area_name'] ?? orgObj['district'] ?? m['district'] ?? m['area'] ?? m['area_name'],
+    );
+
+    final dateRaw = _toString(m['start_date'] ?? m['date'] ?? m['visit_date']);
+    final date = (dateRaw != null ? DateTime.tryParse(dateRaw) : null) ?? DateTime.now();
+
+    // visit_status: 1=planned, 2=completed; also support `complete` bool
+    final visitStatus = _toInt(m['visit_status']);
+    final isCompleted =
+        _toBool(m['complete']) ??
+        (visitStatus != null && visitStatus != 1 && visitStatus != 0);
+
+    final visitFormatId = _toInt(m['visit_format'] ?? m['visit_format_id'] ?? m['format_id']);
 
     return {
       'remote_id': id,
-      'org_id': _toInt(m['organization_id'] ?? m['org_id']),
+      'org_id': _toInt(
+        orgObj['organization_id'] ?? orgObj['id'] ?? m['organization_id'] ?? m['org_id'],
+      ),
       'org_name': orgName,
       'org_type': orgType,
-      'doctor_id': _toInt(m['doctor_id']),
-      'doctor_name': _toString(m['doctor_name'] ?? m['doctor_full_name']),
-      'assigned_by': _toString(m['assigned_by'] ?? m['manager_name']) ?? '',
-      'city': _toString(m['city']),
+      'doctor_id': null,
+      'doctor_name': (doctorNamesCsv?.isEmpty ?? true) ? null : doctorNamesCsv,
+      'assigned_by': assignedBy,
+      'city': city,
+      'district': district,
       'visit_date': date.toIso8601String(),
-      'status': (_toBool(m['complete']) ?? false) ? 'completed' : 'planned',
+      'status': isCompleted ? 'completed' : 'planned',
       'comment': _toString(m['comment']),
       'raw_json': jsonEncode(m),
+      'visit_format': _resolveServerVisitFormat(m, orgType, visitFormatId),
     };
+  }
+
+  static String? _resolveServerVisitFormat(
+    Map<String, dynamic> m,
+    String orgType, [
+    int? preResolvedFmtId,
+  ]) {
+    final fmtName = _toString(
+      m['visit_format_name'] ?? m['format_name'] ?? m['visit_type_name'],
+    )?.toLowerCase();
+    if (fmtName != null) {
+      if (fmtName.contains('фармкруж') || fmtName.contains('pharm')) return 'circle';
+      if (fmtName.contains('груп') || fmtName.contains('group')) return 'group';
+      if (fmtName.contains('двойн') || fmtName.contains('double')) return 'double';
+    }
+    final fmtId = preResolvedFmtId ?? _toInt(m['visit_format_id'] ?? m['format_id'] ?? m['visit_format']);
+    if (fmtId != null) {
+      if (fmtId == 1) return 'circle';
+      if (fmtId == 2) return 'double';
+      if (fmtId == 3) return 'group';
+      if (fmtId == 4) return 'group_double';
+    }
+    return null;
   }
 
   Future<void> pushUnsyncedVisit(LocalVisit visit) async {
@@ -285,6 +427,14 @@ class RemoteApiService {
   }
 
   Future<Map<String, dynamic>> pushUnsyncedVisitDebug(LocalVisit visit) async {
+    if (visit.visitType == 'order') {
+      final visitPayload = await _buildOrderVisitPayloadFromLocalVisit(visit);
+      if (visitPayload == null) {
+        throw const FormatException('В API нет ценовой матрицы для заказа');
+      }
+      return _postVisitAddDebug(visitPayload);
+    }
+
     // For LPU visits backend expects at least one doctor id.
     if (visit.visitType == 'lpu' && visit.doctorId == null) {
       throw const FormatException(
@@ -307,8 +457,15 @@ class RemoteApiService {
     if (extraPayload.isNotEmpty) {
       body.addAll(extraPayload);
     }
+    return _postVisitAddDebug(body);
+  }
+
+  Future<Map<String, dynamic>> _postVisitAddDebug(
+    Map<String, dynamic> body,
+  ) async {
     final paths = ['/api/Visits/add', '/Visits/add', '/visits/add'];
     Object? lastError;
+    Map<String, dynamic>? lastResponse;
     for (final path in paths) {
       try {
         final response = await _api.dio.post(path, data: body);
@@ -321,10 +478,734 @@ class RemoteApiService {
         };
       } catch (e) {
         lastError = e;
+        if (e is DioException) {
+          lastResponse = {
+            'path': path,
+            'status': e.response?.statusCode,
+            'data': e.response?.data,
+            'message': e.message,
+          };
+        } else {
+          lastResponse = {'path': path, 'error': '$e'};
+        }
       }
     }
-    if (lastError != null) throw lastError;
-    return {'ok': false, 'request': body, 'error': 'Unknown push error'};
+    if (lastError != null) {
+      throw RemotePushException(
+        message: 'Visit push failed',
+        request: body,
+        response:
+            lastResponse ??
+            {'error': '$lastError', 'message': 'Unknown visit push error'},
+      );
+    }
+    return {'ok': false, 'request': body, 'error': 'Unknown visit push error'};
+  }
+
+  /// POST /api/visits/plans — schedule a planned visit.
+  /// Returns the parsed response map (server should echo the new plan with id).
+  Future<Map<String, dynamic>> pushPlannedVisit({
+    required int organizationId,
+    required List<int> doctorIds,
+    required int visitFormatId,
+    required DateTime startDate,
+    DateTime? endDate,
+    String? comment,
+  }) async {
+    final body = <String, dynamic>{
+      'start_date': _ymd(startDate),
+      'end_date': _ymd(endDate ?? startDate),
+      'organization_id': organizationId,
+      'doctor_ids': doctorIds,
+      'visit_format_id': visitFormatId,
+      'comment': comment ?? '',
+    };
+    const path = '/api/visits/plans';
+    debugPrint('[PLAN PUSH] POST $path body=${jsonEncode(body)}');
+    try {
+      final response = await _api.dio.post(path, data: body);
+      debugPrint(
+        '[PLAN PUSH] ← ${response.statusCode} ${jsonEncode(response.data)}',
+      );
+      return {
+        'ok': true,
+        'path': path,
+        'status': response.statusCode,
+        'request': body,
+        'response': response.data,
+      };
+    } catch (e) {
+      Map<String, dynamic> errResponse;
+      if (e is DioException) {
+        errResponse = {
+          'path': path,
+          'status': e.response?.statusCode,
+          'data': e.response?.data,
+          'message': e.message,
+        };
+        debugPrint(
+          '[PLAN PUSH] ← ${e.response?.statusCode} ${jsonEncode(e.response?.data)}',
+        );
+      } else {
+        errResponse = {'path': path, 'error': '$e'};
+        debugPrint('[PLAN PUSH] ← ERROR $e');
+      }
+      throw RemotePushException(
+        message: 'Plan push failed',
+        request: body,
+        response: errResponse,
+      );
+    }
+  }
+
+  static String _ymd(DateTime d) {
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '$y-$m-$day';
+  }
+
+  Future<List<Map<String, dynamic>>> getCompanyMarkups() async {
+    List<dynamic> rows;
+    try {
+      rows = await _getListAny(['/api/Company/markups', '/Company/markups']);
+    } catch (_) {
+      rows = await _getListAny(['/api/Markups/sync', '/Markups/sync']);
+    }
+    return rows
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((e) => _toBool(e['is_deleted']) != true)
+        .toList();
+  }
+
+  Future<Set<String>> getSupportedOrderTermKeys({int? companyId}) async {
+    final markups = await getCompanyMarkups();
+    final keys = <String>{};
+    for (final markup in markups) {
+      final markupCompanyId = _toInt(markup['company_id']);
+      if (companyId != null && markupCompanyId != null) {
+        if (markupCompanyId != companyId) continue;
+      }
+      final prepayment = _toInt(markup['prepayment_percent']);
+      if (prepayment == null) continue;
+      final detailings = _extractMarkupDetailings(
+        markup,
+      ).where((detail) => _toBool(detail['is_deleted']) != true).toList();
+      if (detailings.isEmpty) {
+        keys.add('$prepayment:0');
+        continue;
+      }
+      for (final detail in detailings) {
+        final buyerType = (_toBool(detail['is_wholesaler']) ?? false) ? 1 : 0;
+        keys.add('$prepayment:$buyerType');
+      }
+    }
+    return keys;
+  }
+
+  Future<bool> supportsWholesaleOrders({int? companyId}) async {
+    final markups = await getCompanyMarkups();
+    for (final markup in markups) {
+      final markupCompanyId = _toInt(markup['company_id']);
+      if (companyId != null &&
+          markupCompanyId != null &&
+          markupCompanyId != companyId) {
+        continue;
+      }
+      final detailings = _extractMarkupDetailings(markup);
+      if (detailings.any(
+        (detail) =>
+            _toBool(detail['is_deleted']) != true &&
+            (_toBool(detail['is_wholesaler']) ?? false),
+      )) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<Map<String, dynamic>?> resolveOrderPricingTerms({
+    required int prepaymentPercent,
+    required bool isWholesaler,
+    double orderTotal = 0,
+    int paymentVariantId = 1,
+    int? companyId,
+  }) async {
+    final markups = await getCompanyMarkups();
+    final scopedMarkups = markups.where((markup) {
+      final markupCompanyId = _toInt(markup['company_id']);
+      if (companyId != null && markupCompanyId != null) {
+        return markupCompanyId == companyId;
+      }
+      return true;
+    }).toList();
+
+    final exactMatches = scopedMarkups.where((markup) {
+      final percent = _toInt(markup['prepayment_percent']);
+      return percent == prepaymentPercent;
+    }).toList();
+
+    final candidateMarkups = exactMatches.isNotEmpty
+        ? exactMatches
+        : (prepaymentPercent == 0
+              ? (scopedMarkups.where((markup) {
+                  final percent = _toInt(markup['prepayment_percent']);
+                  return percent != null && percent < 100;
+                }).toList()..sort((a, b) {
+                  final ap = _toInt(a['prepayment_percent']) ?? 999999;
+                  final bp = _toInt(b['prepayment_percent']) ?? 999999;
+                  return ap.compareTo(bp);
+                }))
+              : const <Map<String, dynamic>>[]);
+
+    for (final markup in candidateMarkups) {
+      final markupCompanyId = _toInt(markup['company_id']);
+      final percent = _toInt(markup['prepayment_percent']);
+
+      final detailings = _extractMarkupDetailings(markup);
+      final activeDetailings = detailings
+          .where((detail) => _toBool(detail['is_deleted']) != true)
+          .toList();
+      final filtered = activeDetailings.where((detail) {
+        final start = _toDouble(detail['sum_start']);
+        final end = _toDouble(detail['sum_end']);
+        final inRange =
+            (start == null || orderTotal >= start) &&
+            (end == null || end <= 0 || orderTotal <= end);
+        if (!inRange) return false;
+
+        final variant = _toInt(detail['payment_variant_id']);
+        return variant == null || variant == paymentVariantId;
+      }).toList();
+
+      Map<String, dynamic> detail = filtered.firstWhere(
+        (detail) => (_toBool(detail['is_wholesaler']) ?? false) == isWholesaler,
+        orElse: () => const <String, dynamic>{},
+      );
+      if (detail.isEmpty && filtered.isNotEmpty) {
+        detail = filtered.first;
+      }
+      if (detail.isEmpty && activeDetailings.isNotEmpty) {
+        detail = activeDetailings.first;
+      }
+
+      return {
+        'company_id': markupCompanyId,
+        'payment_variant_id':
+            _toInt(detail['payment_variant_id']) ?? paymentVariantId,
+        'margin_id': _toInt(markup['id'] ?? markup['margin_id']),
+        'margin_percent': _toInt(detail['margin_percent']),
+        'prepayment_percent': percent ?? prepaymentPercent,
+        'requested_prepayment_percent': prepaymentPercent,
+        'is_wholesaler': isWholesaler,
+      };
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> createOrderDebug({
+    required int orderUserId,
+    required int organizationId,
+    int? organizationInn,
+    int? companyId,
+    int? paymentVariantId,
+    int? marginId,
+    int? marginPercent,
+    int? prepaymentPercent,
+    required bool isWholesaler,
+    String? orderComment,
+    String? orderExpireDate,
+    required List<Map<String, dynamic>> drugs,
+  }) async {
+    final sanitizedDrugs = _sanitizeOrderDrugs(
+      drugs,
+      defaultMarginPercent: marginPercent,
+    );
+    if (sanitizedDrugs.isEmpty) {
+      throw const FormatException('Order requires at least one valid drug');
+    }
+
+    final body = <String, dynamic>{
+      'company_id': ?companyId,
+      'payment_variant_id': ?paymentVariantId,
+      'margin_id': ?marginId,
+      'margin_percent': ?marginPercent,
+      'prepayment_percent': ?prepaymentPercent,
+      'is_wholesaler': isWholesaler,
+      'order_user_id': orderUserId,
+      'organization_id': organizationId,
+      'organization_inn': ?organizationInn,
+      'order_expire_date': ?orderExpireDate,
+      'order_comment': orderComment ?? '',
+      'drugs': sanitizedDrugs,
+    };
+    return _postCreateOrderDebug(body);
+  }
+
+  Future<Map<String, dynamic>> createOrderVisitDebug({
+    required int orderUserId,
+    required int organizationId,
+    int? companyId,
+    int? paymentVariantId,
+    int? marginId,
+    int? marginPercent,
+    int? prepaymentPercent,
+    required bool isWholesaler,
+    String? orderComment,
+    String? orderExpireDate,
+    required List<Map<String, dynamic>> drugs,
+    bool pricesAlreadyCalculated = false,
+  }) async {
+    final sanitizedDrugs = _sanitizeOrderDrugs(
+      drugs,
+      defaultMarginPercent: marginPercent,
+    );
+    if (sanitizedDrugs.isEmpty) {
+      throw const FormatException('Order visit requires at least one drug');
+    }
+
+    var resolvedPaymentVariantId = paymentVariantId ?? 1;
+    var resolvedMarginId = marginId;
+    if (resolvedMarginId == null && prepaymentPercent != null) {
+      final orderTotal = sanitizedDrugs.fold<double>(0, (sum, item) {
+        final price = _toDouble(item['sale_price']) ?? 0;
+        final qty = _toInt(item['package']) ?? 0;
+        return sum + price * qty;
+      });
+      final terms = await resolveOrderPricingTerms(
+        prepaymentPercent: prepaymentPercent,
+        isWholesaler: isWholesaler,
+        orderTotal: orderTotal,
+        paymentVariantId: resolvedPaymentVariantId,
+        companyId: companyId,
+      );
+      if (terms != null) {
+        resolvedPaymentVariantId =
+            _toInt(terms['payment_variant_id']) ?? resolvedPaymentVariantId;
+        resolvedMarginId = _toInt(terms['margin_id']);
+      }
+    }
+    if (resolvedMarginId == null) {
+      throw const FormatException('Order visit requires margin_id');
+    }
+
+    final calculatedDrugs = pricesAlreadyCalculated
+        ? sanitizedDrugs
+        : await _applyServerPricingToOrderDrugs(
+            sanitizedDrugs,
+            marginId: resolvedMarginId,
+            paymentVariantId: resolvedPaymentVariantId,
+            isWholesaler: isWholesaler,
+          );
+
+    final body = <String, dynamic>{
+      'complete': true,
+      'organization_id': organizationId,
+      'visit_type': 1,
+      'latitude': 0,
+      'longitude': 0,
+      'payment_variant_id': resolvedPaymentVariantId,
+      'margin_id': resolvedMarginId,
+      'is_wholesaler': isWholesaler,
+      'contract_id': null,
+      'comment': orderComment ?? '',
+      'drugs': calculatedDrugs
+          .map(
+            (drug) => <String, dynamic>{
+              'income_detailing_id': _toInt(drug['income_detailing_id']),
+              'drug_id': _toInt(drug['drug_id']),
+              'package': _toInt(drug['package']) ?? 0,
+              'sale_price': _toDouble(drug['sale_price']) ?? 0,
+            },
+          )
+          .toList(),
+    };
+    return _postVisitAddDebug(body);
+  }
+
+  Future<Map<String, dynamic>?> prepareOrderVisitDraft({
+    required int prepaymentPercent,
+    required bool isWholesaler,
+    required List<Map<String, dynamic>> drugs,
+    int? companyId,
+    int paymentVariantId = 1,
+    double? orderTotal,
+  }) async {
+    final sanitizedDrugs = _sanitizeOrderDrugs(drugs);
+    if (sanitizedDrugs.isEmpty) return null;
+    final effectiveOrderTotal =
+        orderTotal ??
+        sanitizedDrugs.fold<double>(0, (sum, item) {
+          final price = _toDouble(item['sale_price']) ?? 0;
+          final qty = _toInt(item['package']) ?? 0;
+          return sum + price * qty;
+        });
+    final pricingTerms = await resolveOrderPricingTerms(
+      prepaymentPercent: prepaymentPercent,
+      isWholesaler: isWholesaler,
+      orderTotal: effectiveOrderTotal,
+      paymentVariantId: paymentVariantId,
+      companyId: companyId,
+    );
+    if (pricingTerms == null) return null;
+    final resolvedPaymentVariantId =
+        _toInt(pricingTerms['payment_variant_id']) ?? paymentVariantId;
+    final resolvedMarginId = _toInt(pricingTerms['margin_id']);
+    if (resolvedMarginId == null) return null;
+    final pricedDrugs = await _applyServerPricingToOrderDrugs(
+      sanitizedDrugs,
+      marginId: resolvedMarginId,
+      paymentVariantId: resolvedPaymentVariantId,
+      isWholesaler: isWholesaler,
+    );
+    return {
+      'company_id': pricingTerms['company_id'],
+      'payment_variant_id': resolvedPaymentVariantId,
+      'margin_id': resolvedMarginId,
+      'margin_percent': pricingTerms['margin_percent'],
+      'prepayment_percent': prepaymentPercent,
+      'is_wholesaler': isWholesaler,
+      'drugs': pricedDrugs,
+    };
+  }
+
+  Future<Map<String, dynamic>> _postCreateOrderDebug(
+    Map<String, dynamic> body,
+  ) async {
+    final paths = ['/api/Orders/add', '/Orders/add'];
+    Object? lastError;
+    Map<String, dynamic>? lastResponse;
+    for (final path in paths) {
+      try {
+        final response = await _api.dio.post(path, data: body);
+        return {
+          'ok': true,
+          'path': path,
+          'status': response.statusCode,
+          'request': body,
+          'response': response.data,
+        };
+      } catch (e) {
+        lastError = e;
+        if (e is DioException) {
+          lastResponse = {
+            'path': path,
+            'status': e.response?.statusCode,
+            'data': e.response?.data,
+            'message': e.message,
+          };
+        } else {
+          lastResponse = {'path': path, 'error': '$e'};
+        }
+      }
+    }
+    if (lastError != null) {
+      throw RemotePushException(
+        message: 'Order push failed',
+        request: body,
+        response:
+            lastResponse ??
+            {'error': '$lastError', 'message': 'Unknown order push error'},
+      );
+    }
+    return {'ok': false, 'request': body, 'error': 'Unknown order push error'};
+  }
+
+  Future<List<Map<String, dynamic>>> _applyServerPricingToOrderDrugs(
+    List<Map<String, dynamic>> drugs, {
+    required int marginId,
+    required int paymentVariantId,
+    required bool isWholesaler,
+  }) async {
+    if (drugs.isEmpty) return drugs;
+    final pricing = await _postPricingCalculateDebug({
+      'margin_id': marginId,
+      'payment_variant_id': paymentVariantId,
+      'is_wholesaler': isWholesaler,
+      'calculate_sale_price_details': drugs
+          .map(
+            (drug) => <String, dynamic>{
+              'income_detail_id': _toInt(drug['income_detailing_id']),
+              'drug_id': _toInt(drug['drug_id']),
+              'package': _toInt(drug['package']) ?? 0,
+            },
+          )
+          .toList(),
+    });
+
+    final responseMap = _coerceMap(pricing['response']);
+    final responseMarginPercent = _toDouble(responseMap['margin_percent']);
+    final rawPrices = responseMap['prices'];
+    if (rawPrices is! List || rawPrices.isEmpty) return drugs;
+
+    final byIncomeDetailingId = <int, Map<String, dynamic>>{};
+    final byDrugId = <int, Map<String, dynamic>>{};
+    for (final row in rawPrices.whereType<Map>()) {
+      final priceRow = Map<String, dynamic>.from(row);
+      final incomeDetailingId = _toInt(
+        priceRow['income_detailing_id'] ?? priceRow['income_detail_id'],
+      );
+      final drugId = _toInt(priceRow['drug_id']);
+      if (incomeDetailingId != null) {
+        byIncomeDetailingId[incomeDetailingId] = priceRow;
+      }
+      if (drugId != null) {
+        byDrugId[drugId] = priceRow;
+      }
+    }
+
+    return drugs.map((drug) {
+      final incomeDetailingId = _toInt(drug['income_detailing_id']);
+      final drugId = _toInt(drug['drug_id']);
+      final calculated =
+          (incomeDetailingId != null
+              ? byIncomeDetailingId[incomeDetailingId]
+              : null) ??
+          (drugId != null ? byDrugId[drugId] : null);
+      if (calculated == null) return drug;
+      return {
+        ...drug,
+        'sale_price':
+            _toDouble(calculated['sale_price']) ??
+            _toDouble(drug['sale_price']) ??
+            0,
+        'sale_price_without_nds':
+            _toDouble(calculated['sale_price_without_nds']) ??
+            _toDouble(drug['sale_price_without_nds']),
+        'margin_percent':
+            _toDouble(calculated['margin_percent']) ??
+            responseMarginPercent ??
+            _toDouble(drug['margin_percent']),
+      };
+    }).toList();
+  }
+
+  Future<Map<String, dynamic>> _postPricingCalculateDebug(
+    Map<String, dynamic> body,
+  ) async {
+    final paths = [
+      '/api/pricing/calculate',
+      '/pricing/calculate',
+      '/api/Pricing/calculate',
+      '/Pricing/calculate',
+    ];
+    Object? lastError;
+    Map<String, dynamic>? lastResponse;
+    for (final path in paths) {
+      try {
+        final response = await _api.dio.post(path, data: body);
+        return {
+          'ok': true,
+          'path': path,
+          'status': response.statusCode,
+          'request': body,
+          'response': response.data,
+        };
+      } catch (e) {
+        lastError = e;
+        if (e is DioException) {
+          lastResponse = {
+            'path': path,
+            'status': e.response?.statusCode,
+            'data': e.response?.data,
+            'message': e.message,
+          };
+        } else {
+          lastResponse = {'path': path, 'error': '$e'};
+        }
+      }
+    }
+    if (lastError != null) {
+      throw RemotePushException(
+        message: 'Pricing calculate failed',
+        request: body,
+        response:
+            lastResponse ??
+            {
+              'error': '$lastError',
+              'message': 'Unknown pricing calculate error',
+            },
+      );
+    }
+    return {
+      'ok': false,
+      'request': body,
+      'error': 'Unknown pricing calculate error',
+    };
+  }
+
+  Future<Map<String, dynamic>?> _buildOrderVisitPayloadFromLocalVisit(
+    LocalVisit visit,
+  ) async {
+    final raw = _decodeJsonMap(visit.rawJson);
+    if (raw == null) return null;
+    final drugs = _sanitizeOrderDrugs(raw['drugs'] ?? raw['items']);
+    if (drugs.isEmpty) return null;
+
+    final isWholesaler = _toBool(raw['is_wholesaler']) ?? false;
+    var paymentVariantId = _toInt(raw['payment_variant_id']) ?? 1;
+    var marginId = _toInt(raw['margin_id']);
+    final prepayment = _toInt(raw['prepayment_percent'] ?? raw['prepayment']);
+    var companyId = _toInt(raw['company_id']);
+    companyId ??= await _getCurrentCompanyIdSafe();
+
+    if (prepayment != null && marginId == null) {
+      final orderTotal = drugs.fold<double>(0, (sum, item) {
+        final price = _toDouble(item['sale_price']) ?? 0;
+        final qty = _toInt(item['package']) ?? 0;
+        return sum + price * qty;
+      });
+      try {
+        final terms = await resolveOrderPricingTerms(
+          prepaymentPercent: prepayment,
+          isWholesaler: isWholesaler,
+          orderTotal: orderTotal,
+          paymentVariantId: paymentVariantId,
+          companyId: companyId,
+        );
+        if (terms != null) {
+          paymentVariantId =
+              _toInt(terms['payment_variant_id']) ?? paymentVariantId;
+          marginId = _toInt(terms['margin_id']);
+        }
+      } catch (_) {}
+    }
+
+    if (marginId == null) return null;
+
+    final calculatedDrugs = await _applyServerPricingToOrderDrugs(
+      drugs,
+      marginId: marginId,
+      paymentVariantId: paymentVariantId,
+      isWholesaler: isWholesaler,
+    );
+
+    return {
+      'complete': true,
+      'organization_id': visit.orgId,
+      'visit_type': 1,
+      'latitude': 0,
+      'longitude': 0,
+      'margin_id': marginId,
+      'contract_id': null,
+      'is_wholesaler': isWholesaler,
+      'payment_variant_id': paymentVariantId,
+      'comment': _toString(raw['order_comment'] ?? raw['comment']) ?? '',
+      'drugs': calculatedDrugs
+          .map(
+            (drug) => <String, dynamic>{
+              'income_detailing_id': _toInt(drug['income_detailing_id']),
+              'drug_id': _toInt(drug['drug_id']),
+              'package': _toInt(drug['package']) ?? 0,
+              'sale_price': _toDouble(drug['sale_price']) ?? 0,
+            },
+          )
+          .toList(),
+    };
+  }
+
+  Future<int?> _getCurrentCompanyIdSafe() async {
+    try {
+      final user = await getCurrentUser();
+      final rawCompany = user['company_id'] ?? user['companyId'];
+      final id = _toInt(rawCompany);
+      if (id != null) return id;
+      final company = user['company'];
+      if (company is Map) {
+        final companyMap = Map<String, dynamic>.from(company);
+        return _toInt(companyMap['id'] ?? companyMap['company_id']);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Map<String, dynamic>? _decodeJsonMap(String? rawJson) {
+    if (rawJson == null || rawJson.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(rawJson);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
+  static Map<String, dynamic> _coerceMap(dynamic data) {
+    if (data is Map<String, dynamic>) return _extractMap(data);
+    if (data is String) {
+      final decoded = jsonDecode(data);
+      if (decoded is Map<String, dynamic>) return _extractMap(decoded);
+    }
+    throw const FormatException('Expected JSON object response');
+  }
+
+  static List<Map<String, dynamic>> _extractMarkupDetailings(
+    Map<String, dynamic> markup,
+  ) {
+    final raw =
+        markup['markup_detailings'] ??
+        markup['detailings'] ??
+        markup['details'] ??
+        markup['items'];
+    if (raw is! List) return const <Map<String, dynamic>>[];
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  static List<Map<String, dynamic>> _sanitizeOrderDrugs(
+    dynamic raw, {
+    int? defaultMarginPercent,
+  }) {
+    final rows = raw is List ? raw : _extractList(raw);
+    return rows
+        .whereType<Map>()
+        .map(
+          (row) => _sanitizeOrderDrug(
+            row,
+            defaultMarginPercent: defaultMarginPercent,
+          ),
+        )
+        .whereType<Map<String, dynamic>>()
+        .toList();
+  }
+
+  static Map<String, dynamic>? _sanitizeOrderDrug(
+    Map raw, {
+    int? defaultMarginPercent,
+  }) {
+    final m = Map<String, dynamic>.from(raw);
+    final incomeDetailingId = _toInt(
+      m['income_detailing_id'] ?? m['current_stock_id'],
+    );
+    final drugId = _toInt(m['drug_id'] ?? m['binding_drug_id']);
+    final qty = _toInt(m['package'] ?? m['quantity'] ?? m['amount']) ?? 1;
+    if (incomeDetailingId == null || drugId == null || qty <= 0) return null;
+
+    final salePrice = _toDouble(m['sale_price'] ?? m['price']);
+    final withoutNds =
+        _toDouble(m['sale_price_without_nds']) ??
+        (salePrice == null ? null : _withoutNds(salePrice));
+
+    return {
+      'visit_detailing_id': ?_toInt(m['visit_detailing_id']),
+      'income_detailing_id': incomeDetailingId,
+      'drug_id': drugId,
+      'drug_one_c_guid': ?_toString(m['drug_one_c_guid']),
+      'package': qty,
+      'margin_percent':
+          ?(_toDouble(m['margin_percent']) ?? defaultMarginPercent?.toDouble()),
+      'sale_price': ?salePrice,
+      'sale_price_without_nds': ?withoutNds,
+      'serial_no': ?_toString(m['serial_no'] ?? m['serial_number']),
+      'expire_date': ?_toString(m['expire_date'] ?? m['expiry_date']),
+      'is_deleted': ?_toBool(m['is_deleted']),
+      'storage_id': ?_toInt(m['storage_id']),
+    };
+  }
+
+  static double _withoutNds(double value) {
+    return double.parse((value / 1.12).toStringAsFixed(2));
   }
 
   static Map<String, dynamic> _extractVisitPayloadFromRawJson(String? rawJson) {
@@ -334,7 +1215,6 @@ class RemoteApiService {
       if (decoded is! Map) return const <String, dynamic>{};
       final m = Map<String, dynamic>.from(decoded);
       final allowedKeys = <String>{
-        'items',
         'drugs',
         'prepayment',
         'prepayment_percent',
@@ -347,8 +1227,14 @@ class RemoteApiService {
         'participants_count',
         'discussed_drugs_count',
         'materials_shown_count',
+        'visit_pharm_circle',
+        'talked_about_drugs',
         'presentations',
         'medical_representative_name',
+        // Group LPU: override single doctor_id with the full array stored in raw_json,
+        // and tell the server the visit format (group=3, double=2).
+        'doctor_ids',
+        'visit_format_id',
       };
       final out = <String, dynamic>{};
       for (final key in allowedKeys) {
@@ -399,12 +1285,25 @@ class RemoteApiService {
     );
   }
 
-  Future<List<PlannedVisit>> getCurrentVisitPlans() async {
+  Future<List<PlannedVisit>> getCurrentVisitPlans([DateTime? date]) async {
+    final d = date ?? DateTime.now();
+    final dateStr = '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
     final rows = await _getList(
       '/api/Visits/plans/current',
-      queryParameters: {'date': DateTime.now().toIso8601String()},
+      queryParameters: {'date': dateStr},
     );
     return rows.map(_mapPlannedVisit).whereType<PlannedVisit>().toList();
+  }
+
+  /// Returns plans for [date] already mapped to local DB row format.
+  /// Used for background upsert when calendar dots show unloaded API days.
+  Future<List<Map<String, dynamic>>> getPlansForDate(DateTime date) async {
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final rows = await _getList(
+      '/api/Visits/plans/current',
+      queryParameters: {'date': dateStr},
+    );
+    return rows.map(mapPlannedVisitToLocal).whereType<Map<String, dynamic>>().toList();
   }
 
   Future<List<PlannedVisit>> getVisitPlans() async {
@@ -412,12 +1311,40 @@ class RemoteApiService {
     return rows.map(_mapPlannedVisit).whereType<PlannedVisit>().toList();
   }
 
-  Future<List<PlannedVisit>> getMonthVisitPlans(DateTime month) async {
-    final rows = await _getList(
-      '/api/Visits/plans/month',
-      queryParameters: {'date': month.toIso8601String()},
-    );
-    return rows.map(_mapPlannedVisit).whereType<PlannedVisit>().toList();
+  /// Returns per-day visit counts for the month calendar from GET /api/Visits/plans/month.
+  /// Response shape: [{date: "2026-05-18T00:00:00", visit_count: 2}, ...]
+  Future<List<Map<String, dynamic>>> getMonthVisitPlanCounts(
+    int year,
+    int month,
+  ) async {
+    try {
+      final resp = await _api.dio.get(
+        '/api/Visits/plans/month',
+        queryParameters: {'year': year, 'month': month},
+      );
+      final list = _extractList(resp.data);
+      return list
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Returns available visit formats from GET /api/visits/formats.
+  /// Shape: [{id: 1, name: "Фармкружок"}, ...]
+  Future<List<Map<String, dynamic>>> getVisitFormats() async {
+    try {
+      final resp = await _api.dio.get('/api/visits/formats');
+      final list = _extractList(resp.data);
+      return list
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   Future<int> getVisitsCount() async {
@@ -459,7 +1386,9 @@ class RemoteApiService {
     ]);
   }
 
-  Future<List<Map<String, dynamic>>> getFavoriteOrganizations() async {
+  Future<List<Map<String, dynamic>>> getFavoriteOrganizations({
+    bool allowDictionaryFallback = true,
+  }) async {
     try {
       final rows = await _getListAny([
         '/organizations/favorites',
@@ -473,6 +1402,7 @@ class RemoteApiService {
       ]);
       return rows.map(_mapOrg).whereType<Map<String, dynamic>>().toList();
     } catch (_) {
+      if (!allowDictionaryFallback) return const <Map<String, dynamic>>[];
       final all = await _getList(
         '/api/dict/Organizations',
         queryParameters: {'_no_limit': true},
@@ -878,7 +1808,9 @@ class RemoteApiService {
     if (lastError != null) throw lastError;
   }
 
-  Future<List<Map<String, dynamic>>> getFavoriteDoctors() async {
+  Future<List<Map<String, dynamic>>> getFavoriteDoctors({
+    bool allowDictionaryFallback = true,
+  }) async {
     try {
       final rows = await _getListAny([
         '/Doctors/favorites',
@@ -899,6 +1831,7 @@ class RemoteApiService {
           .map((e) => {...e, 'is_favorite': 1})
           .toList();
     } catch (_) {
+      if (!allowDictionaryFallback) return const <Map<String, dynamic>>[];
       final dictRows = await _getList(
         '/api/dict/Doctors',
         queryParameters: {'_no_limit': true},
@@ -978,28 +1911,212 @@ class RemoteApiService {
   }
 
   Future<List<Map<String, dynamic>>> getDoctorsSync({int? syncId}) async {
+    return getDoctorsSyncBatched(syncId: syncId);
+  }
+
+  Future<List<Map<String, dynamic>>> getDoctorsSyncBatched({
+    int? syncId,
+    int batchSize = 1000,
+    bool collectRows = true,
+    FutureOr<void> Function(
+      List<Map<String, dynamic>> doctors,
+      int loadedCount,
+      int cursor,
+    )?
+    onBatch,
+  }) async {
     try {
-      final rows = await _getListAnyWithQuery(
-        ['/Doctors/sync', '/api/Doctors/sync'],
-        queryParameters: {'sync_id': ?syncId},
+      return _getDoctorsSyncBatchedFromPaths(
+        const [
+          '/dict/doctors/sync',
+          '/dict/Doctors/sync',
+          '/Doctors/sync',
+          '/api/Doctors/sync',
+        ],
+        syncId: syncId,
+        batchSize: batchSize,
+        collectRows: collectRows,
+        onBatch: onBatch,
       );
-      return rows.map(_mapDoctor).whereType<Map<String, dynamic>>().toList();
     } catch (_) {
       if (syncId != null) rethrow;
       return getDoctorsDictionary();
     }
   }
 
+  Future<List<Map<String, dynamic>>> _getDoctorsSyncBatchedFromPaths(
+    List<String> paths, {
+    int? syncId,
+    required int batchSize,
+    required bool collectRows,
+    FutureOr<void> Function(
+      List<Map<String, dynamic>> doctors,
+      int loadedCount,
+      int cursor,
+    )?
+    onBatch,
+  }) async {
+    Object? lastError;
+    for (final path in paths) {
+      try {
+        return await _getDoctorsSyncBatchedFromPath(
+          path,
+          syncId: syncId,
+          batchSize: batchSize,
+          collectRows: collectRows,
+          onBatch: onBatch,
+        );
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (lastError != null) throw lastError;
+    return const <Map<String, dynamic>>[];
+  }
+
+  Future<List<Map<String, dynamic>>> _getDoctorsSyncBatchedFromPath(
+    String path, {
+    int? syncId,
+    required int batchSize,
+    required bool collectRows,
+    FutureOr<void> Function(
+      List<Map<String, dynamic>> doctors,
+      int loadedCount,
+      int cursor,
+    )?
+    onBatch,
+  }) async {
+    final out = <Map<String, dynamic>>[];
+    var cursor = syncId ?? 0;
+    var loaded = 0;
+
+    for (var guard = 0; guard < 500; guard++) {
+      final response = await _api.dio.get(
+        path,
+        queryParameters: {'sync_id': cursor, 'batch_size': batchSize},
+      );
+      final data = response.data;
+      final rawRows = _extractList(data);
+      if (rawRows.isEmpty) break;
+
+      final doctors = rawRows
+          .map(_mapDoctor)
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      loaded += doctors.length;
+      if (collectRows) out.addAll(doctors);
+
+      final responseCursor = data is Map<String, dynamic>
+          ? _toInt(
+              data['max_sync_id'] ??
+                  data['maxSyncId'] ??
+                  data['last_sync_id'] ??
+                  data['lastSyncId'],
+            )
+          : null;
+      final rowsCursor = doctors
+          .map((row) => _toInt(row['sync_id']))
+          .whereType<int>()
+          .fold<int>(cursor, (max, value) => value > max ? value : max);
+      final nextCursor = [
+        cursor,
+        responseCursor ?? 0,
+        rowsCursor,
+      ].fold<int>(0, (max, value) => value > max ? value : max);
+
+      await onBatch?.call(doctors, loaded, nextCursor);
+      if (nextCursor <= cursor || rawRows.length < batchSize) break;
+      cursor = nextCursor;
+    }
+
+    return out;
+  }
+
   Future<List<Map<String, dynamic>>> getDoctorsDictionary({
     int? regionId,
-    void Function(int currentPage, int? totalPages, int loadedCount)? onPage,
+    int startPage = 1,
+    int initialLoadedCount = 0,
+    void Function(
+      int currentPage,
+      int? totalPages,
+      int loadedCount,
+      int? totalCount,
+    )?
+    onPage,
+    FutureOr<void> Function(
+      List<Map<String, dynamic>> doctors,
+      int currentPage,
+      int? totalPages,
+      int loadedCount,
+      int? totalCount,
+    )?
+    onRows,
   }) async {
     final rows = await _getListAnyPaged(
       ['/api/dict/Doctors', '/dict/Doctors'],
-      queryParameters: {'region_id': ?regionId},
+      queryParameters: {'region_id': ?regionId, 'batch_size': 1000},
+      startPage: startPage,
+      initialLoadedCount: initialLoadedCount,
       onPage: onPage,
+      onPageItems: onRows == null
+          ? null
+          : (items, currentPage, totalPages, loadedCount, totalCount) async {
+              final mapped = items
+                  .map(_mapDoctor)
+                  .whereType<Map<String, dynamic>>()
+                  .toList();
+              if (mapped.isNotEmpty) {
+                await onRows(
+                  mapped,
+                  currentPage,
+                  totalPages,
+                  loadedCount,
+                  totalCount,
+                );
+              }
+            },
     );
     return rows.map(_mapDoctor).whereType<Map<String, dynamic>>().toList();
+  }
+
+  Future<int?> getDoctorsDictionaryTotal({int? regionId}) async {
+    Object? lastError;
+    for (final path in ['/api/dict/Doctors', '/dict/Doctors']) {
+      try {
+        final response = await _api.dio.get(
+          path,
+          queryParameters: {
+            'region_id': ?regionId,
+            'batch_size': 1000,
+            'page': 1,
+          },
+        );
+        final data = response.data;
+        if (data is Map<String, dynamic> && data['page'] is Map) {
+          final pageInfo = Map<String, dynamic>.from(data['page'] as Map);
+          return _toInt(
+            pageInfo['total_items'] ??
+                pageInfo['total_count'] ??
+                pageInfo['total'] ??
+                pageInfo['count'],
+          );
+        }
+        final list = _extractList(data);
+        if (list.isNotEmpty) return list.length;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (lastError != null) throw lastError;
+    return null;
+  }
+
+  Future<List<Map<String, dynamic>>> getOrganizationsDictionary() async {
+    final rows = await _getListAnyWithQuery(
+      ['/api/dict/Organizations', '/dict/Organizations'],
+      queryParameters: {'_no_limit': true},
+    );
+    return rows.map(_mapOrg).whereType<Map<String, dynamic>>().toList();
   }
 
   Future<List<Map<String, dynamic>>> getDoctorOrganisationRelations({
@@ -1475,9 +2592,11 @@ class RemoteApiService {
           ),
           expiryDate: _toString(m['expire_date'] ?? m['expiry_date']),
           price: price,
+          mainStock: _toInt(m['actual_balance'] ?? m['main_stock']),
           stock: _toInt(
-            m['actual_balance'] ?? m['remains_amount'] ?? m['stock'],
+            m['remains_amount'] ?? m['stock'] ?? m['actual_balance'],
           ),
+          remainsStock: _toInt(m['remains_amount'] ?? m['stock']),
           documentsCount: 0,
           // income_detailing_id is needed when creating a Бронь order.
           currentStockId: _toInt(m['income_detailing_id']),
@@ -1498,7 +2617,7 @@ class RemoteApiService {
       Map<int, String> drugNames,
     })
   >
-  getDrugDocuments() async {
+  getDrugDocuments({int? companyId}) async {
     final materials = <Map<String, dynamic>>[];
     final counts = <int, int>{};
     final drugNames = <int, String>{};
@@ -1508,7 +2627,11 @@ class RemoteApiService {
       try {
         final response = await _api.dio.get(
           '/api/Documents',
-          queryParameters: {'page': page, 'page_size': 50},
+          queryParameters: {
+            'page': page,
+            'page_size': 50,
+            'company_id': ?companyId,
+          },
         );
         final data = response.data;
         if (data is! Map) break;
@@ -1534,6 +2657,9 @@ class RemoteApiService {
               'title': _toString(doc['title'] ?? doc['file_name']) ?? '',
               'local_path': _toString(doc['file_url']),
               'file_type': _toString(doc['document_type_name']),
+              'description': _toString(doc['description']),
+              'uploaded_at': _toString(doc['date_of_creation']),
+              'is_mandatory': (_toBool(doc['must_see']) == true) ? 1 : 0,
               'raw_json': jsonEncode(doc),
             });
           }
@@ -1564,6 +2690,7 @@ class RemoteApiService {
       final pharmacyName = _toString(org['name']) ?? '';
       final createdAt =
           _toString(c['date_of_creation']) ?? DateTime.now().toIso8601String();
+      final isWholesaler = _toBool(c['is_wholesaler']);
       final items = c['items'];
       if (items is! List) continue;
       for (final item in items) {
@@ -1590,12 +2717,20 @@ class RemoteApiService {
           'price': (_toDouble(it['sale_price']) ?? 0.0),
           'serial_number': null,
           'expiry_date': _toString(stock['expire_date']),
+          'main_stock': _toInt(stock['actual_balance'] ?? stock['amount']),
           'stock': _toInt(stock['amount']),
+          'remains_stock': _toInt(stock['amount']),
           'quantity': _toInt(it['amount']) ?? 1,
           'pharmacy_id': pharmacyId,
           'pharmacy_name': pharmacyName,
           'added_at': createdAt,
           'cart_id': _toInt(c['id']),
+          'prepayment_percent': _toInt(
+            c['prepayment_percent'] ?? c['prepayment'],
+          ),
+          'buyer_type':
+              _toInt(c['buyer_type']) ??
+              (isWholesaler == null ? null : (isWholesaler ? 1 : 0)),
           // current_stock_id = income_detailing_id — needed for Бронь order creation.
           'current_stock_id': _toInt(stock['current_stock_id']),
           // binding_drug_id = drug_binding.drug.id (not dict drug_id).
@@ -1682,6 +2817,15 @@ class RemoteApiService {
     return rows.map(_mapVisit).whereType<Map<String, dynamic>>().toList();
   }
 
+  Future<Map<String, dynamic>?> getVisitHistoryRemnantById(int visitId) async {
+    final rows = await getVisitHistoryRemnant();
+    for (final row in rows) {
+      final id = _toInt(row['remote_id'] ?? row['id']);
+      if (id == visitId) return row;
+    }
+    return null;
+  }
+
   Future<List<Map<String, dynamic>>> getVisitHistoryGeneral() async {
     final rows = await _getListAnyPaged(
       ['/api/Visits/history', '/Visits/history'],
@@ -1761,13 +2905,29 @@ class RemoteApiService {
   Future<List<dynamic>> _getListAnyPaged(
     List<String> paths, {
     Map<String, dynamic>? queryParameters,
-    void Function(int currentPage, int? totalPages, int loadedCount)? onPage,
+    int startPage = 1,
+    int initialLoadedCount = 0,
+    void Function(
+      int currentPage,
+      int? totalPages,
+      int loadedCount,
+      int? totalCount,
+    )?
+    onPage,
+    FutureOr<void> Function(
+      List<dynamic> rows,
+      int currentPage,
+      int? totalPages,
+      int loadedCount,
+      int? totalCount,
+    )?
+    onPageItems,
   }) async {
     Object? lastError;
     for (final path in paths) {
       try {
         final out = <dynamic>[];
-        var page = 1;
+        var page = startPage < 1 ? 1 : startPage;
         var hasMore = true;
         while (hasMore) {
           final qp = <String, dynamic>{...?queryParameters, 'page': page};
@@ -1783,12 +2943,38 @@ class RemoteApiService {
             final pageInfo = Map<String, dynamic>.from(data['page'] as Map);
             final hasNext = pageInfo['has_next_page'] == true;
             final totalPages = _toInt(pageInfo['total_pages']) ?? page;
-            onPage?.call(page, totalPages, out.length);
+            final totalCount = _toInt(
+              pageInfo['count'] ??
+                  pageInfo['total_count'] ??
+                  pageInfo['total_items'] ??
+                  pageInfo['total'] ??
+                  pageInfo['items_count'],
+            );
+            await onPageItems?.call(
+              list,
+              page,
+              totalPages,
+              initialLoadedCount + out.length,
+              totalCount,
+            );
+            onPage?.call(
+              page,
+              totalPages,
+              initialLoadedCount + out.length,
+              totalCount,
+            );
             hasMore = hasNext || page < totalPages;
             page++;
             continue;
           }
-          onPage?.call(page, null, out.length);
+          await onPageItems?.call(
+            list,
+            page,
+            null,
+            initialLoadedCount + out.length,
+            null,
+          );
+          onPage?.call(page, null, initialLoadedCount + out.length, null);
           hasMore = false;
         }
         if (out.isNotEmpty) return out;
@@ -1965,6 +3151,7 @@ class RemoteApiService {
           : 0,
       'updated_at': _toIso(m['updated_at']) ?? DateTime.now().toIso8601String(),
       'sync_id': _toInt(m['sync_id']),
+      'is_deleted': _toBool(m['is_deleted']) == true ? 1 : null,
       'raw_json': jsonEncode(m),
     };
   }
@@ -2003,6 +3190,7 @@ class RemoteApiService {
       'last_visit_label': _toString(m['last_visit_label']) ?? '',
       'updated_at': _toIso(m['updated_at']) ?? DateTime.now().toIso8601String(),
       'sync_id': _toInt(m['sync_id']),
+      'is_deleted': _toBool(m['is_deleted']) == true ? 1 : null,
       'raw_json': jsonEncode(m),
     };
   }
@@ -2063,9 +3251,29 @@ class RemoteApiService {
                 m['expired_at'],
           ) ??
           '',
+      'main_stock':
+          _toInt(
+            m['main_stock'] ??
+                m['actual_balance'] ??
+                m['total_stock'] ??
+                m['warehouse_stock'],
+          ) ??
+          0,
       'stock':
           _toInt(
             m['stock'] ??
+                m['remains_stock'] ??
+                m['balance'] ??
+                m['quantity'] ??
+                m['remainder'] ??
+                m['unique_counter'],
+          ) ??
+          0,
+      'remains_stock':
+          _toInt(
+            m['remains_stock'] ??
+                m['remains_amount'] ??
+                m['stock'] ??
                 m['balance'] ??
                 m['quantity'] ??
                 m['remainder'] ??
@@ -2317,6 +3525,12 @@ class RemoteApiService {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value.toString());
+  }
+
+  static int? _progressPercent(int current, int? total) {
+    if (total == null || total <= 0) return null;
+    final normalized = current.clamp(0, total);
+    return ((normalized / total) * 100).round().clamp(0, 100);
   }
 
   static double? _toDouble(dynamic value) {

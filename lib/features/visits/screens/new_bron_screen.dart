@@ -1,10 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'dart:convert';
 import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/models/local_visit.dart';
 import 'package:lima/core/models/models.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
@@ -19,12 +20,14 @@ class NewBronScreen extends ConsumerStatefulWidget {
   final int pharmacyId;
   final String pharmacyName;
   final bool isCheckoutMode;
+  final Map<String, dynamic>? checkoutPayload;
 
   const NewBronScreen({
     super.key,
     required this.pharmacyId,
     required this.pharmacyName,
     this.isCheckoutMode = false,
+    this.checkoutPayload,
   });
 
   @override
@@ -38,6 +41,11 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
 
   int _prepayment = 100;
   int _buyerType = 0;
+  int? _companyId;
+  int? _paymentVariantId;
+  int? _marginId;
+  int? _marginPercent;
+  int? _checkoutCartId;
   bool _fromCart = false;
   bool _paramsLoaded = false;
   bool _actionLocked = false;
@@ -54,10 +62,33 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     super.didChangeDependencies();
     if (_paramsLoaded) return;
     final params = GoRouterState.of(context).uri.queryParameters;
-    _prepayment = int.tryParse(params['prepayment'] ?? '') ?? 100;
-    _buyerType = int.tryParse(params['buyerType'] ?? '') ?? 0;
+    final checkoutPayload = widget.checkoutPayload;
+    _prepayment =
+        _parseInt(checkoutPayload?['prepayment']) ??
+        int.tryParse(params['prepayment'] ?? '') ??
+        100;
+    _buyerType =
+        _parseInt(checkoutPayload?['buyerType']) ??
+        int.tryParse(params['buyerType'] ?? '') ??
+        0;
+    _checkoutCartId =
+        _parseInt(checkoutPayload?['cart_id']) ??
+        int.tryParse(params['cart_id'] ?? '');
+    _companyId =
+        _parseInt(checkoutPayload?['companyId']) ??
+        int.tryParse(params['companyId'] ?? '');
+    _paymentVariantId =
+        _parseInt(checkoutPayload?['paymentVariantId']) ??
+        int.tryParse(params['paymentVariantId'] ?? '');
+    _marginId =
+        _parseInt(checkoutPayload?['marginId']) ??
+        int.tryParse(params['marginId'] ?? '');
+    _marginPercent =
+        _parseInt(checkoutPayload?['marginPercent']) ??
+        int.tryParse(params['marginPercent'] ?? '');
     _fromCart = widget.isCheckoutMode || params['from_cart'] == '1';
-    final rawItems = params['items'] ?? '';
+    final rawItems =
+        checkoutPayload?['items']?.toString() ?? params['items'] ?? '';
     final rawItemsData = params['items_data'];
     for (final pair in rawItems.split(';')) {
       if (pair.isEmpty || !pair.contains(':')) continue;
@@ -69,9 +100,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         _qtyByDrugId[id] = qty;
       }
     }
-    if (rawItemsData != null && rawItemsData.isNotEmpty) {
+    final itemsData = checkoutPayload?['items_data'] ?? rawItemsData;
+    if (itemsData != null && (itemsData is! String || itemsData.isNotEmpty)) {
       try {
-        final decoded = jsonDecode(rawItemsData);
+        final decoded = itemsData is String ? jsonDecode(itemsData) : itemsData;
         if (decoded is List) {
           for (final row in decoded) {
             if (row is! Map) continue;
@@ -82,10 +114,14 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
               id: id,
               name: (m['name'] as String?) ?? 'Препарат #$id',
               manufacturer: (m['manufacturer'] as String?) ?? '',
-              price: ((m['price'] as num?) ?? 0).toDouble(),
+              price:
+                  ((m['sale_price'] as num?) ?? (m['price'] as num?) ?? 0)
+                      .toDouble(),
               serialNumber: m['serial_number'] as String?,
               expiryDate: m['expiry_date'] as String?,
+              mainStock: (m['main_stock'] as num?)?.toInt(),
               stock: (m['stock'] as num?)?.toInt(),
+              remainsStock: (m['remains_stock'] as num?)?.toInt(),
               currentStockId: (m['current_stock_id'] as num?)?.toInt(),
               bindingDrugId: (m['binding_drug_id'] as num?)?.toInt(),
             );
@@ -103,7 +139,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     // Seed from cart snapshot first so items show immediately even if DB lookup
     // returns a different ID space (price-list binding IDs vs dict drug IDs).
     if (_fromCart) {
-      final cartItems = ref.read(appCollectionsProvider).cartItems;
+      final cartItems = ref
+          .read(appCollectionsProvider)
+          .cartItems
+          .where(_cartItemBelongsToCurrentOrder);
       for (final item in cartItems) {
         if (_qtyByDrugId.containsKey(item.drugId)) {
           _drugById[item.drugId] = Drug(
@@ -134,7 +173,9 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         serialNumber: row['serial_number'] as String?,
         expiryDate: row['expiry_date'] as String?,
         price: ((row['price'] as num?) ?? 0).toDouble(),
+        mainStock: (row['main_stock'] as num?)?.toInt(),
         stock: row['stock'] as int?,
+        remainsStock: (row['remains_stock'] as num?)?.toInt(),
         currentStockId: (row['current_stock_id'] as num?)?.toInt(),
         bindingDrugId: (row['binding_drug_id'] as num?)?.toInt(),
       );
@@ -154,7 +195,9 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
           serialNumber: incoming.serialNumber ?? existing?.serialNumber,
           expiryDate: incoming.expiryDate ?? existing?.expiryDate,
           price: incoming.price > 0 ? incoming.price : (existing?.price ?? 0),
+          mainStock: incoming.mainStock ?? existing?.mainStock,
           stock: incoming.stock ?? existing?.stock,
+          remainsStock: incoming.remainsStock ?? existing?.remainsStock,
           currentStockId: incoming.currentStockId ?? existing?.currentStockId,
           bindingDrugId: incoming.bindingDrugId ?? existing?.bindingDrugId,
         );
@@ -164,6 +207,11 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
 
   List<int> get _ids =>
       _qtyByDrugId.entries.where((e) => e.value > 0).map((e) => e.key).toList();
+  bool get _hasInvalidQuantities => _ids.any((id) {
+    final drug = _drugById[id];
+    if (drug == null) return false;
+    return _isOverStock(drug, _qtyByDrugId[id] ?? 0);
+  });
 
   double get _total {
     var sum = 0.0;
@@ -177,6 +225,12 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
 
   Future<void> _saveToCart() async {
     if (_actionLocked) return;
+    if (_hasInvalidQuantities) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Количество больше доступного остатка')),
+      );
+      return;
+    }
     setState(() => _actionLocked = true);
     final notifier = ref.read(appCollectionsProvider.notifier);
     var savedCount = 0;
@@ -190,6 +244,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         quantity: qty,
         pharmacyId: widget.pharmacyId,
         pharmacyName: widget.pharmacyName,
+        prepaymentPercent: _prepayment,
+        buyerType: _buyerType,
       );
       savedCount++;
     }
@@ -214,13 +270,22 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
 
   Future<void> _sendOrder() async {
     if (_actionLocked) return;
+    if (_hasInvalidQuantities) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Количество больше доступного остатка')),
+      );
+      return;
+    }
     setState(() => _actionLocked = true);
     final now = DateTime.now().toIso8601String();
 
     // Build drugs payload using income_detailing_id (= current_stock_id from
     // price-list) so the backend creates a proper Бронь order, not a presentation.
     final cartItems = _fromCart
-        ? ref.read(appCollectionsProvider).cartItems
+        ? ref
+              .read(appCollectionsProvider)
+              .cartItems
+              .where(_cartItemBelongsToCurrentOrder)
         : <CartItemSnapshot>[];
     final cartById = {for (final c in cartItems) c.drugId: c};
 
@@ -233,8 +298,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
           if (qty <= 0) return null;
           final cart = cartById[id];
           // income_detailing_id comes from cart snapshot (server cart) or drug model
-          final incomeDetailingId =
-              cart?.currentStockId ?? drug.currentStockId;
+          final incomeDetailingId = cart?.currentStockId ?? drug.currentStockId;
           final bindingDrugId =
               cart?.bindingDrugId ?? drug.bindingDrugId ?? drug.id;
           // For pharmacy orders backend expects a stock binding pair.
@@ -250,7 +314,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
             'package': qty,
             'quantity': qty,
             'sale_price': drug.price,
+            'sale_price_without_nds': _priceWithoutNds(drug.price),
             'price': drug.price,
+            'serial_no': drug.serialNumber,
+            'expire_date': drug.expiryDate,
           };
         })
         .whereType<Map<String, dynamic>>()
@@ -268,42 +335,97 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     }
 
     int? localId;
+    var remoteSynced = false;
+    var remoteError = false;
+    var remoteRejected = false;
+    String? remoteRejectMessage;
     try {
-      Map<String, dynamic>? pricingDefaults;
       final isOffline = ref.read(isOfflineProvider);
+      final isWholesaler = _buyerType == 1;
+      final user = ref.read(authProvider).user;
+      final orderUserId = user?.id;
+      if (orderUserId == null || orderUserId <= 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Не удалось определить пользователя')),
+          );
+        }
+        if (mounted) setState(() => _actionLocked = false);
+        return;
+      }
+
+      final db = ref.read(localDatabaseProvider);
+      final api = ref.read(remoteApiServiceProvider);
+      final org = await db.getOrganisationById(widget.pharmacyId);
+      final organizationInn = _parseInt(org?['inn']);
+
+      Map<String, dynamic>? pricingTerms;
       if (!isOffline) {
-        try {
-          pricingDefaults = await ref
-              .read(remoteApiServiceProvider)
-              .getLatestOrderDefaultsForOrganization(widget.pharmacyId);
-        } catch (_) {}
+        if (_marginId != null) {
+          pricingTerms = {
+            'company_id': _companyId ?? user?.companyId,
+            'payment_variant_id': _paymentVariantId ?? 1,
+            'margin_id': _marginId,
+            'margin_percent': _marginPercent,
+            'prepayment_percent': _prepayment,
+            'is_wholesaler': isWholesaler,
+          };
+        } else {
+          try {
+            pricingTerms = await api.resolveOrderPricingTerms(
+              prepaymentPercent: _prepayment,
+              isWholesaler: isWholesaler,
+              orderTotal: _total,
+              companyId: user?.companyId,
+            );
+          } catch (_) {
+            pricingTerms = null;
+          }
+        }
+        if (pricingTerms == null) {
+          if (mounted) {
+            final buyerLabel = isWholesaler ? 'Опт' : 'Розница';
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'В API нет ценовой матрицы для $_prepayment% / $buyerLabel',
+                ),
+              ),
+            );
+          }
+          if (mounted) setState(() => _actionLocked = false);
+          return;
+        }
       }
       final rawVisitJson = jsonEncode({
         'organization_id': widget.pharmacyId,
         'organization_name': widget.pharmacyName,
-        'visit_type': 'order',
+        'organization_inn': organizationInn,
+        'visit_type': 1,
         'status': 'completed',
         'comment': _commentCtrl.text.trim(),
+        'order_comment': _commentCtrl.text.trim(),
+        'order_user_id': orderUserId,
         'prepayment': _prepayment,
-        'prepayment_percent':
-            pricingDefaults?['prepayment_percent'] ?? _prepayment,
+        'prepayment_percent': _prepayment,
         'buyer_type': _buyerType,
-        'is_wholesaler':
-            pricingDefaults?['is_wholesaler'] ?? (_buyerType == 1),
-        if (pricingDefaults?['payment_variant_id'] != null)
-          'payment_variant_id': pricingDefaults!['payment_variant_id'],
-        if (pricingDefaults?['margin_id'] != null)
-          'margin_id': pricingDefaults!['margin_id'],
-        if (pricingDefaults?['contract_id'] != null)
-          'contract_id': pricingDefaults!['contract_id'],
-        // Backend canonical field for order lines in /api/Visits/add.
+        'is_wholesaler': isWholesaler,
+        if (pricingTerms?['company_id'] != null)
+          'company_id': pricingTerms!['company_id'],
+        if (pricingTerms?['payment_variant_id'] != null)
+          'payment_variant_id': pricingTerms!['payment_variant_id'],
+        if (pricingTerms?['margin_id'] != null)
+          'margin_id': pricingTerms!['margin_id'],
+        if (pricingTerms?['margin_percent'] != null)
+          'margin_percent': pricingTerms!['margin_percent'],
+        // Backend web contract sends pharmacy booking lines in Visits/add.drugs.
         'drugs': itemsPayload,
         // Keep legacy key for backward compatibility with local readers.
         'items': itemsPayload,
         'start_date': now,
         'end_date': now,
       });
-      localId = await ref.read(localDatabaseProvider).insertVisit({
+      localId = await db.insertVisit({
         'remote_id': null,
         'org_id': widget.pharmacyId,
         'org_name': widget.pharmacyName,
@@ -319,98 +441,220 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       ref.invalidate(dashboardCountsProvider);
       if (!isOffline) {
         try {
-          final createdAt = DateTime.tryParse(now) ?? DateTime.now();
-          final pushResult = await ref
-              .read(remoteApiServiceProvider)
-              .pushUnsyncedVisitDebug(
-                LocalVisit(
-                  id: localId,
-                  remoteId: null,
-                  orgId: widget.pharmacyId,
-                  orgName: widget.pharmacyName,
-                  visitType: 'order',
-                  status: 'completed',
-                  notes: _commentCtrl.text.trim(),
-                  createdAt: createdAt,
-                  updatedAt: createdAt,
-                  isSynced: false,
-                  rawJson: rawVisitJson,
-                ),
-              );
-          await ref.read(localDatabaseProvider).markSynced([localId]);
+          final pushResult = await api.createOrderVisitDebug(
+            orderUserId: orderUserId,
+            organizationId: widget.pharmacyId,
+            companyId: _parseInt(pricingTerms?['company_id']),
+            paymentVariantId: _parseInt(pricingTerms?['payment_variant_id']),
+            marginId: _parseInt(pricingTerms?['margin_id']),
+            marginPercent: _parseInt(pricingTerms?['margin_percent']),
+            prepaymentPercent: _prepayment,
+            isWholesaler: isWholesaler,
+            orderComment: _commentCtrl.text.trim(),
+            drugs: itemsPayload,
+            pricesAlreadyCalculated: _marginId != null,
+          );
+          await db.markSynced([localId]);
+          remoteSynced = true;
           final responseObj = pushResult['response'];
           final remoteId = switch (responseObj) {
             int v => v,
             String s => int.tryParse(s),
             Map<String, dynamic> m =>
-              (m['id'] as num?)?.toInt() ??
-                  (m['visit_id'] as num?)?.toInt() ??
+              (m['visit_id'] as num?)?.toInt() ??
+                  (m['id'] as num?)?.toInt() ??
                   (m['data'] is Map<String, dynamic>
-                      ? ((m['data']['id'] as num?)?.toInt() ??
-                            (m['data']['visit_id'] as num?)?.toInt())
+                      ? ((m['data']['visit_id'] as num?)?.toInt() ??
+                            (m['data']['id'] as num?)?.toInt())
                       : null),
             _ => null,
           };
           if (remoteId != null) {
-            await ref
-                .read(localDatabaseProvider)
-                .updateVisitRemoteId(localVisitId: localId, remoteId: remoteId);
+            await db.updateVisitRemoteId(
+              localVisitId: localId,
+              remoteId: remoteId,
+            );
             // Replace local request payload with canonical server history payload
             // so UI details (e.g. serial_no, computed sums) match agent view.
             try {
-              final remoteRow = await ref
-                  .read(remoteApiServiceProvider)
-                  .getVisitHistoryOrderById(remoteId);
+              final remoteRow = await api.getVisitHistoryOrderById(remoteId);
               if (remoteRow != null) {
-                await ref.read(localDatabaseProvider).updateVisitRawJson(
-                      localVisitId: localId,
-                      rawJson: remoteRow['raw_json'] is String
-                          ? remoteRow['raw_json'] as String
-                          : jsonEncode(remoteRow),
-                    );
+                final remoteRaw = remoteRow['raw_json'] is String
+                    ? remoteRow['raw_json'] as String
+                    : jsonEncode(remoteRow);
+                final serverRaw = _mergeSelectedOrderTerms(
+                  remoteRaw,
+                  prepayment: _prepayment,
+                  buyerType: _buyerType,
+                  isWholesaler: isWholesaler,
+                  pricingTerms: pricingTerms,
+                );
+                await db.updateVisitRawJson(
+                  localVisitId: localId,
+                  rawJson: serverRaw,
+                );
               }
             } catch (_) {}
           }
-          await ref
-              .read(localDatabaseProvider)
-              .setVisitPushPayload(
-                visitId: localId,
-                requestJson: jsonEncode(pushResult['request']),
-                responseJson: jsonEncode(pushResult['response']),
-              );
-        } catch (_) {
-          // Keep local visit unsynced for background reconciliation.
+          await db.setVisitPushPayload(
+            visitId: localId,
+            requestJson: jsonEncode(pushResult['request']),
+            responseJson: jsonEncode(pushResult['response']),
+          );
+        } catch (e) {
+          if (isPermanentVisitPushFailure(e)) {
+            remoteRejected = true;
+            remoteRejectMessage = e is RemotePushException
+                ? e.displayMessage
+                : 'Сервер отклонил заказ';
+            await db.deleteVisit(localId);
+            ref.invalidate(dashboardCountsProvider);
+          } else {
+            remoteError = true;
+            final requestJson = e is RemotePushException
+                ? jsonEncode(e.request)
+                : null;
+            final responseJson = e is RemotePushException
+                ? jsonEncode(e.response)
+                : jsonEncode({'error': '$e'});
+            await db.setVisitPushPayload(
+              visitId: localId,
+              requestJson: requestJson,
+              responseJson: responseJson,
+            );
+            // Keep local visit unsynced for background reconciliation.
+          }
         }
       }
-    } catch (_) {
-      // Keep user flow, but skip blocking errors in demo mode.
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось оформить заказ: $e')),
+        );
+        setState(() => _actionLocked = false);
+      }
+      return;
+    }
+
+    if (remoteRejected) {
+      if (!mounted) return;
+      await _showResultDialog(
+        title: 'Заказ не создан',
+        subtitle:
+            remoteRejectMessage ?? 'Сервер отклонил заказ, он не сохранён',
+        success: false,
+        stayOnPageOnClose: true,
+      );
+      return;
     }
 
     if (skippedInvalidItems > 0 && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Пропущено позиций без остатков: $skippedInvalidItems',
-          ),
+          content: Text('Пропущено позиций без остатков: $skippedInvalidItems'),
         ),
       );
     }
 
     if (_fromCart) {
-      await ref.read(appCollectionsProvider.notifier).clearCart();
+      unawaited(
+        ref
+            .read(appCollectionsProvider.notifier)
+            .clearCartGroup(
+              pharmacyId: widget.pharmacyId,
+              pharmacyName: widget.pharmacyName,
+              cartId: _checkoutCartId,
+              prepaymentPercent: _prepayment,
+              buyerType: _buyerType,
+            )
+            .catchError((_) {}),
+      );
     }
     ref.invalidate(dashboardCountsProvider);
     if (ref.read(isOfflineProvider)) {
       pulseOfflineBanner(ref);
     }
-    try {
-      await ref.read(authProvider.notifier).refreshProfile();
-    } catch (_) {}
+    unawaited(
+      ref.read(authProvider.notifier).refreshProfile().catchError((_) {}),
+    );
     if (!mounted) return;
     await _showResultDialog(
-      title: 'Заказ оформлен',
-      subtitle: 'Ваш заказ успешно отправлен оператору',
+      title: remoteSynced ? 'Заказ оформлен' : 'Заказ сохранен',
+      subtitle: remoteSynced
+          ? 'Ваш заказ успешно отправлен оператору'
+          : remoteError
+          ? 'Не удалось отправить на сервер. Заказ останется в очереди синхронизации'
+          : 'Заказ будет отправлен при синхронизации',
     );
+  }
+
+  int? _parseInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString().replaceAll(RegExp(r'\D'), ''));
+  }
+
+  String _mergeSelectedOrderTerms(
+    String rawJson, {
+    required int prepayment,
+    required int buyerType,
+    required bool isWholesaler,
+    Map<String, dynamic>? pricingTerms,
+  }) {
+    try {
+      final decoded = jsonDecode(rawJson);
+      if (decoded is Map) {
+        final map = Map<String, dynamic>.from(decoded);
+        map['prepayment'] = prepayment;
+        map['prepayment_percent'] = prepayment;
+        map['buyer_type'] = buyerType;
+        map['is_wholesaler'] = isWholesaler;
+        if (pricingTerms?['margin_id'] != null) {
+          map['margin_id'] = pricingTerms!['margin_id'];
+        }
+        if (pricingTerms?['margin_percent'] != null) {
+          map['margin_percent'] = pricingTerms!['margin_percent'];
+        }
+        if (pricingTerms?['payment_variant_id'] != null) {
+          map['payment_variant_id'] = pricingTerms!['payment_variant_id'];
+        }
+        return jsonEncode(map);
+      }
+    } catch (_) {}
+    return rawJson;
+  }
+
+  bool _cartItemBelongsToCurrentOrder(CartItemSnapshot item) {
+    if (_checkoutCartId != null && item.cartId != _checkoutCartId) {
+      return false;
+    }
+    if (item.pharmacyId != widget.pharmacyId) return false;
+    final prepayment = item.prepaymentPercent ?? 100;
+    if (prepayment != _prepayment) return false;
+    final buyerType = item.buyerType ?? 0;
+    if (buyerType != _buyerType) return false;
+    return true;
+  }
+
+  int _availableStock(Drug drug) => drug.remainsStock ?? drug.stock ?? 0;
+
+  bool _isOverStock(Drug drug, int qty) => qty > _availableStock(drug);
+
+  bool _isLineOverStock(int id) {
+    final drug = _drugById[id];
+    if (drug == null) return false;
+    return _isOverStock(drug, _qtyByDrugId[id] ?? 0);
+  }
+
+  bool _canIncreaseQty(int id) {
+    final drug = _drugById[id];
+    if (drug == null) return false;
+    return (_qtyByDrugId[id] ?? 0) < _availableStock(drug);
+  }
+
+  double _priceWithoutNds(double value) {
+    return double.parse((value / 1.12).toStringAsFixed(2));
   }
 
   Future<void> _showSpecFormatDialog() async {
@@ -540,12 +784,14 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     required String title,
     required String subtitle,
     String? badge,
+    bool success = true,
+    bool stayOnPageOnClose = false,
   }) async {
     await showDialog<void>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: !success,
       builder: (ctx) => PopScope(
-        canPop: false,
+        canPop: !success,
         child: Dialog(
           backgroundColor: Colors.transparent,
           insetPadding: const EdgeInsets.symmetric(horizontal: 20),
@@ -558,13 +804,27 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const SizedBox(
+                if (!success)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: AppTapScale(
+                      onTap: () => Navigator.pop(ctx),
+                      child: const Icon(
+                        Icons.close_rounded,
+                        color: AppColors.secondaryText,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                SizedBox(
                   width: 74,
                   height: 74,
                   child: Center(
                     child: Icon(
-                      Icons.check_rounded,
-                      color: Color(0xFF4AAE7E),
+                      success ? Icons.check_rounded : Icons.close_rounded,
+                      color: success
+                          ? const Color(0xFF4AAE7E)
+                          : const Color(0xFFE05050),
                       size: 56,
                     ),
                   ),
@@ -609,53 +869,60 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    context.pushReplacement(
-                      Uri(
-                        path: '/visits/pharmacy/detail/${widget.pharmacyId}',
-                        queryParameters: {'name': widget.pharmacyName},
-                      ).toString(),
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 52),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                if (success) const SizedBox(height: 16),
+                if (success)
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      context.pushReplacement(
+                        Uri(
+                          path: '/visits/pharmacy/detail/${widget.pharmacyId}',
+                          queryParameters: {'name': widget.pharmacyName},
+                        ).toString(),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      'Перейти к компании',
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                  child: Text(
-                    'Перейти к компании',
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                if (success) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      if (!stayOnPageOnClose) {
+                        context.go(
+                          '/home?refresh=${DateTime.now().millisecondsSinceEpoch}',
+                        );
+                      }
+                    },
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 52),
+                      backgroundColor: Colors.white,
+                      side: const BorderSide(color: Color(0xFFE2E6EE)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      stayOnPageOnClose ? 'Понятно' : 'На главную',
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                OutlinedButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    context.go('/home?refresh=${DateTime.now().millisecondsSinceEpoch}');
-                  },
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 52),
-                    backgroundColor: Colors.white,
-                    side: const BorderSide(color: Color(0xFFE2E6EE)),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: Text(
-                    'На главную',
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+                ],
               ],
             ),
           ),
@@ -696,7 +963,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                     } else {
                       context.go(
                         Uri(
-                          path: '/visits/pharmacy/detail/${widget.pharmacyId}/type',
+                          path:
+                              '/visits/pharmacy/detail/${widget.pharmacyId}/type',
                           queryParameters: {'name': widget.pharmacyName},
                         ).toString(),
                       );
@@ -841,10 +1109,23 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
             ),
             const SizedBox(height: 8),
             ElevatedButton.icon(
-              onPressed: _ids.isEmpty || _actionLocked ? null : _sendOrder,
-              icon: const Icon(Icons.check_rounded),
+              onPressed: _ids.isEmpty || _actionLocked || _hasInvalidQuantities
+                  ? null
+                  : _sendOrder,
+              icon: _actionLocked
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.check_rounded),
               label: Text(
-                'Отправить заказ оператору',
+                _actionLocked
+                    ? 'Оформляем заказ...'
+                    : 'Отправить заказ оператору',
                 style: GoogleFonts.manrope(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -860,7 +1141,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
             if (!widget.isCheckoutMode) ...[
               const SizedBox(height: 8),
               OutlinedButton.icon(
-                onPressed: _ids.isEmpty || _actionLocked ? null : _saveToCart,
+                onPressed:
+                    _ids.isEmpty || _actionLocked || _hasInvalidQuantities
+                    ? null
+                    : _saveToCart,
                 icon: const Icon(
                   Icons.shopping_cart_rounded,
                   color: Color(0xFF2C9E63),
@@ -885,7 +1169,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
             ],
             const SizedBox(height: 8),
             OutlinedButton.icon(
-              onPressed: _ids.isEmpty || _actionLocked
+              onPressed: _ids.isEmpty || _actionLocked || _hasInvalidQuantities
                   ? null
                   : _showSpecFormatDialog,
               icon: const Icon(Icons.file_download_outlined),
@@ -948,7 +1232,11 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
               decoration: BoxDecoration(
                 color: AppColors.primaryBg,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.border),
+                border: Border.all(
+                  color: _isLineOverStock(id)
+                      ? AppColors.error
+                      : AppColors.border,
+                ),
               ),
               child: Row(
                 children: [
@@ -995,7 +1283,9 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                       style: GoogleFonts.manrope(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.secondaryText,
+                        color: _isLineOverStock(id)
+                            ? AppColors.error
+                            : AppColors.secondaryText,
                       ),
                     )
                   else
@@ -1018,15 +1308,20 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                           style: GoogleFonts.manrope(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
-                            color: AppColors.secondaryText,
+                            color: _isLineOverStock(id)
+                                ? AppColors.error
+                                : AppColors.secondaryText,
                           ),
                         ),
                         const SizedBox(width: 8),
                         _qtyButton(
                           icon: Icons.add_rounded,
-                          onTap: () => setState(() {
-                            _qtyByDrugId[id] = (_qtyByDrugId[id] ?? 0) + 1;
-                          }),
+                          onTap: _canIncreaseQty(id)
+                              ? () => setState(() {
+                                  _qtyByDrugId[id] =
+                                      (_qtyByDrugId[id] ?? 0) + 1;
+                                })
+                              : null,
                         ),
                       ],
                     ),
@@ -1039,7 +1334,6 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       ),
     );
   }
-
 
   Widget _pair(String left, String right) {
     return Row(
@@ -1064,7 +1358,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     );
   }
 
-  Widget _qtyButton({required IconData icon, required VoidCallback onTap}) {
+  Widget _qtyButton({required IconData icon, required VoidCallback? onTap}) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -1076,7 +1370,11 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
           border: Border.all(color: AppColors.border),
           color: AppColors.secondaryBg,
         ),
-        child: Icon(icon, size: 16, color: AppColors.secondaryText),
+        child: Icon(
+          icon,
+          size: 16,
+          color: onTap == null ? AppColors.hintText : AppColors.secondaryText,
+        ),
       ),
     );
   }

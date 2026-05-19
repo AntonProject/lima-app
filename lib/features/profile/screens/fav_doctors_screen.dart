@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
+import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/theme/app_theme.dart';
+import 'package:lima/features/profile/screens/profile_screen.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
 class FavDoctorsScreen extends ConsumerStatefulWidget {
@@ -20,6 +22,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
   bool _loading = true;
   List<Map<String, dynamic>> _allDoctors = [];
   int? _pressedDoctorId;
+  DateTime? _lastSyncSeenAt;
 
   List<Map<String, dynamic>> get _filtered => _allDoctors.where((d) {
     final name = (d['full_name'] as String? ?? '').toLowerCase();
@@ -37,9 +40,8 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
   Future<void> _loadDoctors() async {
     final db = ref.read(localDatabaseProvider);
 
-    final doctors = await db.getDoctors();
-    final favoriteDoctors = doctors.where((d) => (d['is_favorite'] ?? 0) == 1);
-    final favList = favoriteDoctors.map((e) => Map<String, dynamic>.from(e)).toList();
+    final doctors = await db.getFavoriteDoctors();
+    final favList = doctors.map((e) => Map<String, dynamic>.from(e)).toList();
     final ids = favList
         .map((e) => (e['id'] as num?)?.toInt())
         .whereType<int>()
@@ -92,14 +94,16 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
 
     try {
       await api.removeDoctorFromFavorites(doctorId);
+      ref.invalidate(favoriteDoctorsCountProvider);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Удалено из избранного')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Удалено из избранного')));
     } catch (_) {
       if (ref.read(isOfflineProvider)) {
         pulseOfflineBanner(ref);
       }
+      ref.invalidate(favoriteDoctorsCountProvider);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -111,18 +115,15 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
     }
   }
 
-  void _startVisitForDoctor(
-    Map<String, dynamic> doctor, {
-    String? orgName,
-  }) {
+  void _startVisitForDoctor(Map<String, dynamic> doctor, {String? orgName}) {
     final doctorId = doctor['id'] as int?;
     final orgId = (doctor['organisation_id'] is num)
         ? (doctor['organisation_id'] as num).toInt()
         : null;
     if (doctorId == null || orgId == null || orgId <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Для врача не найдено ЛПУ')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Для врача не найдено ЛПУ')));
       return;
     }
     final doctorName = (doctor['full_name'] as String?) ?? '';
@@ -205,7 +206,10 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                         color: AppColors.primaryBg,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(Icons.close_rounded, color: AppColors.hintText),
+                      child: const Icon(
+                        Icons.close_rounded,
+                        color: AppColors.hintText,
+                      ),
                     ),
                   ),
                 ],
@@ -225,7 +229,10 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: _SheetField(label: 'Специализация', value: specialty),
+                          child: _SheetField(
+                            label: 'Специализация',
+                            value: specialty,
+                          ),
                         ),
                       ],
                     ),
@@ -278,8 +285,11 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                         color: AppColors.iconBgBlue,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(Icons.local_hospital_rounded,
-                          color: AppColors.primary, size: 18),
+                      child: const Icon(
+                        Icons.local_hospital_rounded,
+                        color: AppColors.primary,
+                        size: 18,
+                      ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -365,6 +375,18 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<SyncState>(syncProvider, (prev, next) {
+      final nextAt = next.lastSyncAt;
+      if (nextAt == null) return;
+      if (_lastSyncSeenAt != null &&
+          nextAt.millisecondsSinceEpoch ==
+              _lastSyncSeenAt!.millisecondsSinceEpoch) {
+        return;
+      }
+      _lastSyncSeenAt = nextAt;
+      if (mounted) _loadDoctors();
+    });
+
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
       body: Column(
@@ -392,8 +414,11 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                             alignment: Alignment.centerLeft,
                             child: GestureDetector(
                               onTap: () => context.pop(),
-                              child: const Icon(Icons.arrow_back_rounded,
-                                  color: AppColors.primaryText, size: 24),
+                              child: const Icon(
+                                Icons.arrow_back_rounded,
+                                color: AppColors.primaryText,
+                                size: 24,
+                              ),
                             ),
                           ),
                           Text(
@@ -416,8 +441,11 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                   onChanged: (v) => setState(() => _query = v),
                   decoration: const InputDecoration(
                     hintText: 'Поиск',
-                    prefixIcon: Icon(Icons.search_rounded,
-                        color: AppColors.hintText, size: 20),
+                    prefixIcon: Icon(
+                      Icons.search_rounded,
+                      color: AppColors.hintText,
+                      size: 20,
+                    ),
                   ),
                 ),
               ],
@@ -427,146 +455,156 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _filtered.isEmpty
-                    ? Center(
-                        child: Text(
-                          'Нет избранных врачей',
-                          style: GoogleFonts.manrope(
-                            fontSize: 14,
-                            color: AppColors.secondaryText,
-                          ),
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: EdgeInsets.fromLTRB(
-                          16,
-                          12,
-                          16,
-                          LimaNavBarLayout.scrollBottomPadding(context),
-                        ),
-                        itemCount: _filtered.length,
-                        itemBuilder: (_, i) {
-                          final d = _filtered[i];
-                          final name = (d['full_name'] as String?) ?? '';
-                          final specialty = (d['specialty'] as String?) ?? '—';
-                          final category = 'Категория ${d['category'] ?? 'C'}';
-                          final lastVisit = _visitLabel(d);
-                          final doctorId = (d['id'] as num?)?.toInt();
-                          final pressed = doctorId != null && _pressedDoctorId == doctorId;
+                ? Center(
+                    child: Text(
+                      'Нет избранных врачей',
+                      style: GoogleFonts.manrope(
+                        fontSize: 14,
+                        color: AppColors.secondaryText,
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      12,
+                      16,
+                      LimaNavBarLayout.scrollBottomPadding(context),
+                    ),
+                    itemCount: _filtered.length,
+                    itemBuilder: (_, i) {
+                      final d = _filtered[i];
+                      final name = (d['full_name'] as String?) ?? '';
+                      final specialty = (d['specialty'] as String?) ?? '—';
+                      final category = 'Категория ${d['category'] ?? 'C'}';
+                      final lastVisit = _visitLabel(d);
+                      final doctorId = (d['id'] as num?)?.toInt();
+                      final pressed =
+                          doctorId != null && _pressedDoctorId == doctorId;
 
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: GestureDetector(
-                              onTapDown: (_) {
-                                if (doctorId == null) return;
-                                setState(() => _pressedDoctorId = doctorId);
-                              },
-                              onTapCancel: () {
-                                setState(() => _pressedDoctorId = null);
-                              },
-                              onTapUp: (_) {
-                                setState(() => _pressedDoctorId = null);
-                              },
-                              onTap: () => _onDoctorCardTap(d),
-                              child: AnimatedScale(
-                                duration: const Duration(milliseconds: 110),
-                                curve: Curves.easeOutCubic,
-                                scale: pressed ? 0.9 : 1.0,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFDDE3EB),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: AppColors.divider),
-                                  ),
-                                  child: Container(
-                                    margin: const EdgeInsets.only(left: 6),
-                                    padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.secondaryBg,
-                                      borderRadius: BorderRadius.circular(14),
-                                      boxShadow: shadowSm,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: GestureDetector(
+                          onTapDown: (_) {
+                            if (doctorId == null) return;
+                            setState(() => _pressedDoctorId = doctorId);
+                          },
+                          onTapCancel: () {
+                            setState(() => _pressedDoctorId = null);
+                          },
+                          onTapUp: (_) {
+                            setState(() => _pressedDoctorId = null);
+                          },
+                          onTap: () => _onDoctorCardTap(d),
+                          child: AnimatedScale(
+                            duration: const Duration(milliseconds: 110),
+                            curve: Curves.easeOutCubic,
+                            scale: pressed ? 0.9 : 1.0,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFDDE3EB),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: AppColors.divider),
+                              ),
+                              child: Container(
+                                margin: const EdgeInsets.only(left: 6),
+                                padding: const EdgeInsets.fromLTRB(
+                                  14,
+                                  12,
+                                  12,
+                                  12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.secondaryBg,
+                                  borderRadius: BorderRadius.circular(14),
+                                  boxShadow: shadowSm,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: GoogleFonts.manrope(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 5,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFFE9EEF4),
+                                              borderRadius:
+                                                  BorderRadius.circular(24),
+                                            ),
+                                            child: Text(
+                                              category,
+                                              style: GoogleFonts.manrope(
+                                                fontSize: 12,
+                                                color: AppColors.secondaryText,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Row(
                                             children: [
-                                              Text(
-                                                name,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: GoogleFonts.manrope(
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.w700,
-                                                ),
+                                              const Icon(
+                                                Icons.work_outline_rounded,
+                                                color: AppColors.hintText,
+                                                size: 16,
                                               ),
-                                              const SizedBox(height: 8),
-                                              Container(
-                                                padding: const EdgeInsets.symmetric(
-                                                  horizontal: 10,
-                                                  vertical: 5,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  color: const Color(0xFFE9EEF4),
-                                                  borderRadius: BorderRadius.circular(24),
-                                                ),
+                                              const SizedBox(width: 6),
+                                              Expanded(
                                                 child: Text(
-                                                  category,
+                                                  specialty,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                   style: GoogleFonts.manrope(
-                                                    fontSize: 12,
-                                                    color: AppColors.secondaryText,
-                                                    fontWeight: FontWeight.w500,
+                                                    fontSize: 13,
+                                                    color:
+                                                        AppColors.secondaryText,
                                                   ),
-                                                ),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              Row(
-                                                children: [
-                                                  const Icon(
-                                                    Icons.work_outline_rounded,
-                                                    color: AppColors.hintText,
-                                                    size: 16,
-                                                  ),
-                                                  const SizedBox(width: 6),
-                                                  Expanded(
-                                                    child: Text(
-                                                      specialty,
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                      style: GoogleFonts.manrope(
-                                                        fontSize: 13,
-                                                        color: AppColors.secondaryText,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                lastVisit,
-                                                style: GoogleFonts.manrope(
-                                                  fontSize: 12,
-                                                  color: AppColors.hintText,
                                                 ),
                                               ),
                                             ],
                                           ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        const Icon(
-                                          Icons.chevron_right_rounded,
-                                          color: AppColors.hintText,
-                                          size: 21,
-                                        ),
-                                      ],
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            lastVisit,
+                                            style: GoogleFonts.manrope(
+                                              fontSize: 12,
+                                              color: AppColors.hintText,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
+                                    const SizedBox(width: 10),
+                                    const Icon(
+                                      Icons.chevron_right_rounded,
+                                      color: AppColors.hintText,
+                                      size: 21,
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
@@ -609,11 +647,7 @@ class _SheetField extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
-                  Icons.circle,
-                  size: 8,
-                  color: AppColors.hintText,
-                ),
+                const Icon(Icons.circle, size: 8, color: AppColors.hintText),
                 const SizedBox(width: 6),
                 Text(
                   value.isEmpty ? '—' : value,

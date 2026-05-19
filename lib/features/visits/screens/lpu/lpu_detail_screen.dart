@@ -35,6 +35,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
   List<Map<String, dynamic>> _doctors = [];
   Map<String, dynamic>? _org;
   final Set<int> _expandedDoctorIds = {};
+  bool _remoteDoctorsLoaded = false;
   bool get _canEditDirectory => ref.read(authProvider).user?.role == 'admin';
 
   Map<String, dynamic> _rawOrg() {
@@ -66,10 +67,39 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
 
   Future<void> _loadDoctors() async {
     final db = ref.read(localDatabaseProvider);
-    final results = await db.getDoctors(
+    var results = await db.getDoctors(
       orgId: widget.orgId,
       includeGlobalFallback: false,
     );
+
+    if (!_remoteDoctorsLoaded && !ref.read(isOfflineProvider)) {
+      _remoteDoctorsLoaded = true;
+      try {
+        final remoteDoctors = await ref
+            .read(remoteApiServiceProvider)
+            .getDoctorsByOrganization(widget.orgId);
+        if (remoteDoctors.length > results.length) {
+          await db.upsertDoctors(remoteDoctors);
+          await db.upsertDoctorOrganisationLinks(
+            remoteDoctors
+                .map((d) => (d['id'] as num?)?.toInt())
+                .whereType<int>()
+                .map(
+                  (doctorId) => <String, dynamic>{
+                    'doctor_id': doctorId,
+                    'organisation_id': widget.orgId,
+                  },
+                )
+                .toList(),
+          );
+          results = await db.getDoctors(
+            orgId: widget.orgId,
+            includeGlobalFallback: false,
+          );
+        }
+      } catch (_) {}
+    }
+
     final mutableResults = results
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
@@ -232,6 +262,8 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       if (s == 'true' || s == '1') return true;
       if (s == 'false' || s == '0') return false;
     }
+    final visited = raw['visited'];
+    if (visited is bool) return visited;
     return null;
   }
 
@@ -545,7 +577,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                               ],
                             ),
                           ),
-                          if (worksWithUs == false) ...[
+                          if (worksWithUs != null) ...[
                             const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -553,14 +585,20 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                                 vertical: 5,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFFFEEF0),
+                                color: worksWithUs == true
+                                    ? const Color(0xFFDDF5E6)
+                                    : const Color(0xFFFFEEF0),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Text(
-                                'Не работает с нами',
+                                worksWithUs == true
+                                    ? 'Работает с нами'
+                                    : 'Не работает с нами',
                                 style: GoogleFonts.manrope(
                                   fontSize: 12,
-                                  color: AppColors.error,
+                                  color: worksWithUs == true
+                                      ? const Color(0xFF2AA65A)
+                                      : AppColors.error,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),

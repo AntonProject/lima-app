@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,8 @@ import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/theme/app_theme.dart';
+import 'package:lima/features/home/screens/home_screen.dart';
+import 'package:lima/features/visits/screens/visits_hub_screen.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
@@ -20,19 +23,44 @@ class SplashScreen extends ConsumerStatefulWidget {
 }
 
 class _SplashScreenState extends ConsumerState<SplashScreen> {
+  // Cold-start with empty DB needs more time to fetch orgs + drugs + visits.
+  static const Duration _firstRunBudget = Duration(seconds: 60);
+  static const Duration _warmBudget = Duration(seconds: 30);
+
   double _progress = 0.0;
   String _step = '';
   bool _canRetry = false;
   bool _loading = false;
+  bool _navigated = false;
+  int _dotCount = 0;
+  Timer? _dotsTimer;
 
   @override
   void initState() {
     super.initState();
     debugPrint('[SPLASH] initState');
+    _dotsTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (!mounted) return;
+      setState(() {
+        _dotCount = (_dotCount + 1) % 4;
+      });
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       debugPrint('[SPLASH] postFrameCallback');
       _load();
     });
+  }
+
+  @override
+  void dispose() {
+    _dotsTimer?.cancel();
+    super.dispose();
+  }
+
+  void _safeGo(String route) {
+    if (_navigated || !mounted) return;
+    _navigated = true;
+    context.go(route);
   }
 
   Future<void> _load() async {
@@ -78,14 +106,15 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                 .read(authProvider.notifier)
                 .loginOfflineWithCache();
             if (!loaded) {
-              context.go('/login');
+              if (!mounted) return;
+              _safeGo('/login');
               _loading = false;
               return;
             }
             await Future.delayed(const Duration(milliseconds: 250));
             if (!mounted) return;
             debugPrint('[SPLASH] navigating to /home (offline)');
-            context.go('/home');
+            _safeGo('/home');
             _loading = false;
             return;
           }
@@ -98,7 +127,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           });
           await Future.delayed(const Duration(milliseconds: 250));
           if (!mounted) return;
-          context.go('/login');
+          _safeGo('/login');
           _loading = false;
           return;
         }
@@ -122,14 +151,15 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                 .read(authProvider.notifier)
                 .loginOfflineWithCache();
             if (!loaded) {
-              context.go('/login');
+              if (!mounted) return;
+              _safeGo('/login');
               _loading = false;
               return;
             }
             await Future.delayed(const Duration(milliseconds: 250));
             if (!mounted) return;
             debugPrint('[SPLASH] navigating to /home (offline fallback)');
-            context.go('/home');
+            _safeGo('/home');
             _loading = false;
             return;
           }
@@ -141,38 +171,74 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           });
           await Future.delayed(const Duration(milliseconds: 250));
           if (!mounted) return;
-          context.go('/login');
+          _safeGo('/login');
           _loading = false;
           return;
         }
         debugPrint('[SPLASH] silent reauth succeeded');
       }
 
-      // ── Sync ──────────────────────────────────────────────────────────────────
-      debugPrint('[SPLASH] step 2: sync (delta-first)');
+      // ── Parallel sync with HARD budget ──────────────────────────────────────
+      // Whatever happens — network hang, slow API, partial failure — the
+      // splash MUST yield to /home within the budget. Anything still running
+      // continues in the background. First run (empty DB) gets a longer
+      // budget + full refresh so essential data is actually present on home.
+      final dbRef = ref.read(localDatabaseProvider);
+      final existingOrgs = await dbRef.getOrganisations();
+      final isFirstRun = existingOrgs.isEmpty;
+      final budget = isFirstRun ? _firstRunBudget : _warmBudget;
+      debugPrint('[SPLASH] step 2: parallel sync (firstRun=$isFirstRun, budget=${budget.inSeconds}s)');
       setState(() {
-        _step = 'Синхронизация данных...';
+        _step = isFirstRun ? 'Загружаем данные' : 'Обновляем данные';
         _progress = 0.35;
       });
-      await ref
-          .read(syncProvider.notifier)
-          .pullFromRemote(includeDoctors: false, repairDoctors: false)
-          .timeout(
-            const Duration(seconds: 8),
-            onTimeout: () {
-              debugPrint('[SPLASH] quick sync timeout -> continue to app');
-            },
-          );
-      debugPrint('[SPLASH] sync done');
-      await Future.delayed(const Duration(milliseconds: 300));
+      final syncNotifier = ref.read(syncProvider.notifier);
+      // Kick off doctors concurrently — fire-and-forget, never awaited here.
+      syncNotifier.syncDoctorsInBackground();
 
-      debugPrint('[SPLASH] step 3: finalize counters');
-      setState(() {
-        _step = 'Проверка локальных данных...';
-        _progress = 0.75;
+      final budgetTimer = Stopwatch()..start();
+      // Animate progress bar from 0.35 → 0.9 over the budget so the user sees
+      // motion even when the per-step messages don't change.
+      Timer.periodic(const Duration(milliseconds: 500), (t) {
+        if (!mounted || _navigated) {
+          t.cancel();
+          return;
+        }
+        final elapsed = budgetTimer.elapsedMilliseconds /
+            budget.inMilliseconds;
+        final clamped = elapsed.clamp(0.0, 1.0);
+        setState(() {
+          _progress = 0.35 + (clamped * 0.55);
+        });
       });
-      await ref.read(syncProvider.notifier).refreshUnsyncedCount();
-      await Future.delayed(const Duration(milliseconds: 300));
+
+      final syncFuture = syncNotifier
+          .syncLayeredFromRemote(
+            pushPendingFirst: true,
+            skipDoctors: true,
+            fullRefresh: isFirstRun,
+          )
+          .catchError((Object e) {
+        debugPrint('[SPLASH] sync error: $e');
+      });
+      final deadline = Future<void>.delayed(budget);
+      final minDelay = Future<void>.delayed(const Duration(seconds: 5));
+      // Wait for (sync OR deadline) AND minimum 5s so data has time to load.
+      await Future.wait<void>([
+        Future.any<void>([syncFuture, deadline]),
+        minDelay,
+      ]);
+
+      // Best-effort prewarm with its own 5s cap — never block past the budget.
+      try {
+        await Future.wait([
+          HomeScreen.preload(dbRef),
+          VisitsHubScreen.preload(dbRef),
+        ]).timeout(const Duration(seconds: 5));
+      } catch (e) {
+        debugPrint('[SPLASH] preload skipped: $e');
+      }
+      unawaited(ref.read(syncProvider.notifier).refreshUnsyncedCount());
     } catch (e, st) {
       debugPrint('[SPLASH] ERROR: $e');
       debugPrint('[SPLASH] STACK: $st');
@@ -189,13 +255,14 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             .read(authProvider.notifier)
             .loginOfflineWithCache();
         if (!loaded) {
-          context.go('/login');
+          if (!mounted) return;
+          _safeGo('/login');
           _loading = false;
           return;
         }
         _trySilentReauthBackground();
         if (!mounted) return;
-        context.go('/home');
+        _safeGo('/home');
         _loading = false;
         return;
       }
@@ -215,24 +282,14 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     setState(() {
       _progress = 1.0;
     });
-    await Future.delayed(const Duration(milliseconds: 300));
+    await Future.delayed(const Duration(milliseconds: 200));
     debugPrint('[SPLASH] navigating to /home');
     if (!mounted) return;
-    _startBackgroundDoctorSync();
-    context.go('/home');
+    // Doctors are already running in background (kicked off above in parallel
+    // with the critical sync). Just navigate.
+    _safeGo('/home');
     debugPrint('[SPLASH] DONE');
     _loading = false;
-  }
-
-  void _startBackgroundDoctorSync() {
-    final sync = ref.read(syncProvider.notifier);
-    Future<void>.delayed(const Duration(seconds: 2), () async {
-      try {
-        await sync.pullFromRemote();
-      } catch (_) {
-        // Background sync should never block app entry.
-      }
-    });
   }
 
   Future<bool> _checkOnline() async {
@@ -263,7 +320,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   Future<void> _exitToLogin() async {
     await ref.read(authProvider.notifier).logout();
     if (!mounted) return;
-    context.go('/login');
+    _safeGo('/login');
   }
 
   @override
@@ -297,7 +354,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                     width: 100,
                     height: 100,
                   ),
-                  const SizedBox(height: 16),
                   Text(
                     'LIMA',
                     style: GoogleFonts.figtree(
@@ -323,16 +379,64 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Text(
-                    _step,
-                    style: TextStyle(
+                  Builder(builder: (context) {
+                    final baseStyle = TextStyle(
                       color: Colors.white.withValues(alpha: 0.7),
                       fontSize: 12,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
+                    );
+                    if (_canRetry) {
+                      return Text(
+                        _step,
+                        style: baseStyle,
+                        textAlign: TextAlign.center,
+                      );
+                    }
+                    final syncMsg = ref.watch(syncProvider).message;
+                    final base = (_loading &&
+                            syncMsg != null &&
+                            syncMsg.isNotEmpty)
+                        ? syncMsg.replaceFirst(RegExp(r'[.…]+\s*$'), '')
+                        : _step.replaceFirst(RegExp(r'[.…]+\s*$'), '');
+                    // Reserve space for 3 dots so the centered text doesn't
+                    // shift left/right as dots animate. Hidden dots are
+                    // rendered transparent.
+                    final visible = _loading ? _dotCount : 0;
+                    return RichText(
+                      textAlign: TextAlign.center,
+                      text: TextSpan(
+                        style: baseStyle,
+                        children: [
+                          TextSpan(text: base),
+                          TextSpan(
+                            text: '.',
+                            style: TextStyle(
+                              color: visible >= 1
+                                  ? baseStyle.color
+                                  : Colors.transparent,
+                            ),
+                          ),
+                          TextSpan(
+                            text: '.',
+                            style: TextStyle(
+                              color: visible >= 2
+                                  ? baseStyle.color
+                                  : Colors.transparent,
+                            ),
+                          ),
+                          TextSpan(
+                            text: '.',
+                            style: TextStyle(
+                              color: visible >= 3
+                                  ? baseStyle.color
+                                  : Colors.transparent,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
                   if (_canRetry) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 8),
                     ElevatedButton(
                       onPressed: _load,
                       style: ElevatedButton.styleFrom(

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/dialogs/payment_type_dialog.dart';
+import 'package:lima/core/network/remote_api_service.dart';
+import 'package:lima/features/auth/providers/auth_provider.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/app_widgets.dart';
 
-class PharmacyTypeScreen extends StatelessWidget {
+class PharmacyTypeScreen extends ConsumerWidget {
   final int pharmacyId;
   final String pharmacyName;
 
@@ -16,7 +19,7 @@ class PharmacyTypeScreen extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
       body: Column(
@@ -27,7 +30,11 @@ class PharmacyTypeScreen extends StatelessWidget {
               boxShadow: shadowSm,
             ),
             padding: EdgeInsets.fromLTRB(
-                12, MediaQuery.of(context).padding.top + 8, 12, 10),
+              12,
+              MediaQuery.of(context).padding.top + 8,
+              12,
+              10,
+            ),
             child: Row(
               children: [
                 AppTapScale(
@@ -44,8 +51,11 @@ class PharmacyTypeScreen extends StatelessWidget {
                       ).toString(),
                     );
                   },
-                  child: const Icon(Icons.arrow_back_rounded,
-                      color: AppColors.primaryText, size: 22),
+                  child: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: AppColors.primaryText,
+                    size: 22,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -96,7 +106,20 @@ class PharmacyTypeScreen extends StatelessWidget {
                   bgColor: AppColors.iconBgBlue,
                   iconColor: AppColors.primary,
                   onTap: () async {
-                    final payment = await showPaymentTypeDialog(context);
+                    var allowWholesale = true;
+                    try {
+                      final companyId = ref.read(authProvider).user?.companyId;
+                      allowWholesale = await ref
+                          .read(remoteApiServiceProvider)
+                          .supportsWholesaleOrders(companyId: companyId);
+                    } catch (_) {
+                      allowWholesale = true;
+                    }
+                    if (!context.mounted) return;
+                    final payment = await showPaymentTypeDialog(
+                      context,
+                      allowWholesale: allowWholesale,
+                    );
                     if (payment == null || !context.mounted) return;
                     context.push(
                       Uri(
@@ -221,8 +244,11 @@ class _VisitTypeCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.chevron_right_rounded,
-                color: AppColors.hintText, size: 20),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: AppColors.hintText,
+              size: 20,
+            ),
           ],
         ),
       ),

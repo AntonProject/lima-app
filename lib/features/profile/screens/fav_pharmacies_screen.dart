@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
+import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
@@ -20,6 +21,7 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
   String _query = '';
   bool _loading = true;
   List<Map<String, dynamic>> _pharmacies = [];
+  DateTime? _lastSyncSeenAt;
 
   @override
   void initState() {
@@ -39,6 +41,18 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<SyncState>(syncProvider, (prev, next) {
+      final nextAt = next.lastSyncAt;
+      if (nextAt == null) return;
+      if (_lastSyncSeenAt != null &&
+          nextAt.millisecondsSinceEpoch ==
+              _lastSyncSeenAt!.millisecondsSinceEpoch) {
+        return;
+      }
+      _lastSyncSeenAt = nextAt;
+      if (mounted) _load();
+    });
+
     final filtered = _pharmacies.where((pharmacy) {
       final query = _query.toLowerCase();
       if (query.isEmpty) return true;

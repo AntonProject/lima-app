@@ -37,13 +37,15 @@
 
 ### Справочники / seed
 - `GET /api/dict/Organizations` (`region_id` передаётся для МП с привязкой к региону)
-- `GET /api/dict/Doctors` — справочник пагинируется сервером (`page_size=30`), поэтому full seed проходит страницы и затем фильтрует врачей по связям организаций региона
+- `GET /dict/doctors/sync?sync_id={cursor}&batch_size=1000` — основной sync справочника врачей пачками по `sync_id`
+- `GET /api/dict/Doctors` — fallback справочника врачей, пагинируется сервером (`page_size=30`)
 - `GET /api/dict/Drugs`
 - `GET /api/Documents/by-drug/{id}`
 
 ### Визиты
 - `GET /api/Visits/history`
 - `POST /api/Visits/add` (fallback: `/Visits/add`, `/visits/add`)
+- `GET /api/Company/markups` — подбор `margin_id` для выбранной предоплаты/типа покупателя
 - `PUT /api/Visits/{visitId}` (fallback `/Visits/{visitId}`)
 - `POST /Visits/rating` (fallback `/api/Visits/rating`)
 - `GET /api/Visits/plans/current`
@@ -75,7 +77,7 @@
   - `DELETE /organizations/favorites/{id}` (+ fallbacks)
 
 ### Delta sync endpoints
-- `GET /Doctors/sync` (fallback `/api/Doctors/sync`)
+- `GET /dict/doctors/sync` (`batch_size=1000`, cursor `sync_id`; fallback `/dict/Doctors/sync`, `/Doctors/sync`, `/api/Doctors/sync`)
 - `GET /Doctors/relations/sync` (fallback `/api/dict/Doctors/relations/sync`) — связь врачей с организациями
 - `GET /Organizations/sync` (fallback `/api/Organizations/sync`, `region_id` передаётся для МП с привязкой к региону)
 - `GET /Drugs/sync` (fallback `/api/Drugs/sync`)
@@ -84,6 +86,8 @@
 
 ### 4.1 Pull (данные с сервера -> локальная БД)
 Реализация: `SyncNotifier.pullFromRemote()`
+
+Перед любой ручной загрузкой приложение сначала пытается отправить локальную очередь `is_synced = 0`. Если очередь не отправилась, загрузка справочников откладывается, чтобы не маскировать ошибку локальных записей долгим pull.
 
 1. Если `fullRefresh == false`:
 - пытаемся дельту (`/Organizations/sync`, `/Doctors/sync`, `/Drugs/sync`)
@@ -95,7 +99,9 @@
 - выполняется full seed:
   - справочники + материалы + история визитов
   - организации запрашиваются с `region_id` текущего МП; связи врач-организация берутся из `/Doctors/relations/sync`, справочник врачей читается постранично, затем врачи фильтруются по связям организаций этого региона
-  - запись в локальную БД
+  - серверный срез в локальной БД заменяется свежим с сохранением локальных `is_synced = 0` визитов
+  - легкий sync с `includeDoctors=false` не очищает локальные `doctors` и `doctor_organisations`
+  - `sync_meta.last_sync_id` выставляется в максимум `sync_id` из свежих организаций/врачей/связей/препаратов, чтобы следующая дельта не начиналась с нуля
 
 3. Если `fullRefresh == true`:
 - `replaceRemoteSnapshotPreservingUnsynced()`:
@@ -109,7 +115,9 @@
 Реализация: `SyncNotifier.pushToRemote()`
 
 - Берутся `visits where is_synced = 0`
-- Каждый визит отправляется отдельно через `pushUnsyncedVisit()`
+- Каждый визит отправляется отдельно через `pushUnsyncedVisit()`: ЛПУ, бронь аптеки, остатки и фармкружки идут в `Visits/add`.
+- Для брони аптеки мобильное приложение повторяет web-контракт: условия заказа кодируются через `margin_id`, `payment_variant_id`, `is_wholesaler` и рассчитанный `sale_price`, без отдельного `prepayment_percent` в payload.
+- Для снятия остатков используется Swagger-контракт `VisitRequest`: `visit_type = 4`, позиции передаются в `drugs` как `DrugRequest[]`; локальное поле `stock_items` хранится только для отображения истории.
 - Успешные помечаются `is_synced=1`
 - Ошибки по отдельным визитам не валят весь пакет
 - Статус содержит: сколько отправлено, сколько ошибок, первая ошибка

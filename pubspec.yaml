@@ -54,14 +54,26 @@ dependencies:
   cupertino_icons: ^1.0.8
   package_info_plus: ^9.0.1
   video_player: ^2.11.1
+  workmanager: ^0.9.0+3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
   assets:
     - assets/images/
     - assets/docs/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  image_path: "assets/images/logo.png"
+  # Adaptive icon for Android (foreground logo over solid background)
+  adaptive_icon_background: "#417DF7"
+  adaptive_icon_foreground: "assets/images/logo.png"
+  min_sdk_android: 21

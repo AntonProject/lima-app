@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/dialogs/payment_type_dialog.dart';
+import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/services/specification_export_service.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
+import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/features/visits/models/history_records.dart';
 
 Future<void> showVisitDetailDialog(
@@ -21,30 +24,52 @@ Future<void> showVisitDetailDialog(
   );
 }
 
-class _VisitDetailSheet extends StatefulWidget {
+class _VisitDetailSheet extends ConsumerStatefulWidget {
   final HistoryVisitRecord visit;
 
   const _VisitDetailSheet({required this.visit});
 
   @override
-  State<_VisitDetailSheet> createState() => _VisitDetailSheetState();
+  ConsumerState<_VisitDetailSheet> createState() => _VisitDetailSheetState();
 }
 
-class _VisitDetailSheetState extends State<_VisitDetailSheet> {
+class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
   late int _prepayment;
   late int _buyerType;
+  bool _allowWholesale = true;
   final _specExport = SpecificationExportService();
 
   HistoryVisitRecord get visit => widget.visit;
   bool get _isPharmacy => visit.type == 'pharmacy';
   bool get _isStock => visit.type == 'stock';
   bool get _isCircle => visit.type == 'pharmacy' && visit.subType == 'circle';
+  String _visitTitle(String base) =>
+      visit.hasServerId ? '$base №${visit.id}' : base;
 
   @override
   void initState() {
     super.initState();
     _prepayment = visit.prepaymentPercent ?? 100;
     _buyerType = visit.buyerType ?? 0;
+    // Same check as creation path (pharmacy_type_screen.dart): if the company
+    // has no wholesale markup, the "Опт" button must stay locked during edit.
+    if (_isPharmacy && !_isStock && !_isCircle) {
+      _loadWholesaleSupport();
+    }
+  }
+
+  Future<void> _loadWholesaleSupport() async {
+    try {
+      final companyId = ref.read(authProvider).user?.companyId;
+      final supported = await ref
+          .read(remoteApiServiceProvider)
+          .supportsWholesaleOrders(companyId: companyId);
+      if (!mounted) return;
+      setState(() => _allowWholesale = supported);
+    } catch (_) {
+      // On error, fall back to permissive (matches creation path behavior).
+      if (mounted) setState(() => _allowWholesale = true);
+    }
   }
 
   @override
@@ -66,15 +91,17 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
               : _isPharmacy
               ? _buildPharmacyOrder(context)
               : _isStock
-                  ? _buildStockVisit(context)
-                  : _buildDefault(context),
+              ? _buildStockVisit(context)
+              : _buildDefault(context),
         ),
       ),
     );
   }
 
   Widget _buildStockVisit(BuildContext context) {
-    final firstItem = visit.stockItems.isEmpty ? visit.drug : visit.stockItems.first;
+    final firstItem = visit.stockItems.isEmpty
+        ? visit.drug
+        : visit.stockItems.first;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -100,7 +127,7 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 runSpacing: 6,
                 children: [
                   Text(
-                    'Остаток №${visit.id}',
+                    _visitTitle('Остаток'),
                     style: GoogleFonts.manrope(
                       fontSize: 18,
                       height: 1,
@@ -125,7 +152,11 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                   color: AppColors.primaryBg,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.close_rounded, color: AppColors.secondaryText, size: 20),
+                child: const Icon(
+                  Icons.close_rounded,
+                  color: AppColors.secondaryText,
+                  size: 20,
+                ),
               ),
             ),
           ],
@@ -167,7 +198,9 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        firstItem is HistoryStockItemRecord ? firstItem.name : firstItem.toString(),
+                        firstItem is HistoryStockItemRecord
+                            ? firstItem.name
+                            : firstItem.toString(),
                         style: GoogleFonts.manrope(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
@@ -177,12 +210,18 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                       const SizedBox(height: 4),
                       RichText(
                         text: TextSpan(
-                          style: GoogleFonts.manrope(fontSize: 14, color: AppColors.secondaryText),
+                          style: GoogleFonts.manrope(
+                            fontSize: 14,
+                            color: AppColors.secondaryText,
+                          ),
                           children: [
                             const TextSpan(text: 'Количество: '),
                             TextSpan(
-                              text: '${firstItem is HistoryStockItemRecord ? firstItem.quantity : visit.quantity}',
-                              style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                              text:
+                                  '${firstItem is HistoryStockItemRecord ? firstItem.quantity : visit.quantity}',
+                              style: GoogleFonts.manrope(
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                             const TextSpan(text: ' шт'),
                           ],
@@ -191,7 +230,10 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                       const SizedBox(height: 2),
                       Text(
                         'Серийный номер: ${firstItem is HistoryStockItemRecord ? firstItem.serialNumber : (visit.serialNumber.isEmpty ? '—' : visit.serialNumber)}',
-                        style: GoogleFonts.manrope(fontSize: 14, color: AppColors.secondaryText),
+                        style: GoogleFonts.manrope(
+                          fontSize: 14,
+                          color: AppColors.secondaryText,
+                        ),
                       ),
                     ],
                   ),
@@ -201,7 +243,12 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Expanded(child: _kvCard(title: 'Дата визита', value: visit.dateTime)),
+                    Expanded(
+                      child: _kvCard(
+                        title: 'Дата визита',
+                        value: visit.dateTime,
+                      ),
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: _statusCard(
@@ -223,9 +270,17 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
           onPressed: () => Navigator.pop(context),
           style: ElevatedButton.styleFrom(
             minimumSize: const Size(double.infinity, 52),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
           ),
-          child: Text('Закрыть', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600)),
+          child: Text(
+            'Закрыть',
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
       ],
     );
@@ -257,7 +312,7 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 runSpacing: 6,
                 children: [
                   Text(
-                    'Визит №${visit.id}',
+                    _visitTitle('Визит'),
                     style: GoogleFonts.manrope(
                       fontSize: 18,
                       height: 1,
@@ -282,7 +337,11 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                   color: AppColors.primaryBg,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.close_rounded, color: AppColors.secondaryText, size: 20),
+                child: const Icon(
+                  Icons.close_rounded,
+                  color: AppColors.secondaryText,
+                  size: 20,
+                ),
               ),
             ),
           ],
@@ -301,7 +360,9 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
           title: 'Фармацевты',
           value: visit.pharmacistsFio == '—' ? '—' : visit.pharmacistsFio,
           icon: Icons.groups_2_rounded,
-          trailing: visit.participantsCount > 0 ? '${visit.participantsCount} чел.' : null,
+          trailing: visit.participantsCount > 0
+              ? '${visit.participantsCount} чел.'
+              : null,
         ),
         const SizedBox(height: 8),
         _softInfo(
@@ -323,7 +384,10 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 Center(
                   child: Text(
                     'Нет данных о презентациях',
-                    style: GoogleFonts.manrope(fontSize: 14, color: AppColors.hintText),
+                    style: GoogleFonts.manrope(
+                      fontSize: 14,
+                      color: AppColors.hintText,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 18),
@@ -331,7 +395,12 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Expanded(child: _kvCard(title: 'Дата визита', value: visit.dateTime)),
+                    Expanded(
+                      child: _kvCard(
+                        title: 'Дата визита',
+                        value: visit.dateTime,
+                      ),
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: _statusCard(
@@ -353,9 +422,17 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
           onPressed: () => Navigator.pop(context),
           style: ElevatedButton.styleFrom(
             minimumSize: const Size(double.infinity, 52),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
           ),
-          child: Text('Закрыть', style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w600)),
+          child: Text(
+            'Закрыть',
+            style: GoogleFonts.manrope(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
       ],
     );
@@ -389,7 +466,7 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 runSpacing: 6,
                 children: [
                   Text(
-                    'Заказ №${visit.id}',
+                    _visitTitle('Заказ'),
                     style: GoogleFonts.manrope(
                       fontSize: 18,
                       height: 1,
@@ -414,7 +491,11 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                   color: AppColors.primaryBg,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.close_rounded, color: AppColors.secondaryText, size: 20),
+                child: const Icon(
+                  Icons.close_rounded,
+                  color: AppColors.secondaryText,
+                  size: 20,
+                ),
               ),
             ),
           ],
@@ -455,15 +536,9 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
               ),
             ),
             const SizedBox(width: 8),
-            _iconAction(
-              icon: Icons.edit_outlined,
-              onTap: _editPaymentTerms,
-            ),
+            _iconAction(icon: Icons.edit_outlined, onTap: _editPaymentTerms),
             const SizedBox(width: 8),
-            _iconAction(
-              icon: Icons.star_rounded,
-              onTap: _showRatingDialog,
-            ),
+            _iconAction(icon: Icons.star_rounded, onTap: _showRatingDialog),
           ],
         ),
         const SizedBox(height: 10),
@@ -502,12 +577,17 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                           const SizedBox(height: 4),
                           RichText(
                             text: TextSpan(
-                              style: GoogleFonts.manrope(fontSize: 14, color: AppColors.secondaryText),
+                              style: GoogleFonts.manrope(
+                                fontSize: 14,
+                                color: AppColors.secondaryText,
+                              ),
                               children: [
                                 const TextSpan(text: 'Количество: '),
                                 TextSpan(
                                   text: '${item.qty}',
-                                  style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                                  style: GoogleFonts.manrope(
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                                 const TextSpan(text: ' шт'),
                               ],
@@ -516,7 +596,10 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                           const SizedBox(height: 2),
                           Text(
                             'Серийный номер: ${item.serial}',
-                            style: GoogleFonts.manrope(fontSize: 14, color: AppColors.secondaryText),
+                            style: GoogleFonts.manrope(
+                              fontSize: 14,
+                              color: AppColors.secondaryText,
+                            ),
                           ),
                           const SizedBox(height: 8),
                           Text(
@@ -537,25 +620,55 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Expanded(child: _kvCard(title: 'Сумма', value: formatUzs(total), accent: true)),
+                    Expanded(
+                      child: _kvCard(
+                        title: 'Сумма',
+                        value: formatUzs(total),
+                        accent: true,
+                      ),
+                    ),
                     const SizedBox(width: 8),
-                    Expanded(child: _kvCard(title: 'Предоплата', value: '$_prepayment%')),
+                    Expanded(
+                      child: _kvCard(
+                        title: 'Предоплата',
+                        value: '$_prepayment%',
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Expanded(child: _kvCard(title: 'Наценка', value: '${(visit.markupPercent ?? 20).toStringAsFixed(0)}%')),
+                    Expanded(
+                      child: _kvCard(
+                        title: 'Наценка',
+                        value:
+                            '${(visit.markupPercent ?? 20).toStringAsFixed(0)}%',
+                      ),
+                    ),
                     const SizedBox(width: 8),
-                    Expanded(child: _kvCard(title: 'Статус заказа', value: visit.orderStatus)),
+                    Expanded(
+                      child: _kvCard(
+                        title: 'Статус заказа',
+                        value: visit.orderStatus,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
-                _kvCard(title: 'Тип клиента', value: _buyerType == 1 ? 'Опт' : 'Розница'),
+                _kvCard(
+                  title: 'Тип клиента',
+                  value: _buyerType == 1 ? 'Опт' : 'Розница',
+                ),
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Expanded(child: _kvCard(title: 'Дата визита', value: visit.dateTime)),
+                    Expanded(
+                      child: _kvCard(
+                        title: 'Дата визита',
+                        value: visit.dateTime,
+                      ),
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: _statusCard(
@@ -594,12 +707,17 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 },
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 54),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
                 child: Text(
                   'Новый заказ в этой аптеке',
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
@@ -609,11 +727,16 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 onPressed: () => Navigator.pop(context),
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 54),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
                 child: Text(
                   'Закрыть',
-                  style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
@@ -643,7 +766,7 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
           children: [
             Expanded(
               child: Text(
-                'Визит №${visit.id}',
+                _visitTitle('Визит'),
                 style: GoogleFonts.manrope(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
@@ -653,7 +776,10 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
             ),
             IconButton(
               onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close_rounded, color: AppColors.secondaryText),
+              icon: const Icon(
+                Icons.close_rounded,
+                color: AppColors.secondaryText,
+              ),
             ),
           ],
         ),
@@ -675,12 +801,23 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
         ],
         Text(
           visit.org,
-          style: GoogleFonts.manrope(fontSize: 14, color: AppColors.secondaryText),
+          style: GoogleFonts.manrope(
+            fontSize: 14,
+            color: AppColors.secondaryText,
+          ),
         ),
         const SizedBox(height: 8),
-        _softInfo(title: 'Врач', value: visit.doctor, icon: Icons.person_outline_rounded),
+        _softInfo(
+          title: 'Врач',
+          value: visit.doctor,
+          icon: Icons.person_outline_rounded,
+        ),
         const SizedBox(height: 8),
-        _softInfo(title: 'Мед. представитель', value: visit.medicalRep, icon: Icons.person_2_outlined),
+        _softInfo(
+          title: 'Мед. представитель',
+          value: visit.medicalRep,
+          icon: Icons.person_2_outlined,
+        ),
         const SizedBox(height: 10),
         const Divider(height: 1, color: AppColors.divider),
         const SizedBox(height: 8),
@@ -718,7 +855,12 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Expanded(child: _kvCard(title: 'Дата визита', value: visit.dateTime)),
+                    Expanded(
+                      child: _kvCard(
+                        title: 'Дата визита',
+                        value: visit.dateTime,
+                      ),
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: _statusCard(
@@ -740,9 +882,17 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
           onPressed: () => Navigator.pop(context),
           style: ElevatedButton.styleFrom(
             minimumSize: const Size(double.infinity, 52),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
           ),
-          child: Text('Закрыть', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600)),
+          child: Text(
+            'Закрыть',
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
       ],
     );
@@ -773,7 +923,10 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                   ),
                   AppTapScale(
                     onTap: () => Navigator.pop(ctx),
-                    child: const Icon(Icons.close_rounded, color: AppColors.secondaryText),
+                    child: const Icon(
+                      Icons.close_rounded,
+                      color: AppColors.secondaryText,
+                    ),
                   ),
                 ],
               ),
@@ -803,9 +956,13 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                     name: visit.drug,
                     manufacturer: '',
                     quantity: visit.quantity > 0 ? visit.quantity : 1,
-                    serialNumber: visit.serialNumber.isEmpty ? '—' : visit.serialNumber,
+                    serialNumber: visit.serialNumber.isEmpty
+                        ? '—'
+                        : visit.serialNumber,
                     expiryDate: '—',
-                    basePrice: visit.orderTotal > 0 ? (visit.orderTotal / 1.2) : 0,
+                    basePrice: visit.orderTotal > 0
+                        ? (visit.orderTotal / 1.2)
+                        : 0,
                     markupPercent: visit.markupPercent ?? 20,
                   ),
                 ]
@@ -815,10 +972,13 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                         name: p.name,
                         manufacturer: p.manufacturer,
                         quantity: 1,
-                        serialNumber: visit.serialNumber.isEmpty ? '—' : visit.serialNumber,
+                        serialNumber: visit.serialNumber.isEmpty
+                            ? '—'
+                            : visit.serialNumber,
                         expiryDate: '—',
                         basePrice: visit.orderTotal > 0
-                            ? ((visit.orderTotal / visit.presentations.length) / 1.2)
+                            ? ((visit.orderTotal / visit.presentations.length) /
+                                  1.2)
                             : 0,
                         markupPercent: visit.markupPercent ?? 20,
                       ),
@@ -828,14 +988,19 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
         _specExport.export(
           context,
           data: data,
-          format: text.contains('xlsx') ? SpecificationFormat.xlsx : SpecificationFormat.png,
+          format: text.contains('xlsx')
+              ? SpecificationFormat.xlsx
+              : SpecificationFormat.png,
         );
       },
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(double.infinity, 52),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
-      child: Text(text, style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600)),
+      child: Text(
+        text,
+        style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
+      ),
     );
   }
 
@@ -922,7 +1087,12 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
               ),
             ),
             Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, MediaQuery.of(context).padding.bottom + 8),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                0,
+                16,
+                MediaQuery.of(context).padding.bottom + 8,
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -932,11 +1102,16 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                       onPressed: () => Navigator.pop(ctx),
                       style: ElevatedButton.styleFrom(
                         minimumSize: const Size(double.infinity, 44),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
                       child: Text(
                         'Закрыть',
-                        style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
+                        style: GoogleFonts.manrope(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
@@ -958,6 +1133,7 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
       builder: (_) => _EditPaymentSheet(
         initialPrepayment: _prepayment,
         initialBuyerType: _buyerType,
+        allowWholesale: _allowWholesale,
       ),
     );
     if (updated == null || !mounted) return;
@@ -1010,7 +1186,13 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText)),
+                Text(
+                  title,
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    color: AppColors.secondaryText,
+                  ),
+                ),
                 const SizedBox(height: 1),
                 Text(
                   value,
@@ -1071,10 +1253,17 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
           const SizedBox(height: 4),
           Text(
             'Производитель: $manufacturer',
-            style: GoogleFonts.manrope(fontSize: 14, color: AppColors.secondaryText),
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              color: AppColors.secondaryText,
+            ),
           ),
           const SizedBox(height: 8),
-          _chip(text: statusLabel ?? _statusLabel(visit.status), bg: Color(color.bgHex), fg: Color(color.fgHex)),
+          _chip(
+            text: statusLabel ?? _statusLabel(visit.status),
+            bg: Color(color.bgHex),
+            fg: Color(color.fgHex),
+          ),
         ],
       ),
     );
@@ -1092,14 +1281,17 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
         if (item is! Map) continue;
         final m = Map<String, dynamic>.from(item);
         final name = '${m['drug_name'] ?? m['name'] ?? '—'}';
-        final qty = (m['package'] as num?)?.toInt() ??
+        final qty =
+            (m['package'] as num?)?.toInt() ??
             (m['quantity'] as num?)?.toInt() ??
             1;
         final serial = '${m['serial_no'] ?? m['serial_number'] ?? '—'}';
-        final direct = (m['total_sum'] as num?)?.toDouble() ??
+        final direct =
+            (m['total_sum'] as num?)?.toDouble() ??
             (m['sum'] as num?)?.toDouble() ??
             (m['amount'] as num?)?.toDouble();
-        final salePrice = (m['sale_price'] as num?)?.toDouble() ??
+        final salePrice =
+            (m['sale_price'] as num?)?.toDouble() ??
             (m['price'] as num?)?.toDouble() ??
             0;
         final sum = direct ?? (salePrice * qty);
@@ -1118,7 +1310,9 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
               name: e.name,
               qty: e.quantity,
               serial: e.serialNumber.isEmpty ? '—' : e.serialNumber,
-              sum: visit.orderTotal > 0 ? (visit.orderTotal / visit.stockItems.length) : 0,
+              sum: visit.orderTotal > 0
+                  ? (visit.orderTotal / visit.stockItems.length)
+                  : 0,
             ),
           )
           .toList();
@@ -1147,7 +1341,13 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText)),
+          Text(
+            title,
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              color: AppColors.secondaryText,
+            ),
+          ),
           const SizedBox(height: 3),
           Text(
             value,
@@ -1176,7 +1376,13 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText)),
+          Text(
+            title,
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              color: AppColors.secondaryText,
+            ),
+          ),
           const SizedBox(height: 6),
           _chip(text: label, bg: Color(color.bgHex), fg: Color(color.fgHex)),
         ],
@@ -1184,17 +1390,20 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
     );
   }
 
-  Widget _chip({
-    required String text,
-    required Color bg,
-    required Color fg,
-  }) {
+  Widget _chip({required String text, required Color bg, required Color fg}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Text(
         text,
-        style: GoogleFonts.manrope(fontSize: 13, color: fg, fontWeight: FontWeight.w600),
+        style: GoogleFonts.manrope(
+          fontSize: 13,
+          color: fg,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -1224,7 +1433,10 @@ class _VisitDetailSheetState extends State<_VisitDetailSheet> {
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w500),
+                style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
           ],
@@ -1280,10 +1492,12 @@ class _OrderItemVm {
 class _EditPaymentSheet extends StatefulWidget {
   final int initialPrepayment;
   final int initialBuyerType;
+  final bool allowWholesale;
 
   const _EditPaymentSheet({
     required this.initialPrepayment,
     required this.initialBuyerType,
+    this.allowWholesale = true,
   });
 
   @override
@@ -1298,12 +1512,20 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
   void initState() {
     super.initState();
     _prepayment = widget.initialPrepayment;
-    _buyerType = widget.initialBuyerType;
+    // If wholesale is locked but the saved value is "Опт", normalize to retail
+    // so the visible selection matches what the user is actually allowed to
+    // submit.
+    _buyerType =
+        (!widget.allowWholesale && widget.initialBuyerType == 1)
+            ? 0
+            : widget.initialBuyerType;
   }
 
   @override
   Widget build(BuildContext context) {
-    final changed = _prepayment != widget.initialPrepayment || _buyerType != widget.initialBuyerType;
+    final changed =
+        _prepayment != widget.initialPrepayment ||
+        _buyerType != widget.initialBuyerType;
     final canContinue = changed;
     return Container(
       decoration: const BoxDecoration(
@@ -1341,7 +1563,10 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
                     color: AppColors.primaryBg,
                     borderRadius: BorderRadius.circular(18),
                   ),
-                  child: const Icon(Icons.close_rounded, color: AppColors.secondaryText),
+                  child: const Icon(
+                    Icons.close_rounded,
+                    color: AppColors.secondaryText,
+                  ),
                 ),
               ),
             ],
@@ -1349,17 +1574,37 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
           const SizedBox(height: 12),
           const Divider(height: 1, color: AppColors.divider),
           const SizedBox(height: 12),
-          Text('Предоплаты', style: GoogleFonts.manrope(fontSize: 14, color: AppColors.secondaryText)),
+          Text(
+            'Предоплаты',
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              color: AppColors.secondaryText,
+            ),
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
-              _paymentToggle(text: '100%', active: _prepayment == 100, onTap: () => setState(() => _prepayment = 100)),
+              _paymentToggle(
+                text: '100%',
+                active: _prepayment == 100,
+                onTap: () => setState(() => _prepayment = 100),
+              ),
               const SizedBox(width: 8),
-              _paymentToggle(text: '0%', active: _prepayment == 0, onTap: () => setState(() => _prepayment = 0)),
+              _paymentToggle(
+                text: '0%',
+                active: _prepayment == 0,
+                onTap: () => setState(() => _prepayment = 0),
+              ),
             ],
           ),
           const SizedBox(height: 14),
-          Text('Тип клиента', style: GoogleFonts.manrope(fontSize: 14, color: AppColors.secondaryText)),
+          Text(
+            'Тип клиента',
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              color: AppColors.secondaryText,
+            ),
+          ),
           const SizedBox(height: 8),
           Container(
             decoration: BoxDecoration(
@@ -1381,27 +1626,48 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
                   child: _clientTypeBtn(
                     text: 'Опт',
                     active: _buyerType == 1,
-                    onTap: () => setState(() => _buyerType = 1),
+                    enabled: widget.allowWholesale,
+                    onTap: widget.allowWholesale
+                        ? () => setState(() => _buyerType = 1)
+                        : () {},
                   ),
                 ),
               ],
             ),
           ),
+          if (!widget.allowWholesale) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Оптовый тип покупателя недоступен для вашей компании',
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                color: AppColors.hintText,
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           ElevatedButton(
             onPressed: canContinue
                 ? () => Navigator.pop(
-                      context,
-                      PaymentTermsSelection(prepayment: _prepayment, buyerType: _buyerType),
-                    )
+                    context,
+                    PaymentTermsSelection(
+                      prepayment: _prepayment,
+                      buyerType: _buyerType,
+                    ),
+                  )
                 : null,
             style: ElevatedButton.styleFrom(
               minimumSize: const Size(double.infinity, 48),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             child: Text(
               'Продолжить',
-              style: GoogleFonts.manrope(fontSize: 16, fontWeight: FontWeight.w600),
+              style: GoogleFonts.manrope(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -1421,7 +1687,9 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
         decoration: BoxDecoration(
           color: active ? Colors.white : AppColors.primaryBg,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: active ? AppColors.primary : Colors.transparent),
+          border: Border.all(
+            color: active ? AppColors.primary : Colors.transparent,
+          ),
         ),
         child: Text(
           text,
@@ -1439,23 +1707,29 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
     required String text,
     required bool active,
     required VoidCallback onTap,
+    bool enabled = true,
   }) {
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: active ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: active ? AppColors.primary : Colors.transparent),
-        ),
-        child: Center(
-          child: Text(
-            text,
-            style: GoogleFonts.manrope(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: active ? AppColors.primary : AppColors.secondaryText,
+      onTap: enabled ? onTap : null,
+      child: Opacity(
+        opacity: enabled ? 1 : 0.5,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: active ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: active ? AppColors.primary : Colors.transparent,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              text,
+              style: GoogleFonts.manrope(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: active ? AppColors.primary : AppColors.secondaryText,
+              ),
             ),
           ),
         ),
@@ -1554,7 +1828,9 @@ class _OrderRatingSheetState extends State<_OrderRatingSheet> {
                       TextField(
                         controller: _commentCtrl,
                         maxLines: 3,
-                        decoration: const InputDecoration(hintText: 'Комментарий'),
+                        decoration: const InputDecoration(
+                          hintText: 'Комментарий',
+                        ),
                       ),
                     ],
                   ),
@@ -1564,7 +1840,12 @@ class _OrderRatingSheetState extends State<_OrderRatingSheet> {
                 decoration: const BoxDecoration(
                   border: Border(top: BorderSide(color: AppColors.divider)),
                 ),
-                padding: EdgeInsets.fromLTRB(16, 12, 16, MediaQuery.of(context).padding.bottom + 8),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  MediaQuery.of(context).padding.bottom + 8,
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
@@ -1574,11 +1855,16 @@ class _OrderRatingSheetState extends State<_OrderRatingSheet> {
                         onPressed: () => Navigator.pop(context),
                         style: ElevatedButton.styleFrom(
                           minimumSize: const Size(double.infinity, 48),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                         child: Text(
                           'Сохранить',
-                          style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
+                          style: GoogleFonts.manrope(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
@@ -1616,10 +1902,10 @@ class _OrderRatingSheetState extends State<_OrderRatingSheet> {
             final color = !selected
                 ? const Color(0xFFD7DAE0)
                 : value <= 2
-                    ? const Color(0xFFE05050)
-                    : value <= 4
-                        ? const Color(0xFFE3A335)
-                        : const Color(0xFF2AA65A);
+                ? const Color(0xFFE05050)
+                : value <= 4
+                ? const Color(0xFFE3A335)
+                : const Color(0xFF2AA65A);
             return GestureDetector(
               onTap: () => onChanged(i + 1),
               child: Padding(

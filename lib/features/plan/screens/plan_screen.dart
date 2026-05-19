@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,9 +9,12 @@ import 'package:table_calendar/table_calendar.dart';
 
 import '../../../core/db/local_database.dart';
 import '../../../core/models/models.dart';
+import '../../../core/network/remote_api_service.dart';
+import '../../../core/providers/sync_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import '../../../core/dialogs/visit_detail_dialog.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../../visits/models/history_records.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
@@ -42,8 +47,10 @@ class PlannedVisitsNotifier extends StateNotifier<List<PlannedVisit>> {
           doctorName: (row['doctor_name'] as String?)?.isNotEmpty == true ? row['doctor_name'] as String : null,
           assignedBy: row['assigned_by'] as String? ?? '',
           city: row['city'] as String?,
+          district: row['district'] as String?,
           date: visitDate,
           status: VisitStatus.planned,
+          visitFormat: row['visit_format'] as String?,
         );
       }
     } catch (_) {}
@@ -121,30 +128,37 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
       ? focused.subtract(Duration(days: focused.weekday - 1))
       : DateTime(focused.year, focused.month, 1);
 
-  List<PlannedVisit> _visitsForDay(
-    List<PlannedVisit> all,
-    DateTime day,
-  ) {
-    final key = DateTime(day.year, day.month, day.day);
-    return all.where((v) {
-      final vKey = DateTime(v.date.year, v.date.month, v.date.day);
-      return vKey == key;
-    }).toList();
-  }
-
   // Convert a PlannedVisit → HistoryVisitRecord for the shared card / dialog
   HistoryVisitRecord _toHistoryRecord(PlannedVisit v) {
     final dd = v.date.day.toString().padLeft(2, '0');
     final mm = v.date.month.toString().padLeft(2, '0');
     final yyyy = v.date.year.toString();
+    final isPharmacy = v.organisationType == OrgType.pharmacy;
+    // Map visit_format → (type, subType) for the detail dialog
+    final String type;
+    final String subType;
+    switch (v.visitFormat) {
+      case 'circle':
+        type = 'pharmacy'; subType = 'circle';
+      case 'double':
+        type = 'lpu'; subType = 'lpu';
+      case 'group':
+      case 'group_double':
+        type = 'lpu'; subType = 'group';
+      case 'stock':
+        type = 'pharmacy'; subType = 'stock';
+      default:
+        type = isPharmacy ? 'pharmacy' : 'lpu';
+        subType = isPharmacy ? 'order' : 'lpu';
+    }
     return HistoryVisitRecord(
       id: '${v.id}',
       orgId: v.organisationId,
       org: v.organisationName,
       date: '$dd.$mm.$yyyy',
       dateTime: '$dd.$mm.$yyyy',
-      type: v.organisationType == OrgType.pharmacy ? 'pharmacy' : 'lpu',
-      subType: v.organisationType == OrgType.pharmacy ? 'order' : 'lpu',
+      type: type,
+      subType: subType,
       doctor: v.doctorName ?? '—',
       medicalRep: v.assignedBy,
       status: v.status == VisitStatus.completed ? 'completed' : 'planned',
@@ -152,9 +166,17 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
   }
 
   Future<void> _openVisitDetail(PlannedVisit v) async {
-    final record = _toHistoryRecord(v);
-    if (!mounted) return;
-    await showVisitDetailDialog(context, visit: record);
+    try {
+      final record = _toHistoryRecord(v);
+      if (!mounted) return;
+      await showVisitDetailDialog(context, visit: record);
+    } catch (e, st) {
+      debugPrint('Plan: openVisitDetail failed: $e\n$st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось открыть визит: $e')),
+      );
+    }
   }
 
   @override
@@ -168,7 +190,12 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
       eventMap.putIfAbsent(key, () => []).add(v);
     }
 
-    final selectedVisits = _visitsForDay(filteredAll, _selectedDay);
+    final selectedKey = DateTime(
+      _selectedDay.year,
+      _selectedDay.month,
+      _selectedDay.day,
+    );
+    final selectedVisits = eventMap[selectedKey] ?? const <PlannedVisit>[];
 
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
@@ -282,9 +309,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                       lastDay: DateTime.utc(2030, 12, 31),
                       focusedDay: _focusedDay,
                       calendarFormat: _calendarFormat,
-                      selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
                       eventLoader: (d) =>
-                          _visitsForDay(filteredAll, d),
+                          eventMap[DateTime(d.year, d.month, d.day)] ??
+                          const <PlannedVisit>[],
                       startingDayOfWeek: StartingDayOfWeek.monday,
                       headerStyle: const HeaderStyle(
                         formatButtonVisible: false,
@@ -298,44 +325,87 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                         dowBuilder: (context, day) => Center(
                           child: Text(
                             _weekdayLabel(day),
-                            style: GoogleFonts.manrope(
+                            style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
-                              color: const Color(0xFF95A3BA),
+                              color: Color(0xFF95A3BA),
                             ),
                           ),
                         ),
+                        defaultBuilder: (context, day, focusedDay) {
+                          final isSelected = isSameDay(day, _selectedDay);
+                          return _DayCell(
+                            day: day.day,
+                            bg: isSelected
+                                ? AppColors.primary
+                                : Colors.transparent,
+                            fg: isSelected
+                                ? Colors.white
+                                : AppColors.primaryText,
+                            bold: isSelected,
+                          );
+                        },
+                        todayBuilder: (context, day, focusedDay) {
+                          final isSelected = isSameDay(day, _selectedDay);
+                          return _DayCell(
+                            day: day.day,
+                            bg: isSelected
+                                ? AppColors.primary
+                                : Colors.transparent,
+                            fg: isSelected
+                                ? Colors.white
+                                : AppColors.primaryText,
+                            bold: isSelected,
+                          );
+                        },
+                        outsideBuilder: (context, day, focusedDay) {
+                          final isSelected = isSameDay(day, _selectedDay);
+                          return _DayCell(
+                            day: day.day,
+                            bg: isSelected
+                                ? AppColors.primary
+                                : Colors.transparent,
+                            fg: isSelected
+                                ? Colors.white
+                                : AppColors.hintText,
+                            bold: isSelected,
+                          );
+                        },
+                        markerBuilder: (context, day, events) {
+                          if (events.isEmpty) return null;
+                          return Positioned(
+                            bottom: 2,
+                            child: Container(
+                              width: 16,
+                              height: 16,
+                              decoration: const BoxDecoration(
+                                color: AppColors.success,
+                                shape: BoxShape.circle,
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                '${events.length}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                       daysOfWeekHeight: 26,
                       daysOfWeekStyle: const DaysOfWeekStyle(
                         weekendStyle: TextStyle(color: Color(0xFF95A3BA)),
                         weekdayStyle: TextStyle(color: Color(0xFF95A3BA)),
                       ),
-                      calendarStyle: CalendarStyle(
-                        selectedDecoration: BoxDecoration(
-                          color: AppColors.primary,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        selectedTextStyle:
-                            const TextStyle(color: Colors.white),
-                        todayDecoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        todayTextStyle: const TextStyle(
-                          color: AppColors.primaryText,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        markerDecoration: const BoxDecoration(
-                          color: AppColors.success,
-                          shape: BoxShape.circle,
-                        ),
+                      calendarStyle: const CalendarStyle(
+                        markersAlignment: Alignment.bottomCenter,
                       ),
-                      onDaySelected: (selected, focused) {
-                        setState(() {
-                          _selectedDay = selected;
-                          _focusedDay = focused;
-                        });
+                      onDaySelected: (selected, _) {
+                        setState(() => _selectedDay = selected);
                       },
                     ),
                   ],
@@ -345,13 +415,13 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
               // ── List ───────────────────────────────────────────────────────
               Expanded(
                 child: selectedVisits.isEmpty
-                    ? Column(
-                        children: [
-                          const SizedBox(height: 18),
-                          Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 16),
-                            child: Align(
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const SizedBox(height: 18),
+                            Align(
                               alignment: Alignment.centerLeft,
                               child: Text(
                                 _visitsTitle(),
@@ -362,21 +432,22 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                                 ),
                               ),
                             ),
-                          ),
-                          const Spacer(),
-                          const EmptyState(
-                            icon: Icons.calendar_month_rounded,
-                            title: 'На эту дату визитов нет',
-                          ),
-                          const Spacer(),
-                        ],
+                            const Expanded(
+                              child: Center(
+                                child: EmptyState(
+                                  icon: Icons.calendar_month_rounded,
+                                  title: 'На эту дату визитов нет',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       )
                     : ListView.builder(
                         padding: EdgeInsets.fromLTRB(
                           16,
                           18,
                           16,
-                          // extra room for the sticky "+ создать визит" button
                           LimaNavBarLayout.scrollBottomPadding(context) + 64,
                         ),
                         itemCount: selectedVisits.length + 1,
@@ -398,9 +469,8 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                             );
                           }
                           final v = selectedVisits[i - 1];
-                          final record = _toHistoryRecord(v);
                           return _PlanVisitCard(
-                            record: record,
+                            visit: v,
                             onTap: () => _openVisitDetail(v),
                           );
                         },
@@ -510,10 +580,6 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
     return _lcFirst(text);
   }
 
-  String _monthShort(int m) => _lcFirst(
-    DateFormat.MMM(_localeTag).format(DateTime(2026, m, 1)).replaceAll('.', ''),
-  );
-
   String _weekdayLabel(DateTime day) {
     var label = DateFormat.E(_localeTag).format(day).replaceAll('.', '').trim();
     if (label.length > 2) label = label.substring(0, 2);
@@ -532,11 +598,11 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
 
   String _visitsTitle() {
     final now = DateTime.now();
-    final isToday = _selectedDay.year == now.year &&
-        _selectedDay.month == now.month &&
-        _selectedDay.day == now.day;
-    if (isToday) return 'Визиты на сегодня';
-    return 'Визиты на ${_selectedDay.day} ${_monthRu(_selectedDay.month)}';
+    final today = DateTime(now.year, now.month, now.day);
+    final selected = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day);
+    if (selected == today) return 'Визиты на Сегодня';
+    final dateStr = DateFormat('d MMMM', _localeTag).format(_selectedDay);
+    return 'Визиты на $dateStr';
   }
 
   String _calendarTitle() {
@@ -545,8 +611,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
         Duration(days: _focusedDay.weekday - 1),
       );
       final end = start.add(const Duration(days: 6));
-      return '${start.day} ${_monthShort(start.month)} — '
-          '${end.day} ${_monthShort(end.month)}';
+      final fmt = DateFormat('d MMM', _localeTag);
+      return '${fmt.format(start).replaceAll('.', '')} — '
+          '${fmt.format(end).replaceAll('.', '')}';
     }
     final month = DateFormat.MMMM(_localeTag).format(
       DateTime(_focusedDay.year, _focusedDay.month, 1),
@@ -555,19 +622,43 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
   }
 }
 
-// ─── Plan visit card (same style as history screen) ───────────────────────────
+// ─── Plan visit card — matches prod web layout ─────────────────────────────
+//
+// Layout (top-to-bottom inside the left column):
+//   • Org name (bold, primary text)
+//   • Doctor names CSV (primary blue, link-like)
+//   • Executor / assigned-by (gray)
+//   • Address: "г. {city}, {district}" (light gray)
+// Right side: status pill ("Запланировано" / "Проведено") + chevron arrow.
 
 class _PlanVisitCard extends StatelessWidget {
-  final HistoryVisitRecord record;
+  final PlannedVisit visit;
   final VoidCallback onTap;
 
-  const _PlanVisitCard({required this.record, required this.onTap});
+  const _PlanVisitCard({required this.visit, required this.onTap});
+
+  String _formatAddress() {
+    final c = (visit.city ?? '').trim();
+    final d = (visit.district ?? '').trim();
+    if (c.isEmpty && d.isEmpty) return '';
+    if (c.isEmpty) return d;
+    if (d.isEmpty) return 'г. $c';
+    return 'г. $c, $d';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isStock = record.type == 'stock';
-    final isCircle = record.subType == 'circle';
-    final isPharmacy = record.type == 'pharmacy';
+    final isCompleted = visit.status == VisitStatus.completed;
+    final statusText = isCompleted ? 'Проведено' : 'Запланировано';
+    // Cream/orange palette for "Запланировано", green-ish for "Проведено".
+    final statusBg = isCompleted
+        ? const Color(0xFFE6F7EE)
+        : const Color(0xFFFCEFD9);
+    final statusFg = isCompleted
+        ? const Color(0xFF1F8A4C)
+        : const Color(0xFFB46A1B);
+    final doctorCsv = (visit.doctorName ?? '').trim();
+    final address = _formatAddress();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -582,130 +673,95 @@ class _PlanVisitCard extends StatelessWidget {
           ),
           padding: const EdgeInsets.all(14),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: isCircle
-                      ? const Color(0xFFE6F7EE)
-                      : isStock
-                      ? const Color(0xFFFEF5E6)
-                      : isPharmacy
-                          ? AppColors.iconBgGreen
-                          : AppColors.iconBgBlue,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  isCircle
-                      ? Icons.add_circle_outline_rounded
-                      : isStock
-                      ? Icons.inventory_2_rounded
-                      : isPharmacy
-                          ? Icons.local_pharmacy_rounded
-                          : Icons.home_work_rounded,
-                  color: isCircle
-                      ? const Color(0xFF34A36A)
-                      : isStock
-                      ? const Color(0xFFCC7A22)
-                      : isPharmacy
-                          ? AppColors.success
-                          : AppColors.primary,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            record.org,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.manrope(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.primaryText,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryBg,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '#${record.id}',
-                            style: GoogleFonts.manrope(
-                              fontSize: 11,
-                              color: AppColors.secondaryText,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    if (record.doctor != '—') ...[
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.person_outline_rounded,
-                            size: 13,
-                            color: AppColors.hintText,
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              record.doctor,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.manrope(
-                                fontSize: 12,
-                                color: AppColors.secondaryText,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                    ],
                     Text(
-                      record.date,
+                      visit.organisationName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.manrope(
-                        fontSize: 12,
-                        color: AppColors.hintText,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primaryText,
                       ),
                     ),
+                    const SizedBox(height: 4),
+                    Text(
+                      doctorCsv.isEmpty ? 'Врач не назначен' : doctorCsv,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        fontStyle:
+                            doctorCsv.isEmpty ? FontStyle.italic : FontStyle.normal,
+                        color: doctorCsv.isEmpty
+                            ? AppColors.hintText
+                            : AppColors.primary,
+                      ),
+                    ),
+                    if (visit.assignedBy.trim().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        visit.assignedBy,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.secondaryText,
+                        ),
+                      ),
+                    ],
+                    if (address.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        address,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.hintText,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
-              const SizedBox(width: 6),
-              // Status pill
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Color(record.statusColor.bgHex),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  record.status == 'completed' ? 'Проведён' : 'План',
-                  style: GoogleFonts.manrope(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Color(record.statusColor.fgHex),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusBg,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      statusText,
+                      style: GoogleFonts.manrope(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: statusFg,
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 28),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    size: 22,
+                    color: AppColors.hintText,
+                  ),
+                ],
               ),
             ],
           ),
@@ -717,7 +773,7 @@ class _PlanVisitCard extends StatelessWidget {
 
 // ─── Create Visit Sheet ───────────────────────────────────────────────────────
 
-class _CreateVisitSheet extends StatefulWidget {
+class _CreateVisitSheet extends ConsumerStatefulWidget {
   final LocalDatabase db;
   final DateTime selectedDay;
   final String Function(int) monthRu;
@@ -731,16 +787,28 @@ class _CreateVisitSheet extends StatefulWidget {
   });
 
   @override
-  State<_CreateVisitSheet> createState() => _CreateVisitSheetState();
+  ConsumerState<_CreateVisitSheet> createState() => _CreateVisitSheetState();
 }
 
-class _CreateVisitSheetState extends State<_CreateVisitSheet> {
+class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
   bool _isLpu = true;
+  bool _submitting = false;
   List<Map<String, dynamic>> _lpuOrgs = [];
   List<Map<String, dynamic>> _pharmacyOrgs = [];
 
+  // Visit format picker options — loaded from /api/visits/formats.
+  // Fallback defaults include all 4 known formats.
+  List<_PickerOption<String>> _lpuFormats = const [
+    _PickerOption(value: 'group', label: 'Групповая презентация'),
+    _PickerOption(value: 'double', label: 'Двойной визит'),
+    _PickerOption(value: 'group_double', label: 'Групповая презентация и двойной визит'),
+  ];
+  List<_PickerOption<String>> _pharmacyFormats = const [
+    _PickerOption(value: 'circle', label: 'Фармкружок'),
+  ];
+
   Map<String, dynamic>? _selectedOrg;
-  int? _selectedDoctorId;
+  final Set<int> _selectedDoctorIds = <int>{};
   String? _selectedForm;
   List<Map<String, dynamic>> _doctors = [];
 
@@ -750,7 +818,45 @@ class _CreateVisitSheetState extends State<_CreateVisitSheet> {
   void initState() {
     super.initState();
     _loadOrgs();
+    _loadFormats();
   }
+
+  Future<void> _loadFormats() async {
+    try {
+      final api = ref.read(remoteApiServiceProvider);
+      final formats = await api.getVisitFormats();
+      if (!mounted || formats.isEmpty) return;
+
+      final lpuOpts = <_PickerOption<String>>[];
+      final pharmOpts = <_PickerOption<String>>[];
+      for (final f in formats) {
+        final id = (f['id'] as num?)?.toInt();
+        final name = (f['name'] as String?)?.trim() ?? '';
+        if (id == null || name.isEmpty) continue;
+        final internal = _fmtIdToInternal(id);
+        if (internal == null) continue;
+        final opt = _PickerOption<String>(value: internal, label: name);
+        if (id == 1) {
+          pharmOpts.add(opt);
+        } else {
+          lpuOpts.add(opt);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        if (lpuOpts.isNotEmpty) _lpuFormats = lpuOpts;
+        if (pharmOpts.isNotEmpty) _pharmacyFormats = pharmOpts;
+      });
+    } catch (_) {}
+  }
+
+  static String? _fmtIdToInternal(int id) => switch (id) {
+    1 => 'circle',
+    2 => 'double',
+    3 => 'group',
+    4 => 'group_double',
+    _ => null,
+  };
 
   @override
   void dispose() {
@@ -782,7 +888,7 @@ class _CreateVisitSheetState extends State<_CreateVisitSheet> {
 
   bool get _canSubmit {
     if (_selectedOrg == null) return false;
-    if (_isLpu && _selectedDoctorId == null) return false;
+    if (_isLpu && _selectedDoctorIds.isEmpty) return false;
     if (_selectedForm == null) return false;
     return true;
   }
@@ -792,7 +898,7 @@ class _CreateVisitSheetState extends State<_CreateVisitSheet> {
     setState(() {
       _isLpu = isLpu;
       _selectedOrg = null;
-      _selectedDoctorId = null;
+      _selectedDoctorIds.clear();
       _selectedForm = null;
       _doctors = [];
     });
@@ -946,6 +1052,202 @@ class _CreateVisitSheetState extends State<_CreateVisitSheet> {
     return result;
   }
 
+  /// Multi-select variant of [_openPicker]. Returns the new selection set,
+  /// or `null` if the user dismissed without applying.
+  Future<List<T>?> _openMultiPicker<T>({
+    required String title,
+    required Set<T> selected,
+    required List<_PickerOption<T>> options,
+  }) async {
+    final draft = Set<T>.of(selected);
+    final result = await showModalBottomSheet<List<T>>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final maxH = MediaQuery.of(ctx).size.height * 0.55;
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return SafeArea(
+              top: false,
+              child: Container(
+                constraints: BoxConstraints(maxHeight: maxH),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                      child: Text(
+                        title,
+                        style: GoogleFonts.manrope(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primaryText,
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1, color: AppColors.divider),
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: options.length,
+                        separatorBuilder: (_, _) => const Divider(
+                          height: 1,
+                          color: AppColors.divider,
+                        ),
+                        itemBuilder: (_, i) {
+                          final item = options[i];
+                          final isSelected = draft.contains(item.value);
+                          return InkWell(
+                            onTap: () => setModalState(() {
+                              if (isSelected) {
+                                draft.remove(item.value);
+                              } else {
+                                draft.add(item.value);
+                              }
+                            }),
+                            child: Container(
+                              color: isSelected
+                                  ? const Color(0xFFF3F6FB)
+                                  : Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isSelected
+                                        ? Icons.check_box_rounded
+                                        : Icons.check_box_outline_blank_rounded,
+                                    size: 20,
+                                    color: isSelected
+                                        ? AppColors.primary
+                                        : AppColors.hintText,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      item.label,
+                                      style: GoogleFonts.manrope(
+                                        fontSize: 13,
+                                        fontWeight: isSelected
+                                            ? FontWeight.w700
+                                            : FontWeight.w600,
+                                        color: AppColors.primaryText,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const Divider(height: 1, color: AppColors.divider),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+                      child: ElevatedButton(
+                        onPressed: () =>
+                            Navigator.pop(ctx, draft.toList(growable: false)),
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 44),
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          'Готово (${draft.length})',
+                          style: GoogleFonts.manrope(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    return result;
+  }
+
+  /// Doctor multi-select field: shows chips for each selected doctor (with X
+  /// to remove inline) and opens the multi-picker on tap.
+  Widget _selectedDoctorsField({
+    required bool enabled,
+    required Future<void> Function() onTap,
+  }) {
+    final chips = _doctors
+        .where((d) => _selectedDoctorIds.contains(d['id'] as int?))
+        .map((d) {
+      final id = d['id'] as int;
+      final name = (d['full_name'] ?? '').toString();
+      return _DoctorChip(
+        label: name,
+        onRemove: () => setState(() => _selectedDoctorIds.remove(id)),
+      );
+    }).toList();
+
+    return AppTapScale(
+      pressedScale: 0.99,
+      onTap: enabled ? () => onTap() : null,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFD6DEE8), width: 0.8),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: chips.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Text(
+                        'Выберите врачей...',
+                        style: GoogleFonts.manrope(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                          color: enabled
+                              ? AppColors.hintText
+                              : AppColors.hintText.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    )
+                  : Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: chips,
+                    ),
+            ),
+            Icon(
+              Icons.expand_more_rounded,
+              size: 20,
+              color: enabled
+                  ? AppColors.hintText
+                  : AppColors.hintText.withValues(alpha: 0.6),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _selectField({
     required String hint,
     required String? value,
@@ -990,27 +1292,111 @@ class _CreateVisitSheetState extends State<_CreateVisitSheet> {
     );
   }
 
-  void _submit() {
-    if (!_canSubmit) return;
+  /// Maps the dropdown form-code to the server's visit_format_id.
+  /// Confirmed from prod network traces:
+  ///   pharmacy/circle → 1, lpu/double → 2.
+  /// lpu/group is inferred (3) and may need adjustment if server differs.
+  int? _resolveVisitFormatId() => switch (_selectedForm) {
+    'circle' => 1,
+    'double' => 2,
+    'group' => 3,
+    'group_double' => 4,
+    _ => null,
+  };
+
+  Future<void> _submit() async {
+    if (!_canSubmit || _submitting) return;
     final org = _selectedOrg!;
-    final doctor = _doctors.where((d) => d['id'] == _selectedDoctorId).firstOrNull;
+    final orgId = org['id'] as int?;
+    final visitFormatId = _resolveVisitFormatId();
+    if (orgId == null || visitFormatId == null) return;
+
+    setState(() => _submitting = true);
+
+    final selectedDoctors = _doctors
+        .where((d) => _selectedDoctorIds.contains(d['id'] as int?))
+        .toList();
+    final doctorIds = _isLpu
+        ? selectedDoctors
+            .map((d) => d['id'] as int?)
+            .whereType<int>()
+            .toList(growable: false)
+        : const <int>[];
+    final doctorNamesCsv = selectedDoctors
+        .map((d) => (d['full_name'] ?? '').toString().trim())
+        .where((s) => s.isNotEmpty)
+        .join(', ');
+    final visitDate = DateTime(
+      widget.selectedDay.year,
+      widget.selectedDay.month,
+      widget.selectedDay.day,
+      10,
+      0,
+    );
+    final userName = ref.read(authProvider).user?.fullName ?? 'Вы';
+    final comment = _commentCtrl.text.trim();
+
+    final localRow = <String, dynamic>{
+      'org_id': orgId,
+      'org_name': (org['name'] ?? '').toString(),
+      'org_type': _isLpu ? 'lpu' : 'pharmacy',
+      'doctor_id': doctorIds.length == 1 ? doctorIds.first : null,
+      'doctor_name': doctorNamesCsv.isEmpty ? null : doctorNamesCsv,
+      'assigned_by': userName,
+      'city': (org['city'] ?? '').toString(),
+      'district': (org['district'] ?? '').toString(),
+      'visit_date': visitDate.toIso8601String(),
+      'status': 'planned',
+      'comment': comment,
+      'visit_format': _selectedForm,
+    };
+
+    int localPlanId;
+    try {
+      localPlanId = await widget.db.insertLocalPlannedVisit(localRow);
+      await widget.db.enqueuePendingPlan(
+        localPlanId: localPlanId,
+        orgId: orgId,
+        orgType: _isLpu ? 'lpu' : 'pharmacy',
+        doctorIds: doctorIds,
+        visitFormatId: visitFormatId,
+        visitDate: visitDate,
+        comment: comment,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить план: $e')),
+      );
+      return;
+    }
+
+    // Surface the new row in the in-memory list immediately so the user
+    // sees their plan card without waiting for the API round-trip.
     widget.onSubmit(
       PlannedVisit(
-        id: DateTime.now().millisecondsSinceEpoch,
+        id: localPlanId,
         organisationName: (org['name'] ?? '').toString(),
-        organisationId: org['id'] as int?,
+        organisationId: orgId,
         organisationType: _isLpu ? OrgType.lpu : OrgType.pharmacy,
-        doctorName: doctor?['full_name']?.toString(),
-        assignedBy: 'Вы',
-        date: DateTime(
-          widget.selectedDay.year,
-          widget.selectedDay.month,
-          widget.selectedDay.day,
-          10,
-          0,
-        ),
+        doctorName: doctorNamesCsv.isEmpty ? null : doctorNamesCsv,
+        assignedBy: userName,
+        city: (org['city'] ?? '').toString(),
+        district: (org['district'] ?? '').toString(),
+        date: visitDate,
         status: VisitStatus.planned,
+        visitFormat: _selectedForm,
       ),
+    );
+
+    // Reload from DB so the list also reflects the persisted row and any
+    // server stamping that happens after pushPendingPlans() returns.
+    unawaited(
+      ref
+          .read(syncProvider.notifier)
+          .pushPendingPlans()
+          .whenComplete(() => ref.read(plannedVisitsProvider.notifier).load()),
     );
   }
 
@@ -1124,7 +1510,7 @@ class _CreateVisitSheetState extends State<_CreateVisitSheet> {
                     final org = _allOrgs.where((o) => o['id'] == picked).firstOrNull;
                     setState(() {
                       _selectedOrg = org;
-                      _selectedDoctorId = null;
+                      _selectedDoctorIds.clear();
                       _doctors = [];
                     });
                     if (_isLpu) await _loadDoctors(picked);
@@ -1132,30 +1518,28 @@ class _CreateVisitSheetState extends State<_CreateVisitSheet> {
           ),
           const SizedBox(height: 10),
 
-          // Doctor dropdown (LPU only, after org selected)
+          // Doctor dropdown (LPU only, after org selected) — multi-select chips.
           if (_isLpu) ...[
-            _selectField(
-              hint: 'Выберите врачей...',
-              value: _doctors
-                  .where((d) => d['id'] == _selectedDoctorId)
-                  .firstOrNull?['full_name']
-                  ?.toString(),
-              onTap: _selectedOrg == null || _doctors.isEmpty
-                  ? null
-                  : () async {
-                      final picked = await _openPicker<int>(
-                        title: 'Выберите врача',
-                        selected: _selectedDoctorId,
-                        options: _doctors
-                            .map((d) => _PickerOption<int>(
-                                  value: d['id'] as int,
-                                  label: (d['full_name'] ?? '').toString(),
-                                ))
-                            .toList(),
-                      );
-                      if (!mounted || picked == null) return;
-                      setState(() => _selectedDoctorId = picked);
-                    },
+            _selectedDoctorsField(
+              enabled: _selectedOrg != null && _doctors.isNotEmpty,
+              onTap: () async {
+                final picked = await _openMultiPicker<int>(
+                  title: 'Выберите врачей',
+                  selected: _selectedDoctorIds,
+                  options: _doctors
+                      .map((d) => _PickerOption<int>(
+                            value: d['id'] as int,
+                            label: (d['full_name'] ?? '').toString(),
+                          ))
+                      .toList(),
+                );
+                if (!mounted || picked == null) return;
+                setState(() {
+                  _selectedDoctorIds
+                    ..clear()
+                    ..addAll(picked);
+                });
+              },
             ),
             const SizedBox(height: 10),
           ],
@@ -1165,31 +1549,17 @@ class _CreateVisitSheetState extends State<_CreateVisitSheet> {
             hint: _isLpu ? 'Форма визита...' : 'Тип визита...',
             value: () {
               if (_selectedForm == null) return null;
-              final labels = _isLpu
-                  ? <String, String>{
-                      'single': 'Визит 1 на 1',
-                      'group': 'Групповая презентация',
-                      'double': 'С менеджером',
-                    }
-                  : <String, String>{
-                      'order': 'Бронь',
-                      'stock': 'Снятие остатков',
-                      'circle': 'Фарм кружок',
-                    };
-              return labels[_selectedForm!];
+              final opts = _isLpu ? _lpuFormats : _pharmacyFormats;
+              return opts
+                  .cast<_PickerOption<String>?>()
+                  .firstWhere(
+                    (o) => o?.value == _selectedForm,
+                    orElse: () => null,
+                  )
+                  ?.label;
             }(),
             onTap: () async {
-              final options = _isLpu
-                  ? const [
-                      _PickerOption<String>(value: 'single', label: 'Визит 1 на 1'),
-                      _PickerOption<String>(value: 'group', label: 'Групповая презентация'),
-                      _PickerOption<String>(value: 'double', label: 'С менеджером'),
-                    ]
-                  : const [
-                      _PickerOption<String>(value: 'order', label: 'Бронь'),
-                      _PickerOption<String>(value: 'stock', label: 'Снятие остатков'),
-                      _PickerOption<String>(value: 'circle', label: 'Фарм кружок'),
-                    ];
+              final options = _isLpu ? _lpuFormats : _pharmacyFormats;
               final picked = await _openPicker<String>(
                 title: _isLpu ? 'Форма визита' : 'Тип визита',
                 selected: _selectedForm,
@@ -1289,6 +1659,88 @@ class _PickerOption<T> {
   const _PickerOption({required this.value, required this.label});
 }
 
+class _DoctorChip extends StatelessWidget {
+  final String label;
+  final VoidCallback onRemove;
+
+  const _DoctorChip({required this.label, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
+      decoration: BoxDecoration(
+        color: AppColors.primaryBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFD6DEE8), width: 0.8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.manrope(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primaryText,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          InkWell(
+            onTap: onRemove,
+            borderRadius: BorderRadius.circular(8),
+            child: const Padding(
+              padding: EdgeInsets.all(2),
+              child: Icon(
+                Icons.close_rounded,
+                size: 14,
+                color: AppColors.hintText,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 extension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+class _DayCell extends StatelessWidget {
+  final int day;
+  final Color bg;
+  final Color fg;
+  final bool bold;
+
+  const _DayCell({
+    required this.day,
+    required this.bg,
+    required this.fg,
+    this.bold = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$day',
+        style: TextStyle(
+          color: fg,
+          fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+        ),
+      ),
+    );
+  }
 }

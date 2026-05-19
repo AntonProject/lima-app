@@ -5,8 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
+import 'package:lima/features/auth/providers/auth_provider.dart';
+import 'package:lima/core/providers/connectivity_provider.dart';
 
 import '../../../../core/models/models.dart';
 
@@ -21,24 +24,33 @@ class PharmacyOrderScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<PharmacyOrderScreen> createState() => _PharmacyOrderScreenState();
+  ConsumerState<PharmacyOrderScreen> createState() =>
+      _PharmacyOrderScreenState();
 }
 
 class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
   List<Drug> _drugs = [];
-  final Map<int, int> _mainStockByDrugId = {};
   final Map<int, int> _selectedQtyByDrugId = {};
   bool _loading = true;
   bool _paramsApplied = false;
   String _query = '';
   int _prepayment = 100;
   int _buyerType = 0; // 0 retail, 1 wholesale
+  bool _confirming = false;
 
   List<Drug> get _filtered => _drugs
       .where((d) => d.name.toLowerCase().contains(_query.toLowerCase()))
       .toList();
 
-  int get _selectedCount => _selectedQtyByDrugId.values.where((q) => q > 0).length;
+  int get _selectedCount =>
+      _selectedQtyByDrugId.values.where((q) => q > 0).length;
+  bool get _hasInvalidSelectedQty => _selectedQtyByDrugId.entries.any((e) {
+    final drug = _drugs.cast<Drug?>().firstWhere(
+      (d) => d?.id == e.key,
+      orElse: () => null,
+    );
+    return drug != null && _isOverStock(drug, e.value);
+  });
 
   double get _selectedTotal {
     var total = 0.0;
@@ -67,13 +79,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
 
   Future<void> _loadDrugs() async {
     final db = ref.read(localDatabaseProvider);
-    // Populate _mainStockByDrugId from local DB
     final rows = await db.getDrugs();
-    for (final row in rows) {
-      final id = (row['id'] as num?)?.toInt();
-      final stock = (row['stock'] as num?)?.toInt();
-      if (id != null && stock != null) _mainStockByDrugId[id] = stock;
-    }
     final loaded = rows
         .map(Drug.fromJson)
         // For pharmacy order flow backend needs stock-level identity.
@@ -91,8 +97,9 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
   Future<void> _openQtyDialog(Drug drug) async {
     final initial = _selectedQtyByDrugId[drug.id] ?? 0;
     var qtyStr = initial > 0 ? initial.toString() : '0';
-    final mainStock = _mainStockByDrugId[drug.id] ?? (drug.stock ?? 0);
-    final remains = drug.stock ?? 0;
+    final mainStock = drug.mainStock ?? drug.stock ?? 0;
+    final remains = drug.remainsStock ?? drug.stock ?? 0;
+    final available = remains;
     final result = await showModalBottomSheet<int>(
       context: context,
       useRootNavigator: true,
@@ -104,8 +111,15 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (_, setModal) {
           final qty = int.tryParse(qtyStr) ?? 0;
+          final isOverStock = qty > available;
+          final canIncrease = qty < available;
+          final counterColor = isOverStock
+              ? AppColors.error
+              : const Color(0xFFE49351);
           return Padding(
-            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).padding.bottom + 12),
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(ctx).padding.bottom + 12,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -133,7 +147,11 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                             color: AppColors.primaryBg,
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Icon(Icons.close_rounded, size: 20, color: AppColors.secondaryText),
+                          child: const Icon(
+                            Icons.close_rounded,
+                            size: 20,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
                       ),
                     ],
@@ -163,10 +181,16 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                       ),
                       _line(
                         'Серийный номер',
-                        drug.serialNumber?.isNotEmpty == true ? drug.serialNumber! : '—',
+                        drug.serialNumber?.isNotEmpty == true
+                            ? drug.serialNumber!
+                            : '—',
                         showDivider: true,
                       ),
-                      _line('На основном складе', '$mainStock шт.', showDivider: true),
+                      _line(
+                        'На основном складе',
+                        '$mainStock шт.',
+                        showDivider: true,
+                      ),
                       _line('Остаток', '$remains шт.', showDivider: true),
                       _line(
                         'Цена',
@@ -195,7 +219,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                           height: 52,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: const Color(0xFFE49351), width: 2),
+                            border: Border.all(color: counterColor, width: 2),
                           ),
                           child: Center(
                             child: Text(
@@ -203,7 +227,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                               style: GoogleFonts.manrope(
                                 fontSize: 22,
                                 fontWeight: FontWeight.w700,
-                                color: const Color(0xFFE49351),
+                                color: counterColor,
                               ),
                             ),
                           ),
@@ -213,14 +237,31 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                       _QtyBtn(
                         icon: Icons.add_rounded,
                         iconColor: const Color(0xFF2AA65A),
-                        onTap: () => setModal(() {
-                          final cur = int.tryParse(qtyStr) ?? 0;
-                          qtyStr = (cur + 1).toString();
-                        }),
+                        onTap: canIncrease
+                            ? () => setModal(() {
+                                final cur = int.tryParse(qtyStr) ?? 0;
+                                qtyStr = (cur + 1).toString();
+                              })
+                            : null,
                       ),
                     ],
                   ),
                 ),
+                if (isOverStock) ...[
+                  const SizedBox(height: 6),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(
+                      'Доступно: $available шт.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.error,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -263,14 +304,21 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: ElevatedButton(
-                    onPressed: qty <= 0 ? null : () => Navigator.pop(ctx, qty),
+                    onPressed: qty <= 0 || isOverStock
+                        ? null
+                        : () => Navigator.pop(ctx, qty),
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 52),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                     child: Text(
                       'Подтвердить',
-                      style: GoogleFonts.manrope(fontSize: 16, fontWeight: FontWeight.w600),
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
@@ -282,6 +330,156 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
     );
     if (result == null || !mounted) return;
     setState(() => _selectedQtyByDrugId[drug.id] = result);
+  }
+
+  Future<void> _continueToBron() async {
+    if (_confirming) return;
+    setState(() => _confirming = true);
+    try {
+      final selected = _selectedQtyByDrugId.entries
+          .where((e) => e.value > 0)
+          .map((e) => '${e.key}:${e.value}')
+          .join(';');
+      final selectedDetails = _selectedQtyByDrugId.entries
+          .where((e) => e.value > 0)
+          .map((e) {
+            final drug = _drugs.firstWhere(
+              (d) => d.id == e.key,
+              orElse: () => Drug(
+                id: e.key,
+                name: 'Препарат #${e.key}',
+                manufacturer: '',
+                price: 0,
+              ),
+            );
+            return <String, dynamic>{
+              'id': drug.id,
+              'name': drug.name,
+              'manufacturer': drug.manufacturer,
+              'price': drug.price,
+              'serial_number': drug.serialNumber,
+              'expiry_date': drug.expiryDate,
+              'main_stock': drug.mainStock,
+              'stock': drug.stock,
+              'remains_stock': drug.remainsStock,
+              'current_stock_id': drug.currentStockId,
+              'binding_drug_id': drug.bindingDrugId,
+              'package': e.value,
+              'quantity': e.value,
+              'sale_price': drug.price,
+              'sale_price_without_nds': _priceWithoutNds(drug.price),
+            };
+          })
+          .toList();
+
+      final isOffline = ref.read(isOfflineProvider);
+      final isWholesaler = _buyerType == 1;
+      Map<String, dynamic>? pricingDraft;
+      if (!isOffline) {
+        final user = ref.read(authProvider).user;
+        final orderDrugs = selectedDetails
+            .map(
+              (item) => <String, dynamic>{
+                'income_detailing_id': item['current_stock_id'],
+                'drug_id': item['binding_drug_id'] ?? item['id'],
+                'package': item['quantity'] ?? item['package'],
+                'sale_price': item['price'],
+              },
+            )
+            .toList();
+        try {
+          pricingDraft = await ref
+              .read(remoteApiServiceProvider)
+              .prepareOrderVisitDraft(
+                prepaymentPercent: _prepayment,
+                isWholesaler: isWholesaler,
+                companyId: user?.companyId,
+                orderTotal: _selectedTotal,
+                drugs: orderDrugs,
+              );
+        } catch (_) {
+          pricingDraft = null;
+        }
+        if (pricingDraft == null) {
+          if (!mounted) return;
+          final buyerLabel = isWholesaler ? 'Опт' : 'Розница';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'В API нет ценовой матрицы для $_prepayment% / $buyerLabel',
+              ),
+            ),
+          );
+          return;
+        }
+        final pricedRows =
+            (pricingDraft['drugs'] as List?)
+                ?.whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList() ??
+            const <Map<String, dynamic>>[];
+        final byIncomeDetailingId = <int, Map<String, dynamic>>{};
+        for (final row in pricedRows) {
+          final incomeDetailingId =
+              (row['income_detailing_id'] as num?)?.toInt() ??
+              (row['current_stock_id'] as num?)?.toInt();
+          if (incomeDetailingId != null) {
+            byIncomeDetailingId[incomeDetailingId] = row;
+          }
+        }
+        for (final item in selectedDetails) {
+          final currentStockId = (item['current_stock_id'] as num?)?.toInt();
+          if (currentStockId == null) continue;
+          final priced = byIncomeDetailingId[currentStockId];
+          if (priced == null) continue;
+          item['price'] =
+              ((priced['sale_price'] as num?) ?? item['price'] ?? 0).toDouble();
+          item['sale_price'] = item['price'];
+          item['sale_price_without_nds'] =
+              ((priced['sale_price_without_nds'] as num?) ??
+                      item['sale_price_without_nds'] ??
+                      0)
+                  .toDouble();
+          if (priced['margin_percent'] != null) {
+            item['margin_percent'] = priced['margin_percent'];
+          }
+        }
+      }
+
+      if (!mounted) return;
+      context.push(
+        Uri(
+          path: '/visits/pharmacy/detail/${widget.pharmacyId}/type/bron',
+          queryParameters: {
+            'name': widget.pharmacyName,
+            'items': selected,
+            'items_data': jsonEncode(selectedDetails),
+            'prepayment': '$_prepayment',
+            'buyerType': '$_buyerType',
+            if (pricingDraft?['company_id'] != null)
+              'companyId': '${pricingDraft!['company_id']}',
+            if (pricingDraft?['payment_variant_id'] != null)
+              'paymentVariantId': '${pricingDraft!['payment_variant_id']}',
+            if (pricingDraft?['margin_id'] != null)
+              'marginId': '${pricingDraft!['margin_id']}',
+            if (pricingDraft?['margin_percent'] != null)
+              'marginPercent': '${pricingDraft!['margin_percent']}',
+          },
+        ).toString(),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _confirming = false);
+      }
+    }
+  }
+
+  int _availableStock(Drug drug) => drug.remainsStock ?? drug.stock ?? 0;
+
+  bool _isOverStock(Drug drug, int qty) => qty > _availableStock(drug);
+
+  double _priceWithoutNds(double value) {
+    return double.parse((value / 1.12).toStringAsFixed(2));
   }
 
   String _formatExpiryMonthYear(String? raw) {
@@ -317,7 +515,10 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                 flex: labelFlex,
                 child: Text(
                   '$label:',
-                  style: GoogleFonts.manrope(fontSize: 13, color: AppColors.secondaryText),
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    color: AppColors.secondaryText,
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -353,15 +554,27 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
       body: Column(
         children: [
           Container(
-            decoration: BoxDecoration(color: AppColors.secondaryBg, boxShadow: shadowSm),
-            padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 8, 16, 0),
+            decoration: BoxDecoration(
+              color: AppColors.secondaryBg,
+              boxShadow: shadowSm,
+            ),
+            padding: EdgeInsets.fromLTRB(
+              16,
+              MediaQuery.of(context).padding.top + 8,
+              16,
+              0,
+            ),
             child: Column(
               children: [
                 Row(
                   children: [
                     GestureDetector(
                       onTap: () => context.pop(),
-                      child: const Icon(Icons.arrow_back_rounded, color: AppColors.primaryText, size: 24),
+                      child: const Icon(
+                        Icons.arrow_back_rounded,
+                        color: AppColors.primaryText,
+                        size: 24,
+                      ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -381,7 +594,10 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                               widget.pharmacyName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText),
+                              style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                color: AppColors.secondaryText,
+                              ),
                             ),
                         ],
                       ),
@@ -394,7 +610,11 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                   onChanged: (v) => setState(() => _query = v),
                   decoration: const InputDecoration(
                     hintText: 'Поиск препаратов...',
-                    prefixIcon: Icon(Icons.search_rounded, color: AppColors.hintText, size: 20),
+                    prefixIcon: Icon(
+                      Icons.search_rounded,
+                      color: AppColors.hintText,
+                      size: 20,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -405,28 +625,40 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _filtered.isEmpty
-                    ? const EmptyState(icon: Icons.search_off_rounded, title: 'Ничего не найдено')
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                        itemCount: _filtered.length,
-                        itemBuilder: (_, i) {
-                          final drug = _filtered[i];
-                          final qty = _selectedQtyByDrugId[drug.id] ?? 0;
-                          return _DrugCard(
-                            drug: drug,
-                            selectedQty: qty,
-                            onTap: () => _openQtyDialog(drug),
-                          );
-                        },
-                      ),
+                ? const EmptyState(
+                    icon: Icons.search_off_rounded,
+                    title: 'Ничего не найдено',
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                    itemCount: _filtered.length,
+                    itemBuilder: (_, i) {
+                      final drug = _filtered[i];
+                      final qty = _selectedQtyByDrugId[drug.id] ?? 0;
+                      return _DrugCard(
+                        drug: drug,
+                        selectedQty: qty,
+                        isOverStock: _isOverStock(drug, qty),
+                        onTap: () => _openQtyDialog(drug),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
       bottomNavigationBar: _selectedCount == 0
           ? null
           : Container(
-              decoration: BoxDecoration(color: AppColors.secondaryBg, boxShadow: shadowMd),
-              padding: EdgeInsets.fromLTRB(16, 10, 16, MediaQuery.of(context).padding.bottom + 10),
+              decoration: BoxDecoration(
+                color: AppColors.secondaryBg,
+                boxShadow: shadowMd,
+              ),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                10,
+                16,
+                MediaQuery.of(context).padding.bottom + 10,
+              ),
               child: Row(
                 children: [
                   Expanded(
@@ -436,7 +668,10 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                       children: [
                         Text(
                           'Итого:',
-                          style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText),
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
                         Text(
                           formatUzs(_selectedTotal),
@@ -461,62 +696,43 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                   Expanded(
                     flex: 2,
                     child: ElevatedButton(
-                      onPressed: () {
-                        final selected = _selectedQtyByDrugId.entries
-                            .where((e) => e.value > 0)
-                            .map((e) => '${e.key}:${e.value}')
-                            .join(';');
-                        final selectedDetails = _selectedQtyByDrugId.entries
-                            .where((e) => e.value > 0)
-                            .map((e) {
-                              final drug = _drugs.firstWhere(
-                                (d) => d.id == e.key,
-                                orElse: () => Drug(
-                                  id: e.key,
-                                  name: 'Препарат #${e.key}',
-                                  manufacturer: '',
-                                  price: 0,
-                                ),
-                              );
-                              return <String, dynamic>{
-                                'id': drug.id,
-                                'name': drug.name,
-                                'manufacturer': drug.manufacturer,
-                                'price': drug.price,
-                                'serial_number': drug.serialNumber,
-                                'expiry_date': drug.expiryDate,
-                                'stock': drug.stock,
-                                'current_stock_id': drug.currentStockId,
-                                'binding_drug_id': drug.bindingDrugId,
-                              };
-                            })
-                            .toList();
-                        context.push(
-                          Uri(
-                            path: '/visits/pharmacy/detail/${widget.pharmacyId}/type/bron',
-                            queryParameters: {
-                              'name': widget.pharmacyName,
-                              'items': selected,
-                              'items_data': jsonEncode(selectedDetails),
-                              'prepayment': '$_prepayment',
-                              'buyerType': '$_buyerType',
-                            },
-                          ).toString(),
-                        );
-                      },
+                      onPressed:
+                          _hasInvalidSelectedQty || _confirming
+                              ? null
+                              : _continueToBron,
                       style: ElevatedButton.styleFrom(
                         minimumSize: const Size(double.infinity, 52),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
+                          if (_confirming) ...[
+                            const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
                           Text(
-                            'Оформить бронь',
-                            style: GoogleFonts.manrope(fontSize: 16, fontWeight: FontWeight.w600),
+                            _confirming
+                                ? 'Подготавливаем заказ...'
+                                : 'Оформить бронь',
+                            style: GoogleFonts.manrope(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                          const SizedBox(width: 8),
-                          const Icon(Icons.arrow_forward_rounded, size: 18),
+                          if (!_confirming) ...[
+                            const SizedBox(width: 8),
+                            const Icon(Icons.arrow_forward_rounded, size: 18),
+                          ],
                         ],
                       ),
                     ),
@@ -531,11 +747,13 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
 class _DrugCard extends StatelessWidget {
   final Drug drug;
   final int selectedQty;
+  final bool isOverStock;
   final VoidCallback onTap;
 
   const _DrugCard({
     required this.drug,
     required this.selectedQty,
+    required this.isOverStock,
     required this.onTap,
   });
 
@@ -547,11 +765,17 @@ class _DrugCard extends StatelessWidget {
         onTap: onTap,
         child: Container(
           decoration: BoxDecoration(
-            color: selectedQty > 0 ? const Color(0xFFF2F6FF) : AppColors.secondaryBg,
+            color: selectedQty > 0
+                ? const Color(0xFFF2F6FF)
+                : AppColors.secondaryBg,
             borderRadius: BorderRadius.circular(14),
             boxShadow: shadowSm,
             border: Border.all(
-              color: selectedQty > 0 ? AppColors.primary : Colors.transparent,
+              color: isOverStock
+                  ? AppColors.error
+                  : selectedQty > 0
+                  ? AppColors.primary
+                  : Colors.transparent,
               width: selectedQty > 0 ? 1.5 : 0,
             ),
           ),
@@ -570,7 +794,11 @@ class _DrugCard extends StatelessWidget {
                       color: AppColors.iconBgBlue,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(Icons.medication_rounded, color: AppColors.primary, size: 18),
+                    child: const Icon(
+                      Icons.medication_rounded,
+                      color: AppColors.primary,
+                      size: 18,
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -588,27 +816,42 @@ class _DrugCard extends StatelessWidget {
                         const SizedBox(height: 4),
                         Text(
                           'Производитель: ${drug.manufacturer.isNotEmpty ? drug.manufacturer : '—'}',
-                          style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText),
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           'Серийный номер: ${drug.serialNumber?.isNotEmpty == true ? drug.serialNumber : '—'}',
-                          style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText),
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           'Срок годности: ${drug.expiryDate?.isNotEmpty == true ? drug.expiryDate : '—'}',
-                          style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText),
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          'На основном складе: ${drug.stock ?? 0} шт.',
-                          style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText),
+                          'На основном складе: ${drug.mainStock ?? drug.stock ?? 0} шт.',
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          'Остаток: ${drug.stock ?? 0} шт.',
-                          style: GoogleFonts.manrope(fontSize: 12, color: AppColors.secondaryText),
+                          'Остаток: ${drug.remainsStock ?? drug.stock ?? 0} шт.',
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
                       ],
                     ),
@@ -616,9 +859,14 @@ class _DrugCard extends StatelessWidget {
                   if (selectedQty > 0)
                     Container(
                       margin: const EdgeInsets.only(left: 8, top: 2),
-                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
-                        color: AppColors.primary,
+                        color: isOverStock
+                            ? AppColors.error
+                            : AppColors.primary,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(

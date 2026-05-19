@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/dialogs/manager_select_dialog.dart';
 import 'package:lima/core/network/remote_api_service.dart';
+import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
@@ -34,6 +35,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
   _VisitMode _mode = _VisitMode.single;
   final Set<String> _selected = {};
   List<Map<String, dynamic>> _doctors = [];
+  bool _remoteDoctorsLoaded = false;
   bool get _canEditDirectory => ref.read(authProvider).user?.role == 'admin';
 
   List<Map<String, dynamic>> get _filtered => _doctors.where((d) {
@@ -65,11 +67,43 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
 
   Future<void> _loadDoctors() async {
     final db = ref.read(localDatabaseProvider);
-    final results = await db.getDoctors(
+    var results = await db.getDoctors(
       orgId: widget.orgId,
       query: _query.isEmpty ? null : _query,
       includeGlobalFallback: false,
     );
+
+    if (!_remoteDoctorsLoaded &&
+        _query.isEmpty &&
+        !ref.read(isOfflineProvider)) {
+      _remoteDoctorsLoaded = true;
+      try {
+        final remoteDoctors = await ref
+            .read(remoteApiServiceProvider)
+            .getDoctorsByOrganization(widget.orgId);
+        if (remoteDoctors.length > results.length) {
+          await db.upsertDoctors(remoteDoctors);
+          await db.upsertDoctorOrganisationLinks(
+            remoteDoctors
+                .map((d) => (d['id'] as num?)?.toInt())
+                .whereType<int>()
+                .map(
+                  (doctorId) => <String, dynamic>{
+                    'doctor_id': doctorId,
+                    'organisation_id': widget.orgId,
+                  },
+                )
+                .toList(),
+          );
+          results = await db.getDoctors(
+            orgId: widget.orgId,
+            query: _query.isEmpty ? null : _query,
+            includeGlobalFallback: false,
+          );
+        }
+      } catch (_) {}
+    }
+
     if (!mounted) return;
     final list = results.map((e) => Map<String, dynamic>.from(e)).toList();
     final ids = list

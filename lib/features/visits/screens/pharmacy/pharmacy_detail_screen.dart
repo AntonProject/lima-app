@@ -120,6 +120,9 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
       if (s == 'true' || s == '1') return true;
       if (s == 'false' || s == '0') return false;
     }
+    // Fallback: API returns `visited: true/false` for this rep's pharmacies
+    final visited = raw['visited'];
+    if (visited is bool) return visited;
     return null;
   }
 
@@ -435,7 +438,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                               ],
                             ),
                           ),
-                          if (worksWithUs == false) ...[
+                          if (worksWithUs != null) ...[
                             const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -443,14 +446,20 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                                 vertical: 5,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFFFEEF0),
+                                color: worksWithUs == true
+                                    ? const Color(0xFFDDF5E6)
+                                    : const Color(0xFFFFEEF0),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Text(
-                                'Не работает с нами',
+                                worksWithUs == true
+                                    ? 'Работает с нами'
+                                    : 'Не работает с нами',
                                 style: GoogleFonts.manrope(
                                   fontSize: 12,
-                                  color: AppColors.error,
+                                  color: worksWithUs == true
+                                      ? const Color(0xFF2AA65A)
+                                      : AppColors.error,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),

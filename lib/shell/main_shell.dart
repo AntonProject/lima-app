@@ -34,12 +34,69 @@ class _MainShellState extends ConsumerState<MainShell> {
     '/profile',
   ];
 
+  bool _isTopLevelTab(String path) => _tabPaths.contains(path);
+
   int _indexFromLocation(String location) {
     for (int i = _tabPaths.length - 1; i >= 0; i--) {
       if (location.startsWith(_tabPaths[i])) return i;
     }
     return 0;
   }
+
+  String _withExistingQuery(Uri uri, String path) {
+    final queryParameters = uri.queryParameters;
+    return Uri(
+      path: path,
+      queryParameters: queryParameters.isEmpty ? null : queryParameters,
+    ).toString();
+  }
+
+  String? _systemBackTarget(Uri uri) {
+    final path = uri.path;
+    final segments = uri.pathSegments;
+
+    if (path == '/home') return null;
+    if (_isTopLevelTab(path)) return '/home';
+
+    if (segments.length >= 4 &&
+        segments[0] == 'visits' &&
+        segments[1] == 'pharmacy' &&
+        segments[2] == 'detail') {
+      final pharmacyId = segments[3];
+      if (segments.length >= 5 && segments[4] == 'type') {
+        if (segments.length >= 6) {
+          return _withExistingQuery(
+            uri,
+            '/visits/pharmacy/detail/$pharmacyId/type',
+          );
+        }
+        return _withExistingQuery(uri, '/visits/pharmacy/detail/$pharmacyId');
+      }
+      if (segments.length >= 5 && segments[4] == 'history') {
+        return _withExistingQuery(uri, '/visits/pharmacy/detail/$pharmacyId');
+      }
+      return '/visits';
+    }
+
+    if (segments.length >= 4 &&
+        segments[0] == 'visits' &&
+        segments[1] == 'lpu' &&
+        segments[2] == 'detail') {
+      return '/visits';
+    }
+
+    if (path == '/visits/history' || path.startsWith('/visits/history/')) {
+      return '/visits';
+    }
+    if (path.startsWith('/visits/')) return '/visits';
+    if (path.startsWith('/knowledge/')) return '/knowledge';
+    if (path.startsWith('/profile/')) return '/profile';
+    if (path.startsWith('/plan/')) return '/plan';
+
+    return '/home';
+  }
+
+  bool? _lastIsLightStatusBar;
 
   @override
   void dispose() {
@@ -72,14 +129,14 @@ class _MainShellState extends ConsumerState<MainShell> {
 
     final isOffline = ref.watch(isOfflineProvider);
 
-    String currentPath = '';
+    Uri currentUri = Uri(path: '/home');
     try {
-      currentPath = GoRouterState.of(context).uri.path;
+      currentUri = GoRouterState.of(context).uri;
     } catch (_) {}
+    final currentPath = currentUri.path;
 
     _currentIndex = _indexFromLocation(currentPath);
     final isHome = currentPath == '/home';
-    final isTopLevelTab = _tabPaths.contains(currentPath);
 
     // Белые иконки статус-бара на синих экранах, тёмные на светлых
     final isLightStatusBar =
@@ -87,9 +144,14 @@ class _MainShellState extends ConsumerState<MainShell> {
         currentPath == '/profile' ||
         currentPath.contains('/detailing') ||
         currentPath.contains('/complete');
-    SystemChrome.setSystemUIOverlayStyle(
-      isLightStatusBar ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
-    );
+    if (_lastIsLightStatusBar != isLightStatusBar) {
+      _lastIsLightStatusBar = isLightStatusBar;
+      SystemChrome.setSystemUIOverlayStyle(
+        isLightStatusBar
+            ? SystemUiOverlayStyle.light
+            : SystemUiOverlayStyle.dark,
+      );
+    }
 
     final hideNavBar =
         currentPath.startsWith('/visits/pharmacy/detail/') &&
@@ -111,56 +173,72 @@ class _MainShellState extends ConsumerState<MainShell> {
       _lastOfflineToastPath = isHome ? '/home' : '';
     }
 
+    final isTopLevelTab = _isTopLevelTab(currentPath);
+
     return PopScope(
       canPop: !isTopLevelTab,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop || !isTopLevelTab || isHome) return;
-        context.go('/home');
+        if (didPop || !isTopLevelTab) return;
+        if (!isHome && mounted) {
+          context.go('/home');
+        }
       },
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF4F7FA),
-        extendBody: true,
-        body: Stack(
-          children: [
-            Positioned.fill(child: widget.child),
-            Positioned(
-              left: 0,
-              right: 0,
-              top: 0,
-              child: OfflineBanner(visible: isOffline && isHome),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              top: 0,
-              child: OfflineBanner(
-                visible: isOffline && !isHome && _showOfflineToast,
-                compact: true,
-              ),
-            ),
-            if (!hideNavBar)
+      child: BackButtonListener(
+        onBackButtonPressed: () async {
+          if (!_isTopLevelTab(currentUri.path) && context.canPop()) {
+            return false;
+          }
+          final target = _systemBackTarget(currentUri);
+          if (target != null && mounted) {
+            context.go(target);
+          }
+          return true;
+        },
+        child: Scaffold(
+          backgroundColor: const Color(0xFFF4F7FA),
+          extendBody: true,
+          body: Stack(
+            children: [
+              Positioned.fill(child: widget.child),
               Positioned(
                 left: 0,
                 right: 0,
-                bottom: 0,
-                child: _LimaNavBar(
-                  currentIndex: _currentIndex,
-                  onTap: (i) {
-                    if (i < _tabPaths.length) {
-                      final target = _tabPaths[i];
-                      if (target == '/visits' &&
-                          !currentPath.startsWith('/visits')) {
-                        context.go(
-                          '/visits?reset=${DateTime.now().millisecondsSinceEpoch}',
-                        );
-                        return;
-                      }
-                      context.go(target);
-                    }
-                  },
+                top: 0,
+                child: OfflineBanner(visible: isOffline && isHome),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                child: OfflineBanner(
+                  visible: isOffline && !isHome && _showOfflineToast,
+                  compact: true,
                 ),
               ),
-          ],
+              if (!hideNavBar)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: _LimaNavBar(
+                    currentIndex: _currentIndex,
+                    onTap: (i) {
+                      if (i < _tabPaths.length) {
+                        final target = _tabPaths[i];
+                        if (target == '/visits' &&
+                            !currentPath.startsWith('/visits')) {
+                          context.go(
+                            '/visits?reset=${DateTime.now().millisecondsSinceEpoch}',
+                          );
+                          return;
+                        }
+                        context.go(target);
+                      }
+                    },
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

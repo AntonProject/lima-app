@@ -22,6 +22,9 @@ class CartItemSnapshot {
   final int? pharmacyId;
   final String? pharmacyName;
   final String? addedAt;
+  final int? cartId;
+  final int? prepaymentPercent;
+  final int? buyerType;
 
   /// Stock position ID (income_detailing_id / current_stock_id from price-list).
   /// Required to create a proper Бронь order on the backend.
@@ -42,6 +45,9 @@ class CartItemSnapshot {
     this.pharmacyId,
     this.pharmacyName,
     this.addedAt,
+    this.cartId,
+    this.prepaymentPercent,
+    this.buyerType,
     this.currentStockId,
     this.bindingDrugId,
   });
@@ -61,6 +67,9 @@ class CartItemSnapshot {
       pharmacyId: pharmacyId,
       pharmacyName: pharmacyName,
       addedAt: addedAt,
+      cartId: cartId,
+      prepaymentPercent: prepaymentPercent,
+      buyerType: buyerType,
       currentStockId: currentStockId,
       bindingDrugId: bindingDrugId,
     );
@@ -79,12 +88,16 @@ class CartItemSnapshot {
       'pharmacy_id': pharmacyId,
       'pharmacy_name': pharmacyName,
       'added_at': addedAt,
+      if (cartId != null) 'cart_id': cartId,
+      if (prepaymentPercent != null) 'prepayment_percent': prepaymentPercent,
+      if (buyerType != null) 'buyer_type': buyerType,
       if (currentStockId != null) 'current_stock_id': currentStockId,
       if (bindingDrugId != null) 'binding_drug_id': bindingDrugId,
     };
   }
 
   factory CartItemSnapshot.fromJson(Map<String, dynamic> json) {
+    final isWholesaler = _toBool(json['is_wholesaler']);
     return CartItemSnapshot(
       drugId: json['drug_id'] as int,
       name: json['name'] as String,
@@ -97,6 +110,12 @@ class CartItemSnapshot {
       pharmacyId: json['pharmacy_id'] as int?,
       pharmacyName: json['pharmacy_name'] as String?,
       addedAt: json['added_at'] as String?,
+      cartId: json['cart_id'] as int?,
+      prepaymentPercent:
+          _toInt(json['prepayment_percent']) ?? _toInt(json['prepayment']),
+      buyerType:
+          _toInt(json['buyer_type']) ??
+          (isWholesaler == null ? null : (isWholesaler ? 1 : 0)),
       currentStockId: json['current_stock_id'] as int?,
       bindingDrugId: json['binding_drug_id'] as int?,
     );
@@ -108,6 +127,9 @@ class CartItemSnapshot {
     int? pharmacyId,
     String? pharmacyName,
     String? addedAt,
+    int? cartId,
+    int? prepaymentPercent,
+    int? buyerType,
   }) {
     return CartItemSnapshot(
       drugId: drug.id,
@@ -121,9 +143,29 @@ class CartItemSnapshot {
       pharmacyId: pharmacyId,
       pharmacyName: pharmacyName,
       addedAt: addedAt,
+      cartId: cartId,
+      prepaymentPercent: prepaymentPercent,
+      buyerType: buyerType,
       currentStockId: drug.currentStockId,
       bindingDrugId: drug.bindingDrugId,
     );
+  }
+
+  static int? _toInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
+  }
+
+  static bool? _toBool(dynamic value) {
+    if (value == null) return null;
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final s = value.toString().toLowerCase();
+    if (s == 'true' || s == '1') return true;
+    if (s == 'false' || s == '0') return false;
+    return null;
   }
 }
 
@@ -308,9 +350,17 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     int quantity = 1,
     int? pharmacyId,
     String? pharmacyName,
+    int? prepaymentPercent,
+    int? buyerType,
   }) async {
     final items = [...state.cartItems];
-    final index = items.indexWhere((item) => item.drugId == drug.id);
+    final index = items.indexWhere(
+      (item) =>
+          item.drugId == drug.id &&
+          item.pharmacyId == pharmacyId &&
+          (item.prepaymentPercent ?? 100) == (prepaymentPercent ?? 100) &&
+          (item.buyerType ?? 0) == (buyerType ?? 0),
+    );
     if (index == -1) {
       items.add(
         CartItemSnapshot.fromDrug(
@@ -319,6 +369,8 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
           pharmacyId: pharmacyId,
           pharmacyName: pharmacyName,
           addedAt: DateTime.now().toIso8601String(),
+          prepaymentPercent: prepaymentPercent,
+          buyerType: buyerType,
         ),
       );
     } else {
@@ -332,9 +384,27 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     }
   }
 
-  Future<void> updateCartQuantity(int drugId, int quantity) async {
+  Future<void> updateCartQuantity(
+    int drugId,
+    int quantity, {
+    int? pharmacyId,
+    int? cartId,
+    int? prepaymentPercent,
+    int? buyerType,
+  }) async {
     final items = [...state.cartItems];
-    final index = items.indexWhere((item) => item.drugId == drugId);
+    final index = items.indexWhere((item) {
+      if (item.drugId != drugId) return false;
+      if (cartId != null && item.cartId != cartId) return false;
+      if (pharmacyId != null && item.pharmacyId != pharmacyId) return false;
+      if (prepaymentPercent != null) {
+        if ((item.prepaymentPercent ?? 100) != prepaymentPercent) return false;
+      }
+      if (buyerType != null && (item.buyerType ?? 0) != buyerType) {
+        return false;
+      }
+      return true;
+    });
     if (index == -1) return;
     if (quantity <= 0) {
       items.removeAt(index);
@@ -348,14 +418,56 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     }
   }
 
+  Future<void> clearCartGroup({
+    int? pharmacyId,
+    String? pharmacyName,
+    int? cartId,
+    int? prepaymentPercent,
+    int? buyerType,
+  }) async {
+    final items = [...state.cartItems];
+    final removedCartIds = <int>{};
+    items.removeWhere((item) {
+      var matches = cartId != null
+          ? item.cartId == cartId
+          : pharmacyId != null
+          ? item.pharmacyId == pharmacyId
+          : item.pharmacyName == pharmacyName;
+      if (matches && prepaymentPercent != null) {
+        matches = (item.prepaymentPercent ?? 100) == prepaymentPercent;
+      }
+      if (matches && buyerType != null) {
+        matches = (item.buyerType ?? 0) == buyerType;
+      }
+      if (matches && item.cartId != null) {
+        removedCartIds.add(item.cartId!);
+      }
+      return matches;
+    });
+    state = state.copyWith(cartItems: items);
+    await _persistCart(items);
+    if (_ref.read(isOfflineProvider)) {
+      pulseOfflineBanner(_ref);
+    }
+    for (final id in removedCartIds) {
+      try {
+        final api = _ref.read(remoteApiServiceProvider);
+        await api.clearServerCart(id);
+      } catch (_) {}
+    }
+  }
+
   Future<void> clearCart() async {
-    final cartId = state.serverCartId;
+    final cartIds = {
+      if (state.serverCartId != null) state.serverCartId!,
+      ...state.cartItems.map((e) => e.cartId).whereType<int>(),
+    };
     state = state.copyWith(cartItems: const [], clearServerCartId: true);
     await _persistCart(const []);
     if (_ref.read(isOfflineProvider)) {
       pulseOfflineBanner(_ref);
     }
-    if (cartId != null) {
+    for (final cartId in cartIds) {
       try {
         final api = _ref.read(remoteApiServiceProvider);
         await api.clearServerCart(cartId);

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -21,23 +22,48 @@ import 'package:lima/core/i18n/app_i18n.dart';
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
+  /// Loads recent visits from the local DB into the static cache so the
+  /// home screen renders instantly on first navigation after the splash.
+  static Future<void> preload(LocalDatabase db) async {
+    try {
+      final dbRows = await db.getVisits().timeout(
+        const Duration(seconds: 6),
+        onTimeout: () => const <Map<String, dynamic>>[],
+      );
+      _HomeScreenState._cachedRecentVisits =
+          _HomeScreenState._processVisitRows(dbRows);
+    } catch (_) {
+      // Best-effort prewarm — home will retry via its own _loadRecentVisits().
+    }
+  }
+
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen>
     with WidgetsBindingObserver {
-  bool _loadingOffline = false;
+  static List<_RecentVisitVm> _cachedRecentVisits = const [];
+
   bool _loadingRecent = false;
   bool _loadingRecentInFlight = false;
   List<_RecentVisitVm> _recentVisits = const [];
   String? _lastRefreshToken;
   DateTime? _lastSyncSeenAt;
+  StreamSubscription<Set<String>>? _dbChangesSub;
 
   @override
   void initState() {
     super.initState();
+    _recentVisits = _cachedRecentVisits;
     WidgetsBinding.instance.addObserver(this);
+    _dbChangesSub = ref.read(localDatabaseProvider).changes.listen((tables) {
+      if (!mounted) return;
+      if (tables.contains('visits')) {
+        _loadRecentVisits();
+        ref.invalidate(dashboardCountsProvider);
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(appCollectionsProvider.notifier).clearExpiredCartItems();
     });
@@ -46,6 +72,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   void dispose() {
+    _dbChangesSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -76,24 +103,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
   }
 
-  Future<void> _downloadOfflineData() async {
-    setState(() => _loadingOffline = true);
-    try {
-      await ref.read(syncProvider.notifier).pullFromRemote();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.l10n.t('offlineDownloaded')),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } catch (_) {
-    } finally {
-      if (mounted) setState(() => _loadingOffline = false);
-    }
-  }
-
   Future<void> _loadRecentVisits() async {
     if (_loadingRecentInFlight) return;
     _loadingRecentInFlight = true;
@@ -103,44 +112,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
     try {
       final db = ref.read(localDatabaseProvider);
-      final dbRows = await db.getVisits();
-      final rows = dbRows.map((e) => Map<String, dynamic>.from(e)).toList();
-      final dedup = <String, Map<String, dynamic>>{};
-      for (final row in rows) {
-        final rid = _safeStr(row['remote_id']);
-        final type = _safeStr(row['visit_type'], fallback: 'lpu');
-        final created = _safeStr(
-          row['created_at'] ?? row['visit_date'] ?? row['date'],
-        );
-        final key = rid.isNotEmpty ? '${rid}_$type' : '${type}_$created';
-        final prev = dedup[key];
-        if (prev == null) {
-          dedup[key] = row;
-          continue;
-        }
-        final prevDt = _tryDate(
-          _safeStr(prev['created_at'] ?? prev['visit_date'] ?? prev['date']),
-        );
-        final curDt = _tryDate(created);
-        if (curDt.isAfter(prevDt)) {
-          dedup[key] = row;
-        }
-      }
-      final uniqueRows = dedup.values.toList();
-      uniqueRows.sort((a, b) {
-        final ad = _tryDate(
-          (a['date'] ?? a['visit_date'] ?? a['created_at'])?.toString(),
-        );
-        final bd = _tryDate(
-          (b['date'] ?? b['visit_date'] ?? b['created_at'])?.toString(),
-        );
-        return bd.compareTo(ad);
-      });
-      // Show DB results immediately.
-      final dbNext = uniqueRows.take(10).map(_RecentVisitVm.fromMap).toList();
+      final dbRows = await db.getVisits().timeout(
+        const Duration(seconds: 6),
+        onTimeout: () => const <Map<String, dynamic>>[],
+      );
+      final dbNext = _processVisitRows(dbRows);
       if (mounted) {
         setState(() {
           _recentVisits = dbNext;
+          _cachedRecentVisits = dbNext;
           _loadingRecent = false;
         });
       }
@@ -150,6 +130,44 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         setState(() => _loadingRecent = false);
       }
     }
+  }
+
+  static List<_RecentVisitVm> _processVisitRows(
+    List<Map<String, dynamic>> dbRows,
+  ) {
+    final rows = dbRows.map((e) => Map<String, dynamic>.from(e)).toList();
+    final dedup = <String, Map<String, dynamic>>{};
+    for (final row in rows) {
+      final rid = _safeStr(row['remote_id']);
+      final type = _safeStr(row['visit_type'], fallback: 'lpu');
+      final created = _safeStr(
+        row['created_at'] ?? row['visit_date'] ?? row['date'],
+      );
+      final key = rid.isNotEmpty ? '${rid}_$type' : '${type}_$created';
+      final prev = dedup[key];
+      if (prev == null) {
+        dedup[key] = row;
+        continue;
+      }
+      final prevDt = _tryDate(
+        _safeStr(prev['created_at'] ?? prev['visit_date'] ?? prev['date']),
+      );
+      final curDt = _tryDate(created);
+      if (curDt.isAfter(prevDt)) {
+        dedup[key] = row;
+      }
+    }
+    final uniqueRows = dedup.values.toList();
+    uniqueRows.sort((a, b) {
+      final ad = _tryDate(
+        (a['date'] ?? a['visit_date'] ?? a['created_at'])?.toString(),
+      );
+      final bd = _tryDate(
+        (b['date'] ?? b['visit_date'] ?? b['created_at'])?.toString(),
+      );
+      return bd.compareTo(ad);
+    });
+    return uniqueRows.take(10).map(_RecentVisitVm.fromMap).toList();
   }
 
   PopupMenuItem<String> _langMenuItem(
@@ -184,7 +202,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget build(BuildContext context) {
     debugPrint('[HOME] build start');
     final user = ref.watch(authProvider).user;
-    final isAdmin = user?.role == 'admin';
     final syncState = ref.watch(syncProvider);
     final collections = ref.watch(appCollectionsProvider);
     final dashboardCounts = ref.watch(dashboardCountsProvider).valueOrNull;
@@ -201,6 +218,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       if (prevAt == null ||
           nextAt.millisecondsSinceEpoch != prevAt.millisecondsSinceEpoch) {
         _lastSyncSeenAt = nextAt;
+        ref.invalidate(dashboardCountsProvider);
         _loadRecentVisits();
       }
     });
@@ -235,7 +253,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       width: 48,
                       height: 48,
                     ),
-                    const SizedBox(width: 10),
                     Text(
                       'LIMA',
                       style: GoogleFonts.figtree(
@@ -579,179 +596,91 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           title: 'На эту дату визиты не запланированы',
                         ),
                       const SizedBox(height: 8),
-                      if (isAdmin) ...[
-                        Text(
-                          context.l10n.t('offlineAndSync'),
-                          style: GoogleFonts.manrope(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.primaryText,
+                      Text(
+                        context.l10n.t('offlineAndSync'),
+                        style: GoogleFonts.manrope(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.primaryText,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      GestureDetector(
+                        onTap: () => context.push('/sync'),
+                        child: Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: AppColors.secondaryBg,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: shadowSm,
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: syncState.unsyncedCount > 0
+                                      ? const Color(0xFFFFF3E0)
+                                      : AppColors.iconBgGreen,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(
+                                  syncState.unsyncedCount > 0
+                                      ? LucideIcons.circleAlert
+                                      : LucideIcons.cloud,
+                                  color: syncState.unsyncedCount > 0
+                                      ? AppColors.accent
+                                      : AppColors.success,
+                                  size: 22,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      context.l10n.t('offlineMode'),
+                                      style: GoogleFonts.manrope(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w800,
+                                        color: AppColors.primaryText,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    Text(
+                                      syncState.unsyncedCount > 0
+                                          ? context.l10n.t(
+                                              'notSyncedShort',
+                                              args: {
+                                                'count':
+                                                    '${syncState.unsyncedCount}',
+                                              },
+                                            )
+                                          : context.l10n.t('syncedShort'),
+                                      style: GoogleFonts.manrope(
+                                        fontSize: 11,
+                                        color: syncState.unsyncedCount > 0
+                                            ? AppColors.accent
+                                            : AppColors.success,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(
+                                Icons.chevron_right_rounded,
+                                color: AppColors.hintText,
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: _loadingOffline
-                                    ? null
-                                    : _downloadOfflineData,
-                                child: Container(
-                                  padding: const EdgeInsets.all(14),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.secondaryBg,
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: shadowSm,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 40,
-                                        height: 40,
-                                        decoration: BoxDecoration(
-                                          color: AppColors.iconBgBlue,
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                        ),
-                                        child: _loadingOffline
-                                            ? const Padding(
-                                                padding: EdgeInsets.all(10),
-                                                child:
-                                                    CircularProgressIndicator(
-                                                      strokeWidth: 2,
-                                                      color: AppColors.primary,
-                                                    ),
-                                              )
-                                            : const Icon(
-                                                LucideIcons.cloudDownload,
-                                                color: AppColors.primary,
-                                                size: 22,
-                                              ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              context.l10n.t('offlineMode'),
-                                              style: GoogleFonts.manrope(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.w800,
-                                                color: AppColors.primaryText,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              softWrap: false,
-                                            ),
-                                            Text(
-                                              context.l10n.t('downloadData'),
-                                              style: GoogleFonts.manrope(
-                                                fontSize: 11,
-                                                color: AppColors.secondaryText,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              softWrap: false,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: () => context.push('/sync'),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 12,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.secondaryBg,
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: shadowSm,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 40,
-                                        height: 40,
-                                        decoration: BoxDecoration(
-                                          color: syncState.unsyncedCount > 0
-                                              ? const Color(0xFFFFF3E0)
-                                              : AppColors.iconBgGreen,
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                        ),
-                                        child: Icon(
-                                          syncState.unsyncedCount > 0
-                                              ? LucideIcons.circleAlert
-                                              : LucideIcons.circleCheck,
-                                          color: syncState.unsyncedCount > 0
-                                              ? AppColors.accent
-                                              : AppColors.success,
-                                          size: 22,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              context.l10n.t('sync'),
-                                              style: GoogleFonts.manrope(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w800,
-                                                color: AppColors.primaryText,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              softWrap: false,
-                                            ),
-                                            Text(
-                                              syncState.unsyncedCount > 0
-                                                  ? context.l10n.t(
-                                                      'notSyncedShort',
-                                                      args: {
-                                                        'count':
-                                                            '${syncState.unsyncedCount}',
-                                                      },
-                                                    )
-                                                  : context.l10n.t(
-                                                      'syncedShort',
-                                                    ),
-                                              style: GoogleFonts.manrope(
-                                                fontSize: 11,
-                                                color:
-                                                    syncState.unsyncedCount > 0
-                                                    ? AppColors.accent
-                                                    : AppColors.success,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 24),
-                      ],
+                      ),
+                      const SizedBox(height: 24),
                     ],
                   ),
                 ),
@@ -824,9 +753,7 @@ class _RecentVisitVm {
     final dt = _tryDate(
       _safeStr(row['date'] ?? row['visit_date'] ?? row['created_at']),
     );
-    String resolvedId = _safeStr(
-      row['remote_id'] ?? row['visit_id'] ?? row['id'],
-    );
+    String resolvedId = _safeStr(row['remote_id'] ?? row['visit_id']);
     final responseRaw = _safeStr(row['last_push_response_json']);
     if ((resolvedId.isEmpty || resolvedId == 'null') &&
         responseRaw.isNotEmpty) {
@@ -842,14 +769,6 @@ class _RecentVisitVm {
           resolvedId = _safeStr(rid, fallback: resolvedId);
         }
       } catch (_) {}
-      if (resolvedId.isEmpty || resolvedId == 'null') {
-        final digits = RegExp(
-          r'\d+',
-        ).allMatches(responseRaw).map((m) => m.group(0)!).toList();
-        if (digits.isNotEmpty) {
-          resolvedId = digits.last;
-        }
-      }
     }
 
     final rawJson = _safeStr(row['raw_json']);
@@ -884,6 +803,12 @@ class _RecentVisitVm {
       fallback: 'lpu',
     ).toLowerCase();
     final type = () {
+      if (visitTypeRaw == '4' ||
+          visitTypeRaw == '3' ||
+          visitTypeRaw == 'stock' ||
+          visitTypeRaw == 'remnant') {
+        return 'stock';
+      }
       if (orgTypeId == 1 ||
           orgTypeRaw.contains('pharm') ||
           orgTypeRaw.contains('аптек') ||
@@ -891,11 +816,6 @@ class _RecentVisitVm {
         return 'pharmacy';
       }
       if (orgTypeId != null || orgTypeRaw.isNotEmpty) return 'lpu';
-      if (visitTypeRaw == '4' ||
-          visitTypeRaw == '3' ||
-          visitTypeRaw == 'stock') {
-        return 'stock';
-      }
       if (visitTypeRaw == '1' ||
           visitTypeRaw == 'order' ||
           visitTypeRaw == 'circle' ||
@@ -1237,6 +1157,7 @@ class _VisitItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isLpu = type == 'lpu';
+    final isStock = type == 'stock';
     final isCircle = type == 'pharmacy' && subType == 'circle';
     final (statusBg, statusFg) = switch (statusKey) {
       'completed' => (const Color(0xFFEFF2F7), const Color(0xFF77839A)),
@@ -1262,7 +1183,9 @@ class _VisitItem extends StatelessWidget {
               decoration: BoxDecoration(
                 color: isLpu
                     ? AppColors.iconBgBlue
-                    : (isCircle
+                    : (isStock
+                          ? const Color(0xFFFFF3DB)
+                          : isCircle
                           ? const Color(0xFFDDF5E6)
                           : AppColors.iconBgGreen),
                 borderRadius: BorderRadius.circular(10),
@@ -1270,10 +1193,18 @@ class _VisitItem extends StatelessWidget {
               child: Icon(
                 isLpu
                     ? LucideIcons.building2
-                    : (isCircle ? LucideIcons.circlePlus : LucideIcons.pill),
+                    : (isStock
+                          ? LucideIcons.packageCheck
+                          : isCircle
+                          ? LucideIcons.circlePlus
+                          : LucideIcons.pill),
                 color: isLpu
                     ? AppColors.primary
-                    : (isCircle ? const Color(0xFF2AA65A) : AppColors.success),
+                    : (isStock
+                          ? const Color(0xFFE3A335)
+                          : isCircle
+                          ? const Color(0xFF2AA65A)
+                          : AppColors.success),
                 size: 20,
               ),
             ),

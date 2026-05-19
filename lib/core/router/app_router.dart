@@ -50,6 +50,18 @@ final _routerNotifierProvider = Provider<_RouterNotifier>((ref) {
 final _routerNavigatorKey = GlobalKey<NavigatorState>();
 final _shellNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'shell');
 
+String _routeLocation(
+  String path, [
+  Map<String, String> queryParameters = const {},
+]) {
+  final filteredQuery = Map<String, String>.from(queryParameters)
+    ..removeWhere((_, value) => value.isEmpty);
+  return Uri(
+    path: path,
+    queryParameters: filteredQuery.isEmpty ? null : filteredQuery,
+  ).toString();
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
   debugPrint('[ROUTER] creating router');
   final notifier = ref.read(_routerNotifierProvider);
@@ -71,71 +83,147 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       if (isLoading) return null;
       if (!isAuth && !onLogin) return '/login';
-      if (isAuth && onLogin) return '/home';
+      if (isAuth && onLogin) return '/splash';
       return null;
     },
     routes: [
       GoRoute(
         path: '/splash',
-        pageBuilder: (_, __) => const NoTransitionPage(child: SplashScreen()),
+        pageBuilder: (_, _) => const NoTransitionPage(child: SplashScreen()),
       ),
-      GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+      GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
       GoRoute(
         path: '/history',
         redirect: (_, state) {
           final qp = state.uri.queryParameters;
-          return Uri(path: '/visits/history', queryParameters: qp.isEmpty ? null : qp).toString();
+          return Uri(
+            path: '/visits/history',
+            queryParameters: qp.isEmpty ? null : qp,
+          ).toString();
         },
       ),
       GoRoute(
         path: '/history/visits',
         redirect: (_, state) {
           final qp = state.uri.queryParameters;
-          return Uri(path: '/visits/history', queryParameters: qp.isEmpty ? null : qp).toString();
+          return Uri(
+            path: '/visits/history',
+            queryParameters: qp.isEmpty ? null : qp,
+          ).toString();
         },
       ),
       GoRoute(
         path: '/map',
-        builder: (_, state) => MapScreen(
-          isPharmacy: state.uri.queryParameters['isPharmacy'] == 'true',
+        builder: (_, state) => _SystemBackFallback(
+          fallbackLocation: '/visits',
+          child: MapScreen(
+            isPharmacy: state.uri.queryParameters['isPharmacy'] == 'true',
+          ),
         ),
       ),
-      GoRoute(path: '/basket', builder: (_, __) => const CartScreen()),
-      GoRoute(path: '/drafts', builder: (_, __) => const CartScreen()),
-      GoRoute(path: '/visits-schedule', builder: (_, __) => const PlanScreen()),
-      GoRoute(path: '/visit-summary', builder: (_, __) => const VisitSummaryScreen()),
-      GoRoute(path: '/sync', builder: (_, __) => const SyncScreen()),
+      GoRoute(
+        path: '/basket',
+        builder: (_, _) => const _SystemBackFallback(
+          fallbackLocation: '/home',
+          child: CartScreen(),
+        ),
+      ),
+      GoRoute(
+        path: '/drafts',
+        builder: (_, _) => const _SystemBackFallback(
+          fallbackLocation: '/home',
+          child: CartScreen(),
+        ),
+      ),
+      GoRoute(
+        path: '/visits-schedule',
+        builder: (_, _) => const _SystemBackFallback(
+          fallbackLocation: '/plan',
+          child: PlanScreen(),
+        ),
+      ),
+      GoRoute(
+        path: '/visit-summary',
+        builder: (_, _) => const _SystemBackFallback(
+          fallbackLocation: '/visits',
+          child: VisitSummaryScreen(),
+        ),
+      ),
+      GoRoute(
+        path: '/sync',
+        builder: (_, _) => const _SystemBackFallback(
+          fallbackLocation: '/home',
+          child: SyncScreen(),
+        ),
+      ),
       GoRoute(
         path: '/knowledge/drug/:drugId/materials',
-        builder: (_, state) => MaterialViewerScreen(
-          drugId: int.parse(state.pathParameters['drugId']!),
-          initialIndex: int.tryParse(state.uri.queryParameters['index'] ?? '') ?? 0,
+        builder: (_, state) {
+          final drugId = state.pathParameters['drugId']!;
+          return _SystemBackFallback(
+            fallbackLocation: '/knowledge/drug/$drugId',
+            child: MaterialViewerScreen(
+              drugId: int.parse(drugId),
+              initialIndex:
+                  int.tryParse(state.uri.queryParameters['index'] ?? '') ?? 0,
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/notifications',
+        builder: (_, _) => const _SystemBackFallback(
+          fallbackLocation: '/home',
+          child: NotificationsScreen(),
         ),
       ),
-      GoRoute(path: '/notifications', builder: (_, __) => const NotificationsScreen()),
 
       // ── LPU doctor-select flow (без shell/навбара) ──────────────────────
       GoRoute(
         path: '/visits/lpu/detail/:orgId/doctors',
-        builder: (_, state) => LpuDoctorSelectScreen(
-          orgId: int.parse(state.pathParameters['orgId']!),
-          orgName: state.uri.queryParameters['name'] ?? '',
-        ),
+        builder: (_, state) {
+          final orgId = state.pathParameters['orgId']!;
+          final orgName = state.uri.queryParameters['name'] ?? '';
+          return _SystemBackFallback(
+            fallbackLocation: _routeLocation('/visits/lpu/detail/$orgId', {
+              'name': orgName,
+            }),
+            child: LpuDoctorSelectScreen(
+              orgId: int.parse(orgId),
+              orgName: orgName,
+            ),
+          );
+        },
         routes: [
           GoRoute(
             path: ':doctorId/detailing',
-            builder: (_, state) => LpuDetailingScreen(
-              orgId: int.parse(state.pathParameters['orgId']!),
-              doctorId: int.parse(state.pathParameters['doctorId']!),
-              doctorName: state.uri.queryParameters['doctorName'] ?? '',
-              orgName: state.uri.queryParameters['orgName'] ?? '',
-              doctorIds: state.uri.queryParameters['doctorIds'],
-              visitId: int.tryParse(state.uri.queryParameters['visitId'] ?? ''),
-            ),
+            builder: (_, state) {
+              final orgId = state.pathParameters['orgId']!;
+              final orgName = state.uri.queryParameters['orgName'] ?? '';
+              return _SystemBackFallback(
+                fallbackLocation: _routeLocation(
+                  '/visits/lpu/detail/$orgId/doctors',
+                  {'name': orgName},
+                ),
+                child: LpuDetailingScreen(
+                  orgId: int.parse(orgId),
+                  doctorId: int.parse(state.pathParameters['doctorId']!),
+                  doctorName: state.uri.queryParameters['doctorName'] ?? '',
+                  orgName: orgName,
+                  doctorIds: state.uri.queryParameters['doctorIds'],
+                  visitId: int.tryParse(
+                    state.uri.queryParameters['visitId'] ?? '',
+                  ),
+                ),
+              );
+            },
             routes: [
               GoRoute(
                 path: 'complete',
-                builder: (_, __) => const LpuCompleteScreen(),
+                builder: (_, _) => const _SystemBackFallback(
+                  fallbackLocation: '/visits',
+                  child: LpuCompleteScreen(),
+                ),
               ),
             ],
           ),
@@ -150,11 +238,29 @@ final routerProvider = Provider<GoRouter>((ref) {
           return MainShell(child: child);
         },
         routes: [
-          GoRoute(path: '/home', pageBuilder: (_, _) => const NoTransitionPage(child: HomeScreen())),
-          GoRoute(path: '/plan', pageBuilder: (_, _) => const NoTransitionPage(child: PlanScreen())),
+          GoRoute(
+            path: '/home',
+            pageBuilder: (_, _) => const NoTransitionPage(
+              child: _TopLevelTabBackGuard(child: HomeScreen()),
+            ),
+          ),
+          GoRoute(
+            path: '/plan',
+            pageBuilder: (_, _) => const NoTransitionPage(
+              child: _TopLevelTabBackGuard(
+                fallbackLocation: '/home',
+                child: PlanScreen(),
+              ),
+            ),
+          ),
           GoRoute(
             path: '/visits',
-            pageBuilder: (_, _) => const NoTransitionPage(child: VisitsHubScreen()),
+            pageBuilder: (_, _) => const NoTransitionPage(
+              child: _TopLevelTabBackGuard(
+                fallbackLocation: '/home',
+                child: VisitsHubScreen(),
+              ),
+            ),
             routes: [
               GoRoute(
                 path: 'lpu/detail/:orgId',
@@ -174,45 +280,67 @@ final routerProvider = Provider<GoRouter>((ref) {
                   GoRoute(
                     path: 'type',
                     builder: (_, state) => PharmacyTypeScreen(
-                      pharmacyId: int.parse(state.pathParameters['pharmacyId']!),
+                      pharmacyId: int.parse(
+                        state.pathParameters['pharmacyId']!,
+                      ),
                       pharmacyName: state.uri.queryParameters['name'] ?? '',
                     ),
                     routes: [
                       GoRoute(
                         path: 'order',
                         builder: (_, state) => PharmacyOrderScreen(
-                          pharmacyId: int.parse(state.pathParameters['pharmacyId']!),
+                          pharmacyId: int.parse(
+                            state.pathParameters['pharmacyId']!,
+                          ),
                           pharmacyName: state.uri.queryParameters['name'] ?? '',
                         ),
                       ),
                       GoRoute(
                         path: 'stock',
                         builder: (_, state) => PharmacyStockScreen(
-                          pharmacyId: int.parse(state.pathParameters['pharmacyId']!),
+                          pharmacyId: int.parse(
+                            state.pathParameters['pharmacyId']!,
+                          ),
                           pharmacyName: state.uri.queryParameters['name'] ?? '',
                         ),
                       ),
                       GoRoute(
                         path: 'circle',
                         builder: (_, state) => PharmaCircleScreen(
-                          pharmacyId: int.parse(state.pathParameters['pharmacyId']!),
+                          pharmacyId: int.parse(
+                            state.pathParameters['pharmacyId']!,
+                          ),
                           pharmacyName: state.uri.queryParameters['name'] ?? '',
                         ),
                       ),
                       GoRoute(
                         path: 'bron',
                         builder: (_, state) => NewBronScreen(
-                          pharmacyId: int.parse(state.pathParameters['pharmacyId']!),
+                          pharmacyId: int.parse(
+                            state.pathParameters['pharmacyId']!,
+                          ),
                           pharmacyName: state.uri.queryParameters['name'] ?? '',
                         ),
                       ),
                       GoRoute(
                         path: 'checkout',
-                        builder: (_, state) => NewBronScreen(
-                          pharmacyId: int.parse(state.pathParameters['pharmacyId']!),
-                          pharmacyName: state.uri.queryParameters['name'] ?? '',
-                          isCheckoutMode: true,
-                        ),
+                        builder: (_, state) {
+                          final extra = state.extra;
+                          final checkoutPayload = extra is Map<String, dynamic>
+                              ? extra
+                              : extra is Map
+                              ? Map<String, dynamic>.from(extra)
+                              : null;
+                          return NewBronScreen(
+                            pharmacyId: int.parse(
+                              state.pathParameters['pharmacyId']!,
+                            ),
+                            pharmacyName:
+                                state.uri.queryParameters['name'] ?? '',
+                            isCheckoutMode: true,
+                            checkoutPayload: checkoutPayload,
+                          );
+                        },
                       ),
                     ],
                   ),
@@ -220,13 +348,18 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
               GoRoute(
                 path: 'history',
-                builder: (_, __) => const HistoryScreen(),
+                builder: (_, _) => const HistoryScreen(),
               ),
             ],
           ),
           GoRoute(
             path: '/knowledge',
-            pageBuilder: (_, _) => const NoTransitionPage(child: KnowledgeScreen()),
+            pageBuilder: (_, _) => const NoTransitionPage(
+              child: _TopLevelTabBackGuard(
+                fallbackLocation: '/home',
+                child: KnowledgeScreen(),
+              ),
+            ),
             routes: [
               GoRoute(
                 path: 'drug/:drugId',
@@ -238,10 +371,21 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/profile',
-            pageBuilder: (_, _) => const NoTransitionPage(child: ProfileScreen()),
+            pageBuilder: (_, _) => const NoTransitionPage(
+              child: _TopLevelTabBackGuard(
+                fallbackLocation: '/home',
+                child: ProfileScreen(),
+              ),
+            ),
             routes: [
-              GoRoute(path: 'fav-doctors', builder: (_, __) => const FavDoctorsScreen()),
-              GoRoute(path: 'fav-pharmacies', builder: (_, __) => const FavPharmaciesScreen()),
+              GoRoute(
+                path: 'fav-doctors',
+                builder: (_, _) => const FavDoctorsScreen(),
+              ),
+              GoRoute(
+                path: 'fav-pharmacies',
+                builder: (_, _) => const FavPharmaciesScreen(),
+              ),
             ],
           ),
         ],
@@ -249,3 +393,57 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+class _SystemBackFallback extends StatelessWidget {
+  final String fallbackLocation;
+  final Widget child;
+
+  const _SystemBackFallback({
+    required this.fallbackLocation,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return BackButtonListener(
+      onBackButtonPressed: () async {
+        if (context.canPop()) return false;
+        context.go(fallbackLocation);
+        return true;
+      },
+      child: child,
+    );
+  }
+}
+
+class _TopLevelTabBackGuard extends StatelessWidget {
+  final String? fallbackLocation;
+  final Widget child;
+
+  const _TopLevelTabBackGuard({this.fallbackLocation, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    void goFallback() {
+      final target = fallbackLocation;
+      if (target != null) {
+        context.go(target);
+      }
+    }
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        goFallback();
+      },
+      child: BackButtonListener(
+        onBackButtonPressed: () async {
+          goFallback();
+          return true;
+        },
+        child: child,
+      ),
+    );
+  }
+}

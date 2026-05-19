@@ -213,12 +213,20 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
           };
         }).toList();
 
+        final isGroupVisit = widget.doctorIds != null &&
+            widget.doctorIds!.contains(',');
         final rawVisitJson = jsonEncode({
           'organization_id': widget.orgId,
           'organization_name': widget.orgName,
+          'visit_type': 2,
+          if (isGroupVisit) 'visit_format': 3,
+          if (isGroupVisit) 'visit_format_id': 3,
+          if (isGroupVisit) 'visit_format_name': 'Групповая презентация',
+          'doctor_ids': _allDoctorIds,
           'doctor_name': widget.doctorName,
           'medical_representative_name': medRepName,
           'presentations': presentations,
+          'talked_about_drugs': presentations,
           'status': 'completed',
           'comment': comment,
           'start_date': now,

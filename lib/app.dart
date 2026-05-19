@@ -8,13 +8,58 @@ import 'core/providers/connectivity_provider.dart';
 import 'core/providers/locale_provider.dart';
 import 'core/providers/sync_provider.dart';
 import 'core/router/app_router.dart';
+import 'core/services/background_sync_service.dart';
 import 'core/theme/app_theme.dart';
 
-class LimaApp extends ConsumerWidget {
+class LimaApp extends ConsumerStatefulWidget {
   const LimaApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LimaApp> createState() => _LimaAppState();
+}
+
+class _LimaAppState extends ConsumerState<LimaApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _resumeForegroundSync();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final auth = ref.read(authProvider);
+    if (auth.status != AuthStatus.authenticated) return;
+
+    if (state == AppLifecycleState.resumed) {
+      _resumeForegroundSync();
+      return;
+    }
+
+    if (state != AppLifecycleState.paused &&
+        state != AppLifecycleState.detached) {
+      return;
+    }
+    unawaited(BackgroundSyncService.scheduleSyncNow());
+  }
+
+  void _resumeForegroundSync() {
+    final auth = ref.read(authProvider);
+    if (auth.status != AuthStatus.authenticated) return;
+    unawaited(ref.read(syncProvider.notifier).reconcileInBackground());
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
     final locale = ref.watch(appLocaleProvider);
 
@@ -23,7 +68,7 @@ class LimaApp extends ConsumerWidget {
           prev?.status != AuthStatus.authenticated &&
           next.status == AuthStatus.authenticated;
       if (!becameAuthenticated) return;
-      unawaited(ref.read(syncProvider.notifier).reconcileInBackground());
+      _resumeForegroundSync();
     });
 
     ref.listen<bool>(isOfflineProvider, (prev, next) {
