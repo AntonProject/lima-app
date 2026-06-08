@@ -10,6 +10,7 @@ import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/providers/dashboard_counts_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
+import 'package:lima/features/auth/providers/auth_provider.dart';
 
 import '../../../../core/models/models.dart';
 
@@ -404,6 +405,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
         'visit_type': 'stock',
         'status': 'completed',
         'notes': payload.comment.trim(),
+        'medical_rep_name': ref.read(authProvider).user?.fullName,
         'created_at': now,
         'updated_at': now,
         'raw_json': rawVisitJson,

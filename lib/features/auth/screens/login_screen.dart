@@ -99,18 +99,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             Row(
                               children: [
                                 Image.asset(
-                                  'assets/images/logo.png',
-                                  width: 36,
-                                  height: 36,
-                                ),
-                                Text(
-                                  'LIMA',
-                                  style: GoogleFonts.figtree(
-                                    color: Colors.white,
-                                    fontSize: 34,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 1,
-                                  ),
+                                  'assets/images/lima_logo_1.png',
+                                  width: 120,
+                                  height: 60,
                                 ),
                               ],
                             ),

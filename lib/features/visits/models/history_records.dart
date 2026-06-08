@@ -110,12 +110,18 @@ class HistoryVisitRecord {
       'assigned_by',
       'user_name',
     ]);
-    final medicalRep = medRepRaw == '—' && raw['medrep'] is Map
+    final medRepFromRaw = medRepRaw == '—' && raw['medrep'] is Map
         ? _pick(Map<String, dynamic>.from(raw['medrep'] as Map), const [
             'name',
             'full_name',
           ])
         : medRepRaw;
+    // Fall back to the dedicated DB column for locally-created visits where the
+    // medical rep (= current user) is stored on the row, not inside raw_json.
+    final medRepFromRow = '${row['medical_rep_name'] ?? ''}'.trim();
+    final medicalRep = medRepFromRaw != '—'
+        ? medRepFromRaw
+        : (medRepFromRow.isEmpty ? '—' : medRepFromRow);
 
     final statusRaw = _asLower(
       raw['visit_status_name'] ??

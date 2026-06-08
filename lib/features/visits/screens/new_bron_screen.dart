@@ -114,9 +114,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
               id: id,
               name: (m['name'] as String?) ?? 'Препарат #$id',
               manufacturer: (m['manufacturer'] as String?) ?? '',
-              price:
-                  ((m['sale_price'] as num?) ?? (m['price'] as num?) ?? 0)
-                      .toDouble(),
+              price: ((m['sale_price'] as num?) ?? (m['price'] as num?) ?? 0)
+                  .toDouble(),
               serialNumber: m['serial_number'] as String?,
               expiryDate: m['expiry_date'] as String?,
               mainStock: (m['main_stock'] as num?)?.toInt(),
@@ -434,6 +433,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         'visit_type': 'order',
         'status': 'completed',
         'notes': _commentCtrl.text.trim(),
+        'medical_rep_name': user?.fullName,
         'created_at': now,
         'updated_at': now,
         'raw_json': rawVisitJson,

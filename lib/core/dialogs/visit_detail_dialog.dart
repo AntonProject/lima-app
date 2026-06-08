@@ -173,7 +173,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
         const SizedBox(height: 12),
         _softInfo(
           title: 'Мед. представитель',
-          value: visit.medicalRep == '—' ? 'Anton Dev' : visit.medicalRep,
+          value: visit.medicalRep,
           icon: Icons.person_2_outlined,
         ),
         const SizedBox(height: 12),
@@ -367,7 +367,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
         const SizedBox(height: 8),
         _softInfo(
           title: 'Мед. представитель',
-          value: visit.medicalRep == '—' ? 'Anton Dev' : visit.medicalRep,
+          value: visit.medicalRep,
           icon: Icons.person_2_outlined,
         ),
         const SizedBox(height: 10),
@@ -512,7 +512,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
         const SizedBox(height: 12),
         _softInfo(
           title: 'Мед. представитель',
-          value: visit.medicalRep == '—' ? 'Anton Dev' : visit.medicalRep,
+          value: visit.medicalRep,
           icon: Icons.person_2_outlined,
         ),
         const SizedBox(height: 12),
@@ -808,7 +808,9 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
         ),
         const SizedBox(height: 8),
         _softInfo(
-          title: 'Врач',
+          title: (visit.subType == 'group' || visit.doctor.contains(','))
+              ? 'Врачи'
+              : 'Врач',
           value: visit.doctor,
           icon: Icons.person_outline_rounded,
         ),
@@ -1072,7 +1074,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '${visit.date}, ${visit.medicalRep == '—' ? 'Anton Dev' : visit.medicalRep}',
+                            '${visit.date}, ${visit.medicalRep}',
                             style: GoogleFonts.manrope(
                               fontSize: 14,
                               color: AppColors.secondaryText,
@@ -1515,10 +1517,9 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
     // If wholesale is locked but the saved value is "Опт", normalize to retail
     // so the visible selection matches what the user is actually allowed to
     // submit.
-    _buyerType =
-        (!widget.allowWholesale && widget.initialBuyerType == 1)
-            ? 0
-            : widget.initialBuyerType;
+    _buyerType = (!widget.allowWholesale && widget.initialBuyerType == 1)
+        ? 0
+        : widget.initialBuyerType;
   }
 
   @override

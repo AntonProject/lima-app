@@ -43,7 +43,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 13,
+      version: 15,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -187,6 +187,14 @@ class LocalDatabase {
 
     await db.execute('''
       CREATE TABLE day_types (
+        id       INTEGER PRIMARY KEY,
+        name     TEXT,
+        raw_json TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE visit_formats (
         id       INTEGER PRIMARY KEY,
         name     TEXT,
         raw_json TEXT
@@ -393,6 +401,9 @@ class LocalDatabase {
     if (oldVersion < 10) {
       await _ensureDoctorOrganisationTable(db);
     }
+    if (oldVersion < 15) {
+      await _ensureVisitRetryColumns(db);
+    }
   }
 
   Future<void> _ensureOptionalColumns() async {
@@ -444,6 +455,7 @@ class LocalDatabase {
     } catch (_) {}
     await _ensureRawAndSyncColumns(db);
     await _ensureDoctorOrganisationTable(db);
+    await _ensureVisitRetryColumns(db);
   }
 
   Future<void> _ensureDoctorOrganisationTable(Database database) async {
@@ -456,6 +468,22 @@ class LocalDatabase {
         PRIMARY KEY (doctor_id, organisation_id)
       )
     ''');
+  }
+
+  /// Columns supporting retry/backoff for unsynced visits (schema v15).
+  /// [push_attempts] counts failed push tries; [next_retry_at] holds the ISO
+  /// timestamp before which a visit should not be retried.
+  Future<void> _ensureVisitRetryColumns(Database database) async {
+    try {
+      await database.execute(
+        'ALTER TABLE visits ADD COLUMN push_attempts INTEGER DEFAULT 0',
+      );
+    } catch (_) {}
+    try {
+      await database.execute(
+        'ALTER TABLE visits ADD COLUMN next_retry_at TEXT',
+      );
+    } catch (_) {}
   }
 
   Future<void> _ensureRegionColumns(Database database) async {
@@ -580,6 +608,15 @@ class LocalDatabase {
       await database.execute(
         'ALTER TABLE planned_visits ADD COLUMN visit_format TEXT',
       );
+    } catch (_) {}
+    try {
+      await database.execute('''
+        CREATE TABLE IF NOT EXISTS visit_formats (
+          id       INTEGER PRIMARY KEY,
+          name     TEXT,
+          raw_json TEXT
+        )
+      ''');
     } catch (_) {}
   }
 
@@ -927,21 +964,17 @@ class LocalDatabase {
     String? comment,
   }) async {
     final isoDate = _isoYmd(visitDate);
-    await db.insert(
-      'pending_plans',
-      {
-        'local_plan_id': localPlanId,
-        'org_id': orgId,
-        'org_type': orgType,
-        'doctor_ids_json': jsonEncode(doctorIds),
-        'visit_format_id': visitFormatId,
-        'start_date': isoDate,
-        'end_date': isoDate,
-        'comment': comment ?? '',
-        'created_at': DateTime.now().toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('pending_plans', {
+      'local_plan_id': localPlanId,
+      'org_id': orgId,
+      'org_type': orgType,
+      'doctor_ids_json': jsonEncode(doctorIds),
+      'visit_format_id': visitFormatId,
+      'start_date': isoDate,
+      'end_date': isoDate,
+      'comment': comment ?? '',
+      'created_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
     _notifyChanged(['pending_plans']);
   }
 
@@ -984,6 +1017,26 @@ class LocalDatabase {
 
   Future<List<Map<String, dynamic>>> getDayTypes() async {
     return db.query('day_types', orderBy: 'id');
+  }
+
+  // ── Visit formats (cached from /api/visits/formats) ───────────────────────
+
+  Future<void> upsertVisitFormats(List<Map<String, dynamic>> rows) async {
+    if (rows.isEmpty) return;
+    final batch = db.batch();
+    for (final row in rows) {
+      batch.insert(
+        'visit_formats',
+        Map<String, dynamic>.from(row),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+    _notifyChanged(['visit_formats']);
+  }
+
+  Future<List<Map<String, dynamic>>> getVisitFormats() async {
+    return db.query('visit_formats', orderBy: 'id');
   }
 
   // ── Managers ──────────────────────────────────────────────────────────────
@@ -1459,7 +1512,11 @@ class LocalDatabase {
         }
       } else {
         final r = Map<String, dynamic>.from(row)..remove('is_deleted');
-        batch.insert('doctors', r, conflictAlgorithm: ConflictAlgorithm.replace);
+        batch.insert(
+          'doctors',
+          r,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
     }
     await batch.commit(noResult: true);
@@ -1712,8 +1769,24 @@ class LocalDatabase {
 
   // ── Visits ────────────────────────────────────────────────────────────────
 
-  Future<List<Map<String, dynamic>>> getVisits({bool? unsyncedOnly}) async {
+  Future<List<Map<String, dynamic>>> getVisits({
+    bool? unsyncedOnly,
+    bool dueForRetryOnly = false,
+  }) async {
     if (unsyncedOnly == true) {
+      // When [dueForRetryOnly] is set, skip visits whose backoff window has not
+      // elapsed yet (next_retry_at in the future) so the push loop does not
+      // hammer the server on every reconcile.
+      if (dueForRetryOnly) {
+        final nowIso = DateTime.now().toIso8601String();
+        return db.query(
+          'visits',
+          where:
+              'is_synced = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)',
+          whereArgs: [0, nowIso],
+          orderBy: 'created_at DESC',
+        );
+      }
       return db.query(
         'visits',
         where: 'is_synced = ?',
@@ -1809,11 +1882,53 @@ class LocalDatabase {
   Future<void> markSynced(List<int> ids) async {
     if (ids.isEmpty) return;
     final placeholders = ids.map((_) => '?').join(', ');
+    // Clear retry bookkeeping on success so the row is fully resolved.
     await db.rawUpdate(
-      'UPDATE visits SET is_synced = 1 WHERE id IN ($placeholders)',
+      'UPDATE visits SET is_synced = 1, push_attempts = 0, next_retry_at = NULL '
+      'WHERE id IN ($placeholders)',
       ids,
     );
     _notifyChanged(['visits']);
+  }
+
+  /// Records a failed (transient) push attempt for a visit: increments
+  /// [push_attempts] and schedules [next_retry_at] using an exponential-ish
+  /// backoff (1m, 5m, 30m, then 60m). Returns the new attempt count.
+  Future<int> recordVisitPushFailure(int visitId) async {
+    final rows = await db.query(
+      'visits',
+      columns: ['push_attempts'],
+      where: 'id = ?',
+      whereArgs: [visitId],
+      limit: 1,
+    );
+    final current = rows.isEmpty
+        ? 0
+        : ((rows.first['push_attempts'] as num?)?.toInt() ?? 0);
+    final attempts = current + 1;
+    final backoff = _retryBackoffFor(attempts);
+    final nextRetry = DateTime.now().add(backoff).toIso8601String();
+    await db.update(
+      'visits',
+      {'push_attempts': attempts, 'next_retry_at': nextRetry},
+      where: 'id = ?',
+      whereArgs: [visitId],
+    );
+    _notifyChanged(['visits']);
+    return attempts;
+  }
+
+  static Duration _retryBackoffFor(int attempts) {
+    switch (attempts) {
+      case 1:
+        return const Duration(minutes: 1);
+      case 2:
+        return const Duration(minutes: 5);
+      case 3:
+        return const Duration(minutes: 30);
+      default:
+        return const Duration(minutes: 60);
+    }
   }
 
   Future<void> setVisitPushPayload({

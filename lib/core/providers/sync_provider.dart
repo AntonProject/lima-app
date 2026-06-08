@@ -6,6 +6,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:lima/core/config/env_config.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/models/local_visit.dart';
 import 'package:lima/core/models/models.dart';
@@ -92,6 +93,11 @@ class SyncState {
 // ─── SyncNotifier ─────────────────────────────────────────────────────────────
 
 class SyncNotifier extends StateNotifier<SyncState> {
+  /// After this many failed push attempts a visit is treated as permanently
+  /// stuck: it is removed from the queue and surfaced in the sync report
+  /// instead of being retried forever.
+  static const int _maxPushAttempts = 8;
+
   final LocalDatabase _db;
   final RemoteApiService _remoteApi;
   final ApiClient _apiClient;
@@ -128,12 +134,30 @@ class SyncNotifier extends StateNotifier<SyncState> {
           );
       // Use raw `online` value — don't rely on Riverpod provider which may lag
       if (online && !_isReconciling) {
-        // Small delay so the network stack is ready before API calls
-        Future.delayed(const Duration(seconds: 2), () {
-          if (!_isReconciling) reconcileInBackground();
+        // Small delay so the network stack is ready before API calls.
+        Future.delayed(const Duration(seconds: 2), () async {
+          if (_isReconciling) return;
+          // A connectivity transition (e.g. Wi-Fi without internet) does not
+          // guarantee real reachability — verify before kicking off a sync.
+          if (await _hasRealInternet()) {
+            reconcileInBackground();
+          }
         });
       }
     });
+  }
+
+  /// Verifies actual internet reachability via a DNS lookup, not just the
+  /// connectivity layer (which reports "connected" for Wi-Fi without internet).
+  Future<bool> _hasRealInternet() async {
+    try {
+      final result = await InternetAddress.lookup(
+        EnvConfig.connectivityHost,
+      ).timeout(const Duration(seconds: 5));
+      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
@@ -191,14 +215,25 @@ class SyncNotifier extends StateNotifier<SyncState> {
           includeDoctors: includeDoctors,
         ).timeout(const Duration(seconds: 25), onTimeout: () => null);
         if (delta != null) {
+          // Cooldown: skip the (heavy) live-data refresh if it ran < 30s ago.
+          // Avoids re-downloading the visit/plan/material set on every hot
+          // reload or quick app restart.
+          final lastPullRaw = await _db.getSyncMeta('last_pull_at');
+          final lastPullAt = DateTime.tryParse(lastPullRaw ?? '');
+          final liveStale =
+              lastPullAt == null ||
+              DateTime.now().difference(lastPullAt) >
+                  const Duration(seconds: 30);
           state = state.copyWith(
             status: SyncStatus.loading,
-            message: 'Дельта получена, обновляем живые данные…',
+            message: liveStale
+                ? 'Дельта получена, обновляем живые данные…'
+                : 'Дельта получена, живые данные актуальны',
             clearProgress: true,
           );
-          final live = await _syncAllLiveDataFromRemote(
-            repairDoctors: repairDoctors,
-          );
+          final live = liveStale
+              ? await _syncAllLiveDataFromRemote(repairDoctors: repairDoctors)
+              : _LiveSyncResult.empty();
           final now = DateTime.now();
           await _db.setSyncMeta('last_pull_at', now.toIso8601String());
           await _db.setSyncMeta('last_delta_pull_at', now.toIso8601String());
@@ -518,10 +553,13 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
     final companyId = _currentCompanyId();
     final initialTotals = await _collectLocalTotals();
-    final isFirstRun = initialTotals.organizations == 0 &&
+    final isFirstRun =
+        initialTotals.organizations == 0 &&
         initialTotals.doctors == 0 &&
         initialTotals.drugs == 0;
-    final initialMessage = isFirstRun ? 'Загружаем данные…' : 'Обновляем данные…';
+    final initialMessage = isFirstRun
+        ? 'Загружаем данные…'
+        : 'Обновляем данные…';
 
     state = state.copyWith(
       status: SyncStatus.loading,
@@ -548,15 +586,16 @@ class SyncNotifier extends StateNotifier<SyncState> {
         repairDoctors: false,
         quickOnly: true,
       );
-      final orgsFuture = (forceFullOrganizations
-              ? _remoteApi.getOrganizationsDictionary()
-              : _remoteApi.getOrganizationsSync(
-                  syncId: syncId > 0 ? syncId : null,
-                ))
-          .then((orgs) async {
-        if (orgs.isNotEmpty) await _db.upsertOrganisations(orgs);
-        return orgs;
-      });
+      final orgsFuture =
+          (forceFullOrganizations
+                  ? _remoteApi.getOrganizationsDictionary()
+                  : _remoteApi.getOrganizationsSync(
+                      syncId: syncId > 0 ? syncId : null,
+                    ))
+              .then((orgs) async {
+                if (orgs.isNotEmpty) await _db.upsertOrganisations(orgs);
+                return orgs;
+              });
       final drugsFuture = _syncDrugsAndMaterialsLayer(companyId: companyId);
 
       final live = await liveFuture;
@@ -573,7 +612,11 @@ class SyncNotifier extends StateNotifier<SyncState> {
       // ── Doctors layer (skipped when skipDoctors=true — loaded in background) ─
       (int, List<Map>, List<Map>) doctorCounts;
       if (skipDoctors) {
-        doctorCounts = (0, const <Map<String, dynamic>>[], const <Map<String, dynamic>>[]);
+        doctorCounts = (
+          0,
+          const <Map<String, dynamic>>[],
+          const <Map<String, dynamic>>[],
+        );
       } else {
         state = state.copyWith(
           status: SyncStatus.loading,
@@ -625,9 +668,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
         clearActiveOperation: skipDoctors ? false : true,
         unsyncedCount: unsynced,
         lastSyncAt: skipDoctors ? null : now,
-        message: skipDoctors
-            ? 'Данные обновлены'
-            : 'Синхронизация завершена',
+        message: skipDoctors ? 'Данные обновлены' : 'Синхронизация завершена',
         lastGetDebug: {
           'ok': true,
           'mode': fullRefresh ? 'layered_full' : 'layered_delta',
@@ -863,7 +904,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
   Future<void> _pushPendingPlans() async {
     final offline = _isOffline();
     final pending = await _db.getPendingPlans();
-    debugPrint('[PLAN PUSH] _pushPendingPlans: offline=$offline pending=${pending.length}');
+    debugPrint(
+      '[PLAN PUSH] _pushPendingPlans: offline=$offline pending=${pending.length}',
+    );
     if (offline) return;
     if (pending.isEmpty) return;
 
@@ -909,7 +952,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
         final data = response['response'];
         int? remoteId;
         if (data is Map) {
-          remoteId = (data['id'] as num?)?.toInt() ??
+          remoteId =
+              (data['id'] as num?)?.toInt() ??
               (data['plan_id'] as num?)?.toInt() ??
               (data['visit_id'] as num?)?.toInt();
         }
@@ -1352,6 +1396,23 @@ class SyncNotifier extends StateNotifier<SyncState> {
       }
     } catch (_) {}
 
+    // Visit formats (used by plan-screen format picker).
+    try {
+      final formats = await _remoteApi.getVisitFormats();
+      if (formats.isNotEmpty) {
+        final rows = formats
+            .map(
+              (e) => {
+                'id': e['id'],
+                'name': e['name'] ?? e['title'] ?? '${e['id']}',
+                'raw_json': jsonEncode(e),
+              },
+            )
+            .toList();
+        await _db.upsertVisitFormats(rows);
+      }
+    } catch (_) {}
+
     if (!quickOnly) {
       // Download material files for offline access
       try {
@@ -1533,10 +1594,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
     // prevent repair when the server adds new doctors. Fall back to stored
     // value only if the API call fails.
     final freshTotal = await _remoteApi.getDoctorsDictionaryTotal();
-    final expectedTotal =
-        (freshTotal != null && freshTotal > 0)
-            ? freshTotal
-            : await _doctorDirectoryExpectedTotal();
+    final expectedTotal = (freshTotal != null && freshTotal > 0)
+        ? freshTotal
+        : await _doctorDirectoryExpectedTotal();
     if (expectedTotal != null && expectedTotal > 0) {
       await _setDoctorDirectoryExpectedTotal(expectedTotal);
     }
@@ -1563,9 +1623,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
         final progressTotal = expectedTotal;
         final percent = _progressPercent(progressCurrent, progressTotal);
         await _publishLayerProgress(
-          percent == null
-              ? 'Обновляем данные…'
-              : 'Обновляем данные: $percent%',
+          percent == null ? 'Обновляем данные…' : 'Обновляем данные: $percent%',
           debug: {
             'mode': 'layered',
             'layer': 'doctors',
@@ -1635,7 +1693,12 @@ class SyncNotifier extends StateNotifier<SyncState> {
     );
 
     try {
-      final unsyncedRows = await _db.getVisits(unsyncedOnly: true);
+      // Skip visits whose backoff window has not elapsed yet so we don't hammer
+      // the server on every reconcile after a transient failure.
+      final unsyncedRows = await _db.getVisits(
+        unsyncedOnly: true,
+        dueForRetryOnly: true,
+      );
 
       final syncedIds = <int>[];
       final removedIds = <int>[];
@@ -1670,13 +1733,37 @@ class SyncNotifier extends StateNotifier<SyncState> {
             );
             continue;
           }
-          failed.add('visit#${visit.id ?? '-'}: ${_pushErrorMessage(e)}');
           final requestJson = e is RemotePushException
               ? jsonEncode(e.request)
               : null;
           final responseJson = e is RemotePushException
               ? jsonEncode(e.response)
               : jsonEncode({'error': '$e'});
+          if (visit.id != null) {
+            await _db.setVisitPushPayload(
+              visitId: visit.id!,
+              requestJson: requestJson,
+              responseJson: responseJson,
+            );
+            // Transient failure: bump attempt count + schedule backoff. After
+            // too many tries, give up so the queue does not spin forever.
+            final attempts = await _db.recordVisitPushFailure(visit.id!);
+            if (attempts >= _maxPushAttempts) {
+              await _db.deleteVisit(visit.id!);
+              removedIds.add(visit.id!);
+              responses.add({
+                'visit_id': visit.id,
+                'ok': false,
+                'removed': true,
+                'error': _pushErrorMessage(e),
+              });
+              failed.add(
+                'visit#${visit.id}: удалён после $attempts неудачных попыток',
+              );
+              continue;
+            }
+          }
+          failed.add('visit#${visit.id ?? '-'}: ${_pushErrorMessage(e)}');
           responses.add({
             'visit_id': visit.id,
             'ok': false,
@@ -1684,13 +1771,6 @@ class SyncNotifier extends StateNotifier<SyncState> {
             if (e is RemotePushException) 'response': e.response,
             'error': '$e',
           });
-          if (visit.id != null) {
-            await _db.setVisitPushPayload(
-              visitId: visit.id!,
-              requestJson: requestJson,
-              responseJson: responseJson,
-            );
-          }
         }
       }
 
@@ -1966,6 +2046,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
     }
     _isReconciling = true;
     try {
+      // Guard against "connected but no internet": skip silently if the host
+      // is not actually reachable. Pending data stays queued for next time.
+      if (!await _hasRealInternet()) return;
       // If no token (e.g. offline login via cache), re-auth first
       if (!_apiClient.hasToken) {
         final ok = await _silentReauth();
@@ -2077,6 +2160,12 @@ class _LiveSyncResult {
     required this.materialsCount,
     required this.cachedFilesCount,
   });
+
+  const _LiveSyncResult.empty()
+    : visitsCount = 0,
+      plannedVisitsCount = 0,
+      materialsCount = 0,
+      cachedFilesCount = 0;
 }
 
 String _pushErrorMessage(Object error) {

@@ -213,8 +213,8 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
           };
         }).toList();
 
-        final isGroupVisit = widget.doctorIds != null &&
-            widget.doctorIds!.contains(',');
+        final isGroupVisit =
+            widget.doctorIds != null && widget.doctorIds!.contains(',');
         final rawVisitJson = jsonEncode({
           'organization_id': widget.orgId,
           'organization_name': widget.orgName,
@@ -241,6 +241,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
           'visit_type': 'lpu',
           'status': 'completed',
           'notes': comment,
+          'medical_rep_name': medRepName,
           'created_at': now,
           'updated_at': now,
           'raw_json': rawVisitJson,

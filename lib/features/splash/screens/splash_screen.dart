@@ -3,10 +3,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lima/core/auth/credentials_storage.dart';
+import 'package:lima/core/config/env_config.dart';
 import 'package:lima/core/network/api_client.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
@@ -187,7 +187,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       final existingOrgs = await dbRef.getOrganisations();
       final isFirstRun = existingOrgs.isEmpty;
       final budget = isFirstRun ? _firstRunBudget : _warmBudget;
-      debugPrint('[SPLASH] step 2: parallel sync (firstRun=$isFirstRun, budget=${budget.inSeconds}s)');
+      debugPrint(
+        '[SPLASH] step 2: parallel sync (firstRun=$isFirstRun, budget=${budget.inSeconds}s)',
+      );
       setState(() {
         _step = isFirstRun ? 'Загружаем данные' : 'Обновляем данные';
         _progress = 0.35;
@@ -204,8 +206,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           t.cancel();
           return;
         }
-        final elapsed = budgetTimer.elapsedMilliseconds /
-            budget.inMilliseconds;
+        final elapsed = budgetTimer.elapsedMilliseconds / budget.inMilliseconds;
         final clamped = elapsed.clamp(0.0, 1.0);
         setState(() {
           _progress = 0.35 + (clamped * 0.55);
@@ -219,8 +220,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             fullRefresh: isFirstRun,
           )
           .catchError((Object e) {
-        debugPrint('[SPLASH] sync error: $e');
-      });
+            debugPrint('[SPLASH] sync error: $e');
+          });
       final deadline = Future<void>.delayed(budget);
       final minDelay = Future<void>.delayed(const Duration(seconds: 5));
       // Wait for (sync OR deadline) AND minimum 5s so data has time to load.
@@ -295,7 +296,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   Future<bool> _checkOnline() async {
     try {
       final result = await InternetAddress.lookup(
-        'crm.lima.uz',
+        EnvConfig.connectivityHost,
       ).timeout(const Duration(seconds: 5));
       return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
     } catch (_) {
@@ -350,18 +351,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Image.asset(
-                    'assets/images/logo.png',
-                    width: 100,
-                    height: 100,
-                  ),
-                  Text(
-                    'LIMA',
-                    style: GoogleFonts.figtree(
-                      color: Colors.white,
-                      fontSize: 38,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1,
-                    ),
+                    'assets/images/lima_logo_1.png',
+                    width: 200,
+                    height: 200,
                   ),
                   const SizedBox(height: 48),
                   Container(
@@ -379,62 +371,63 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Builder(builder: (context) {
-                    final baseStyle = TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7),
-                      fontSize: 12,
-                    );
-                    if (_canRetry) {
-                      return Text(
-                        _step,
-                        style: baseStyle,
-                        textAlign: TextAlign.center,
+                  Builder(
+                    builder: (context) {
+                      final baseStyle = TextStyle(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 12,
                       );
-                    }
-                    final syncMsg = ref.watch(syncProvider).message;
-                    final base = (_loading &&
-                            syncMsg != null &&
-                            syncMsg.isNotEmpty)
-                        ? syncMsg.replaceFirst(RegExp(r'[.…]+\s*$'), '')
-                        : _step.replaceFirst(RegExp(r'[.…]+\s*$'), '');
-                    // Reserve space for 3 dots so the centered text doesn't
-                    // shift left/right as dots animate. Hidden dots are
-                    // rendered transparent.
-                    final visible = _loading ? _dotCount : 0;
-                    return RichText(
-                      textAlign: TextAlign.center,
-                      text: TextSpan(
-                        style: baseStyle,
-                        children: [
-                          TextSpan(text: base),
-                          TextSpan(
-                            text: '.',
-                            style: TextStyle(
-                              color: visible >= 1
-                                  ? baseStyle.color
-                                  : Colors.transparent,
+                      if (_canRetry) {
+                        return Text(
+                          _step,
+                          style: baseStyle,
+                          textAlign: TextAlign.center,
+                        );
+                      }
+                      final syncMsg = ref.watch(syncProvider).message;
+                      final base =
+                          (_loading && syncMsg != null && syncMsg.isNotEmpty)
+                          ? syncMsg.replaceFirst(RegExp(r'[.…]+\s*$'), '')
+                          : _step.replaceFirst(RegExp(r'[.…]+\s*$'), '');
+                      // Reserve space for 3 dots so the centered text doesn't
+                      // shift left/right as dots animate. Hidden dots are
+                      // rendered transparent.
+                      final visible = _loading ? _dotCount : 0;
+                      return RichText(
+                        textAlign: TextAlign.center,
+                        text: TextSpan(
+                          style: baseStyle,
+                          children: [
+                            TextSpan(text: base),
+                            TextSpan(
+                              text: '.',
+                              style: TextStyle(
+                                color: visible >= 1
+                                    ? baseStyle.color
+                                    : Colors.transparent,
+                              ),
                             ),
-                          ),
-                          TextSpan(
-                            text: '.',
-                            style: TextStyle(
-                              color: visible >= 2
-                                  ? baseStyle.color
-                                  : Colors.transparent,
+                            TextSpan(
+                              text: '.',
+                              style: TextStyle(
+                                color: visible >= 2
+                                    ? baseStyle.color
+                                    : Colors.transparent,
+                              ),
                             ),
-                          ),
-                          TextSpan(
-                            text: '.',
-                            style: TextStyle(
-                              color: visible >= 3
-                                  ? baseStyle.color
-                                  : Colors.transparent,
+                            TextSpan(
+                              text: '.',
+                              style: TextStyle(
+                                color: visible >= 3
+                                    ? baseStyle.color
+                                    : Colors.transparent,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
                   if (_canRetry) ...[
                     const SizedBox(height: 8),
                     ElevatedButton(

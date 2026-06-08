@@ -1,8 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:lima/core/config/env_config.dart';
 
-const _baseUrl = 'https://dev.lima.uz/api';
+final _baseUrl = EnvConfig.apiBaseUrl;
 const _tokenKey = 'auth_token';
 
 final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {

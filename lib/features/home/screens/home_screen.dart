@@ -249,18 +249,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 Row(
                   children: [
                     Image.asset(
-                      'assets/images/logo.png',
+                      'assets/images/lima_logo_2.png',
                       width: 48,
                       height: 48,
                     ),
-                    Text(
-                      'LIMA',
-                      style: GoogleFonts.figtree(
-                        color: Colors.white,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1,
-                      ),
+                    Image.asset(
+                      'assets/images/lima_text.png',
+                      height: 28,
                     ),
                     const Spacer(),
                     Builder(
