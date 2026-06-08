@@ -60,6 +60,98 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  String _flagFor(String code) => switch (code) {
+    'en' => '🇬🇧',
+    'uz_latn' || 'uz_cyrl' => '🇺🇿',
+    _ => '🇷🇺',
+  };
+
+  PopupMenuItem<String> _langMenuItem(
+    String value,
+    String flag,
+    String label,
+    String current,
+  ) {
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          Text(flag, style: const TextStyle(fontSize: 16)),
+          const SizedBox(width: 10),
+          Text(
+            label,
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: AppColors.primaryText,
+            ),
+          ),
+          const Spacer(),
+          if (current == value)
+            const Icon(Icons.check_rounded, size: 16, color: AppColors.primary),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLangButton(String localeCode) {
+    return Builder(
+      builder: (btnCtx) => GestureDetector(
+        onTap: () async {
+          final box = btnCtx.findRenderObject()! as RenderBox;
+          final overlay =
+              Navigator.of(btnCtx).overlay!.context.findRenderObject()!
+                  as RenderBox;
+          final pos = RelativeRect.fromRect(
+            Rect.fromPoints(
+              box.localToGlobal(
+                Offset(0, box.size.height + 4),
+                ancestor: overlay,
+              ),
+              box.localToGlobal(
+                Offset(box.size.width, box.size.height + 4),
+                ancestor: overlay,
+              ),
+            ),
+            Offset.zero & overlay.size,
+          );
+          final selected = await showMenu<String>(
+            context: btnCtx,
+            position: pos,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            color: AppColors.secondaryBg,
+            elevation: 4,
+            items: [
+              _langMenuItem('ru', '🇷🇺', 'Русский', localeCode),
+              _langMenuItem('en', '🇬🇧', 'English', localeCode),
+              _langMenuItem('uz_latn', '🇺🇿', 'O\'zbekcha', localeCode),
+              _langMenuItem('uz_cyrl', '🇺🇿', 'Ўзбекча', localeCode),
+            ],
+          );
+          if (selected != null && mounted) {
+            await ref.read(appLocaleProvider.notifier).setLocale(selected);
+            if (mounted) setState(() {});
+          }
+        },
+        child: Container(
+          width: 44,
+          height: 36,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            _flagFor(localeCode),
+            style: const TextStyle(fontSize: 18),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
@@ -96,59 +188,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                         child: Row(
                           children: [
-                            Row(
-                              children: [
-                                Image.asset(
-                                  'assets/images/lima_logo_1.png',
-                                  width: 120,
-                                  height: 60,
-                                ),
-                              ],
+                            Image.asset(
+                              'assets/images/lima_logo_2.png',
+                              width: 48,
+                              height: 48,
                             ),
                             const Spacer(),
-                            Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.92),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                              ),
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<String>(
-                                  value: localeCode,
-                                  borderRadius: BorderRadius.circular(12),
-                                  icon: const Icon(
-                                    Icons.keyboard_arrow_down_rounded,
-                                  ),
-                                  items: const [
-                                    DropdownMenuItem(
-                                      value: 'ru',
-                                      child: Text('RU'),
-                                    ),
-                                    DropdownMenuItem(
-                                      value: 'en',
-                                      child: Text('EN'),
-                                    ),
-                                    DropdownMenuItem(
-                                      value: 'uz_latn',
-                                      child: Text('UZ'),
-                                    ),
-                                    DropdownMenuItem(
-                                      value: 'uz_cyrl',
-                                      child: Text('ЎЗ'),
-                                    ),
-                                  ],
-                                  onChanged: (v) async {
-                                    if (v == null) return;
-                                    await ref
-                                        .read(appLocaleProvider.notifier)
-                                        .setLocale(v);
-                                    if (mounted) setState(() {});
-                                  },
-                                ),
-                              ),
-                            ),
+                            _buildLangButton(localeCode),
                           ],
                         ),
                       ),

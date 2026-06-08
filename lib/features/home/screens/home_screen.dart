@@ -257,7 +257,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       width: 44,
                       height: 44,
                     ),
-                    Image.asset('assets/images/lima_text.png', height: 18),
+                    Image.asset('assets/images/lima_text.png', height: 14),
                     const Spacer(),
                     Builder(
                       builder: (btnCtx) => AppTapScale(
@@ -402,7 +402,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         style: GoogleFonts.manrope(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: AppColors.secondaryText,
+                          color: Colors.black,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -453,7 +453,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         style: GoogleFonts.manrope(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: AppColors.secondaryText,
+                          color: Colors.black,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -540,7 +540,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                             style: GoogleFonts.manrope(
                               fontSize: 13,
                               fontWeight: FontWeight.w500,
-                              color: AppColors.secondaryText,
+                              color: Colors.black,
                             ),
                           ),
                           const Spacer(),
@@ -605,7 +605,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         style: GoogleFonts.manrope(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: AppColors.secondaryText,
+                          color: Colors.black,
                         ),
                       ),
                       const SizedBox(height: 8),
