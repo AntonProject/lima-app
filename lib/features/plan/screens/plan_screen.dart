@@ -9,7 +9,6 @@ import 'package:table_calendar/table_calendar.dart';
 
 import '../../../core/db/local_database.dart';
 import '../../../core/models/models.dart';
-import '../../../core/network/remote_api_service.dart';
 import '../../../core/providers/sync_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
@@ -309,6 +308,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                       lastDay: DateTime.utc(2030, 12, 31),
                       focusedDay: _focusedDay,
                       calendarFormat: _calendarFormat,
+                      availableGestures: AvailableGestures.horizontalSwipe,
                       eventLoader: (d) =>
                           eventMap[DateTime(d.year, d.month, d.day)] ??
                           const <PlannedVisit>[],
@@ -351,11 +351,12 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                             day: day.day,
                             bg: isSelected
                                 ? AppColors.primary
-                                : Colors.transparent,
+                                : AppColors.primary.withValues(alpha: 0.08),
                             fg: isSelected
                                 ? Colors.white
-                                : AppColors.primaryText,
-                            bold: isSelected,
+                                : AppColors.primary,
+                            bold: true,
+                            border: isSelected ? null : AppColors.primary,
                           );
                         },
                         outsideBuilder: (context, day, focusedDay) {
@@ -407,6 +408,13 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                       onDaySelected: (selected, _) {
                         setState(() => _selectedDay = selected);
                       },
+                      onPageChanged: (focused) {
+                        if (!mounted) return;
+                        // Swipe = same effect as the ← / → buttons:
+                        // update _focusedDay so the header title and the
+                        // calendar page stay in sync.
+                        setState(() => _focusedDay = focused);
+                      },
                     ),
                   ],
                 ),
@@ -415,12 +423,16 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
               // ── List ───────────────────────────────────────────────────────
               Expanded(
                 child: selectedVisits.isEmpty
-                    ? Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                    ? SingleChildScrollView(
+                        padding: EdgeInsets.fromLTRB(
+                          16,
+                          18,
+                          16,
+                          LimaNavBarLayout.scrollBottomPadding(context) + 64,
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            const SizedBox(height: 18),
                             Align(
                               alignment: Alignment.centerLeft,
                               child: Text(
@@ -432,13 +444,10 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                                 ),
                               ),
                             ),
-                            const Expanded(
-                              child: Center(
-                                child: EmptyState(
-                                  icon: Icons.calendar_month_rounded,
-                                  title: 'На эту дату визитов нет',
-                                ),
-                              ),
+                            const SizedBox(height: 24),
+                            const EmptyState(
+                              icon: Icons.calendar_month_rounded,
+                              title: 'На эту дату визитов нет',
                             ),
                           ],
                         ),
@@ -606,19 +615,18 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
   }
 
   String _calendarTitle() {
+    final ref = _focusedDay;
     if (_calendarFormat == CalendarFormat.week) {
-      final start = _focusedDay.subtract(
-        Duration(days: _focusedDay.weekday - 1),
-      );
+      final start = ref.subtract(Duration(days: ref.weekday - 1));
       final end = start.add(const Duration(days: 6));
       final fmt = DateFormat('d MMM', _localeTag);
       return '${fmt.format(start).replaceAll('.', '')} — '
           '${fmt.format(end).replaceAll('.', '')}';
     }
     final month = DateFormat.MMMM(_localeTag).format(
-      DateTime(_focusedDay.year, _focusedDay.month, 1),
+      DateTime(ref.year, ref.month, 1),
     );
-    return '${_ucFirst(month)} ${_focusedDay.year}';
+    return '${_ucFirst(month)} ${ref.year}';
   }
 }
 
@@ -796,12 +804,14 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
   List<Map<String, dynamic>> _lpuOrgs = [];
   List<Map<String, dynamic>> _pharmacyOrgs = [];
 
-  // Visit format picker options — loaded from /api/visits/formats.
-  // Fallback defaults include all 4 known formats.
+  // Visit format picker options.
+  // Defaults — used until [_loadFormats] populates from the local visit_formats
+  // cache (which itself is refreshed from /api/visits/formats on splash).
+  // Format id=4 («Групповая презентация и двойной визит») is filtered out of
+  // the picker because product wants users to pick group/double separately.
   List<_PickerOption<String>> _lpuFormats = const [
     _PickerOption(value: 'group', label: 'Групповая презентация'),
     _PickerOption(value: 'double', label: 'Двойной визит'),
-    _PickerOption(value: 'group_double', label: 'Групповая презентация и двойной визит'),
   ];
   List<_PickerOption<String>> _pharmacyFormats = const [
     _PickerOption(value: 'circle', label: 'Фармкружок'),
@@ -821,18 +831,20 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
     _loadFormats();
   }
 
+  /// Reads cached formats from local DB (refreshed from API on splash).
+  /// Filters out id=4 so the picker shows group/double as separate items.
   Future<void> _loadFormats() async {
     try {
-      final api = ref.read(remoteApiServiceProvider);
-      final formats = await api.getVisitFormats();
-      if (!mounted || formats.isEmpty) return;
+      final rows = await widget.db.getVisitFormats();
+      if (!mounted || rows.isEmpty) return;
 
       final lpuOpts = <_PickerOption<String>>[];
       final pharmOpts = <_PickerOption<String>>[];
-      for (final f in formats) {
-        final id = (f['id'] as num?)?.toInt();
-        final name = (f['name'] as String?)?.trim() ?? '';
+      for (final r in rows) {
+        final id = (r['id'] as num?)?.toInt();
+        final name = (r['name'] as String?)?.trim() ?? '';
         if (id == null || name.isEmpty) continue;
+        if (id == 4) continue; // hide combined group+double from picker
         final internal = _fmtIdToInternal(id);
         if (internal == null) continue;
         final opt = _PickerOption<String>(value: internal, label: name);
@@ -916,7 +928,8 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (ctx) {
-        final maxH = MediaQuery.of(ctx).size.height * 0.45;
+        final bottomPad = MediaQuery.of(ctx).padding.bottom;
+        final maxH = MediaQuery.of(ctx).size.height * 0.45 + bottomPad;
         return StatefulBuilder(
           builder: (ctx, setModalState) {
             List<_PickerOption<T>> filtered() {
@@ -925,18 +938,17 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
               return options.where((e) => e.label.toLowerCase().contains(q)).toList();
             }
 
-            return SafeArea(
-              top: false,
-              child: Container(
-                constraints: BoxConstraints(maxHeight: maxH),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+            return Container(
+              constraints: BoxConstraints(maxHeight: maxH),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              padding: EdgeInsets.only(bottom: bottomPad),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
                       child: Text(
@@ -1042,7 +1054,6 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                     ),
                   ],
                 ),
-              ),
             );
           },
         );
@@ -1065,21 +1076,21 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (ctx) {
-        final maxH = MediaQuery.of(ctx).size.height * 0.55;
+        final bottomPad = MediaQuery.of(ctx).padding.bottom;
+        final maxH = MediaQuery.of(ctx).size.height * 0.55 + bottomPad;
         return StatefulBuilder(
           builder: (ctx, setModalState) {
-            return SafeArea(
-              top: false,
-              child: Container(
-                constraints: BoxConstraints(maxHeight: maxH),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+            return Container(
+              constraints: BoxConstraints(maxHeight: maxH),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              padding: EdgeInsets.only(bottom: bottomPad),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
                       child: Text(
@@ -1175,7 +1186,6 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                     ),
                   ],
                 ),
-              ),
             );
           },
         );
@@ -1717,12 +1727,14 @@ class _DayCell extends StatelessWidget {
   final Color bg;
   final Color fg;
   final bool bold;
+  final Color? border;
 
   const _DayCell({
     required this.day,
     required this.bg,
     required this.fg,
     this.bold = false,
+    this.border,
   });
 
   @override
@@ -1732,6 +1744,7 @@ class _DayCell extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(8),
+        border: border != null ? Border.all(color: border!, width: 1.4) : null,
       ),
       alignment: Alignment.center,
       child: Text(
