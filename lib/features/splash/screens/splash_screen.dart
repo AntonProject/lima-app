@@ -352,12 +352,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                 children: [
                   Image.asset(
                     'assets/images/lima_logo_1.png',
-                    width: 200,
-                    height: 200,
+                    width: 160,
+                    height: 160,
                   ),
                   const SizedBox(height: 48),
                   Container(
-                    width: 240,
+                    width: 180,
                     clipBehavior: Clip.antiAlias,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(8),

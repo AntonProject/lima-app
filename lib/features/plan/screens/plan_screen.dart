@@ -37,13 +37,18 @@ class PlannedVisitsNotifier extends StateNotifier<List<PlannedVisit>> {
         final localId = (row['id'] as num?)?.toInt();
         if (localId == null) continue;
         final key = remoteId != null ? 'r_$remoteId' : 'l_$localId';
-        final visitDate = DateTime.tryParse('${row['visit_date'] ?? ''}') ?? DateTime.now();
+        final visitDate =
+            DateTime.tryParse('${row['visit_date'] ?? ''}') ?? DateTime.now();
         merged[key] = PlannedVisit(
           id: remoteId ?? localId,
           organisationName: '${row['org_name'] ?? ''}',
           organisationId: (row['org_id'] as num?)?.toInt(),
-          organisationType: (row['org_type'] ?? 'lpu') == 'pharmacy' ? OrgType.pharmacy : OrgType.lpu,
-          doctorName: (row['doctor_name'] as String?)?.isNotEmpty == true ? row['doctor_name'] as String : null,
+          organisationType: (row['org_type'] ?? 'lpu') == 'pharmacy'
+              ? OrgType.pharmacy
+              : OrgType.lpu,
+          doctorName: (row['doctor_name'] as String?)?.isNotEmpty == true
+              ? row['doctor_name'] as String
+              : null,
           assignedBy: row['assigned_by'] as String? ?? '',
           city: row['city'] as String?,
           district: row['district'] as String?,
@@ -138,14 +143,18 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
     final String subType;
     switch (v.visitFormat) {
       case 'circle':
-        type = 'pharmacy'; subType = 'circle';
+        type = 'pharmacy';
+        subType = 'circle';
       case 'double':
-        type = 'lpu'; subType = 'lpu';
+        type = 'lpu';
+        subType = 'lpu';
       case 'group':
       case 'group_double':
-        type = 'lpu'; subType = 'group';
+        type = 'lpu';
+        subType = 'group';
       case 'stock':
-        type = 'pharmacy'; subType = 'stock';
+        type = 'pharmacy';
+        subType = 'stock';
       default:
         type = isPharmacy ? 'pharmacy' : 'lpu';
         subType = isPharmacy ? 'order' : 'lpu';
@@ -172,9 +181,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
     } catch (e, st) {
       debugPrint('Plan: openVisitDetail failed: $e\n$st');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось открыть визит: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Не удалось открыть визит: $e')));
     }
   }
 
@@ -212,9 +221,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                   children: [
                     Padding(
                       padding: EdgeInsets.fromLTRB(
-                        16,
-                        MediaQuery.of(context).padding.top + 10,
-                        16,
+                        12,
+                        MediaQuery.of(context).padding.top + 12,
+                        12,
                         8,
                       ),
                       child: Row(
@@ -269,13 +278,14 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                     ),
                     // Month nav + calendar
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
                       child: Row(
                         children: [
                           _navBtn(Icons.chevron_left_rounded, () {
                             setState(() {
                               final base = _visibleStart(_focusedDay);
-                              _focusedDay = _calendarFormat == CalendarFormat.week
+                              _focusedDay =
+                                  _calendarFormat == CalendarFormat.week
                                   ? base.subtract(const Duration(days: 7))
                                   : DateTime(base.year, base.month - 1, 1);
                             });
@@ -295,7 +305,8 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                           _navBtn(Icons.chevron_right_rounded, () {
                             setState(() {
                               final base = _visibleStart(_focusedDay);
-                              _focusedDay = _calendarFormat == CalendarFormat.week
+                              _focusedDay =
+                                  _calendarFormat == CalendarFormat.week
                                   ? base.add(const Duration(days: 7))
                                   : DateTime(base.year, base.month + 1, 1);
                             });
@@ -352,9 +363,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                             bg: isSelected
                                 ? AppColors.primary
                                 : AppColors.primary.withValues(alpha: 0.08),
-                            fg: isSelected
-                                ? Colors.white
-                                : AppColors.primary,
+                            fg: isSelected ? Colors.white : AppColors.primary,
                             bold: true,
                             border: isSelected ? null : AppColors.primary,
                           );
@@ -366,9 +375,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                             bg: isSelected
                                 ? AppColors.primary
                                 : Colors.transparent,
-                            fg: isSelected
-                                ? Colors.white
-                                : AppColors.hintText,
+                            fg: isSelected ? Colors.white : AppColors.hintText,
                             bold: isSelected,
                           );
                         },
@@ -425,9 +432,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                 child: selectedVisits.isEmpty
                     ? SingleChildScrollView(
                         padding: EdgeInsets.fromLTRB(
-                          16,
+                          12,
                           18,
-                          16,
+                          12,
                           LimaNavBarLayout.scrollBottomPadding(context) + 64,
                         ),
                         child: Column(
@@ -454,9 +461,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                       )
                     : ListView.builder(
                         padding: EdgeInsets.fromLTRB(
-                          16,
+                          12,
                           18,
-                          16,
+                          12,
                           LimaNavBarLayout.scrollBottomPadding(context) + 64,
                         ),
                         itemCount: selectedVisits.length + 1,
@@ -608,7 +615,11 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
   String _visitsTitle() {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final selected = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day);
+    final selected = DateTime(
+      _selectedDay.year,
+      _selectedDay.month,
+      _selectedDay.day,
+    );
     if (selected == today) return 'Визиты на Сегодня';
     final dateStr = DateFormat('d MMMM', _localeTag).format(_selectedDay);
     return 'Визиты на $dateStr';
@@ -623,9 +634,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
       return '${fmt.format(start).replaceAll('.', '')} — '
           '${fmt.format(end).replaceAll('.', '')}';
     }
-    final month = DateFormat.MMMM(_localeTag).format(
-      DateTime(ref.year, ref.month, 1),
-    );
+    final month = DateFormat.MMMM(
+      _localeTag,
+    ).format(DateTime(ref.year, ref.month, 1));
     return '${_ucFirst(month)} ${ref.year}';
   }
 }
@@ -669,7 +680,7 @@ class _PlanVisitCard extends StatelessWidget {
     final address = _formatAddress();
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 8),
       child: GestureDetector(
         onTap: onTap,
         child: Container(
@@ -705,8 +716,9 @@ class _PlanVisitCard extends StatelessWidget {
                       style: GoogleFonts.manrope(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        fontStyle:
-                            doctorCsv.isEmpty ? FontStyle.italic : FontStyle.normal,
+                        fontStyle: doctorCsv.isEmpty
+                            ? FontStyle.italic
+                            : FontStyle.normal,
                         color: doctorCsv.isEmpty
                             ? AppColors.hintText
                             : AppColors.primary,
@@ -935,7 +947,9 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
             List<_PickerOption<T>> filtered() {
               if (!searchable || queryCtrl.text.trim().isEmpty) return options;
               final q = queryCtrl.text.toLowerCase().trim();
-              return options.where((e) => e.label.toLowerCase().contains(q)).toList();
+              return options
+                  .where((e) => e.label.toLowerCase().contains(q))
+                  .toList();
             }
 
             return Container(
@@ -949,111 +963,131 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                    child: Text(
+                      title,
+                      style: GoogleFonts.manrope(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primaryText,
+                      ),
+                    ),
+                  ),
+                  if (searchable)
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-                      child: Text(
-                        title,
-                        style: GoogleFonts.manrope(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primaryText,
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      child: Container(
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFD),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFD6DEE8)),
+                        ),
+                        child: TextField(
+                          controller: queryCtrl,
+                          onChanged: (_) => setModalState(() {}),
+                          style: GoogleFonts.manrope(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.primaryText,
+                          ),
+                          decoration: InputDecoration(
+                            border: InputBorder.none,
+                            isDense: true,
+                            hintText: 'Поиск...',
+                            hintStyle: GoogleFonts.manrope(
+                              fontSize: 12.5,
+                              color: AppColors.hintText,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 11,
+                            ),
+                            prefixIcon: const Icon(
+                              Icons.search_rounded,
+                              size: 18,
+                              color: AppColors.hintText,
+                            ),
+                            prefixIconConstraints: const BoxConstraints(
+                              minWidth: 36,
+                              minHeight: 36,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                    if (searchable)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                        child: Container(
-                          height: 42,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF8FAFD),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFFD6DEE8)),
-                          ),
-                          child: TextField(
-                            controller: queryCtrl,
-                            onChanged: (_) => setModalState(() {}),
-                            style: GoogleFonts.manrope(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w500,
-                              color: AppColors.primaryText,
-                            ),
-                            decoration: InputDecoration(
-                              border: InputBorder.none,
-                              isDense: true,
-                              hintText: 'Поиск...',
-                              hintStyle: GoogleFonts.manrope(
-                                fontSize: 12.5,
-                                color: AppColors.hintText,
-                                fontWeight: FontWeight.w500,
+                  const Divider(height: 1, color: AppColors.divider),
+                  Flexible(
+                    child: Builder(
+                      builder: (_) {
+                        final rows = filtered();
+                        if (rows.isEmpty) {
+                          return Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Text(
+                                'Ничего не найдено',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 13,
+                                  color: AppColors.secondaryText,
+                                ),
                               ),
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-                              prefixIcon: const Icon(Icons.search_rounded, size: 18, color: AppColors.hintText),
-                              prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                             ),
+                          );
+                        }
+                        return ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: rows.length,
+                          separatorBuilder: (_, _) => const Divider(
+                            height: 1,
+                            color: AppColors.divider,
                           ),
-                        ),
-                      ),
-                    const Divider(height: 1, color: AppColors.divider),
-                    Flexible(
-                      child: Builder(
-                        builder: (_) {
-                          final rows = filtered();
-                          if (rows.isEmpty) {
-                            return Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Text(
-                                  'Ничего не найдено',
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 13,
-                                    color: AppColors.secondaryText,
-                                  ),
+                          itemBuilder: (_, i) {
+                            final item = rows[i];
+                            final isSelected = selected == item.value;
+                            return InkWell(
+                              onTap: () => Navigator.pop(ctx, item.value),
+                              child: Container(
+                                color: isSelected
+                                    ? const Color(0xFFF3F6FB)
+                                    : Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        item.label,
+                                        style: GoogleFonts.manrope(
+                                          fontSize: 13,
+                                          fontWeight: isSelected
+                                              ? FontWeight.w700
+                                              : FontWeight.w600,
+                                          color: AppColors.primaryText,
+                                        ),
+                                      ),
+                                    ),
+                                    if (isSelected)
+                                      const Icon(
+                                        Icons.radio_button_checked_rounded,
+                                        size: 18,
+                                        color: AppColors.primary,
+                                      ),
+                                  ],
                                 ),
                               ),
                             );
-                          }
-                          return ListView.separated(
-                            shrinkWrap: true,
-                            itemCount: rows.length,
-                            separatorBuilder: (_, _) => const Divider(height: 1, color: AppColors.divider),
-                            itemBuilder: (_, i) {
-                              final item = rows[i];
-                              final isSelected = selected == item.value;
-                              return InkWell(
-                                onTap: () => Navigator.pop(ctx, item.value),
-                                child: Container(
-                                  color: isSelected ? const Color(0xFFF3F6FB) : Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          item.label,
-                                          style: GoogleFonts.manrope(
-                                            fontSize: 13,
-                                            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-                                            color: AppColors.primaryText,
-                                          ),
-                                        ),
-                                      ),
-                                      if (isSelected)
-                                        const Icon(
-                                          Icons.radio_button_checked_rounded,
-                                          size: 18,
-                                          color: AppColors.primary,
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          );
-                        },
-                      ),
+                          },
+                        );
+                      },
                     ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
             );
           },
         );
@@ -1091,101 +1125,99 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-                      child: Text(
-                        title,
-                        style: GoogleFonts.manrope(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primaryText,
-                        ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                    child: Text(
+                      title,
+                      style: GoogleFonts.manrope(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primaryText,
                       ),
                     ),
-                    const Divider(height: 1, color: AppColors.divider),
-                    Flexible(
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: options.length,
-                        separatorBuilder: (_, _) => const Divider(
-                          height: 1,
-                          color: AppColors.divider,
-                        ),
-                        itemBuilder: (_, i) {
-                          final item = options[i];
-                          final isSelected = draft.contains(item.value);
-                          return InkWell(
-                            onTap: () => setModalState(() {
-                              if (isSelected) {
-                                draft.remove(item.value);
-                              } else {
-                                draft.add(item.value);
-                              }
-                            }),
-                            child: Container(
-                              color: isSelected
-                                  ? const Color(0xFFF3F6FB)
-                                  : Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 14,
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    isSelected
-                                        ? Icons.check_box_rounded
-                                        : Icons.check_box_outline_blank_rounded,
-                                    size: 20,
-                                    color: isSelected
-                                        ? AppColors.primary
-                                        : AppColors.hintText,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(
-                                      item.label,
-                                      style: GoogleFonts.manrope(
-                                        fontSize: 13,
-                                        fontWeight: isSelected
-                                            ? FontWeight.w700
-                                            : FontWeight.w600,
-                                        color: AppColors.primaryText,
-                                      ),
+                  ),
+                  const Divider(height: 1, color: AppColors.divider),
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: options.length,
+                      separatorBuilder: (_, _) =>
+                          const Divider(height: 1, color: AppColors.divider),
+                      itemBuilder: (_, i) {
+                        final item = options[i];
+                        final isSelected = draft.contains(item.value);
+                        return InkWell(
+                          onTap: () => setModalState(() {
+                            if (isSelected) {
+                              draft.remove(item.value);
+                            } else {
+                              draft.add(item.value);
+                            }
+                          }),
+                          child: Container(
+                            color: isSelected
+                                ? const Color(0xFFF3F6FB)
+                                : Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  isSelected
+                                      ? Icons.check_box_rounded
+                                      : Icons.check_box_outline_blank_rounded,
+                                  size: 20,
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : AppColors.hintText,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    item.label,
+                                    style: GoogleFonts.manrope(
+                                      fontSize: 13,
+                                      fontWeight: isSelected
+                                          ? FontWeight.w700
+                                          : FontWeight.w600,
+                                      color: AppColors.primaryText,
                                     ),
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        );
+                      },
                     ),
-                    const Divider(height: 1, color: AppColors.divider),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-                      child: ElevatedButton(
-                        onPressed: () =>
-                            Navigator.pop(ctx, draft.toList(growable: false)),
-                        style: ElevatedButton.styleFrom(
-                          minimumSize: const Size(double.infinity, 44),
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          'Готово (${draft.length})',
-                          style: GoogleFonts.manrope(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
+                  ),
+                  const Divider(height: 1, color: AppColors.divider),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+                    child: ElevatedButton(
+                      onPressed: () =>
+                          Navigator.pop(ctx, draft.toList(growable: false)),
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 44),
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
+                      child: Text(
+                        'Готово (${draft.length})',
+                        style: GoogleFonts.manrope(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
             );
           },
         );
@@ -1203,13 +1235,14 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
     final chips = _doctors
         .where((d) => _selectedDoctorIds.contains(d['id'] as int?))
         .map((d) {
-      final id = d['id'] as int;
-      final name = (d['full_name'] ?? '').toString();
-      return _DoctorChip(
-        label: name,
-        onRemove: () => setState(() => _selectedDoctorIds.remove(id)),
-      );
-    }).toList();
+          final id = d['id'] as int;
+          final name = (d['full_name'] ?? '').toString();
+          return _DoctorChip(
+            label: name,
+            onRemove: () => setState(() => _selectedDoctorIds.remove(id)),
+          );
+        })
+        .toList();
 
     return AppTapScale(
       pressedScale: 0.99,
@@ -1239,11 +1272,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                         ),
                       ),
                     )
-                  : Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: chips,
-                    ),
+                  : Wrap(spacing: 6, runSpacing: 6, children: chips),
             ),
             Icon(
               Icons.expand_more_rounded,
@@ -1284,9 +1313,13 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                 overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.manrope(
                   fontSize: 11.5,
-                  fontWeight: value == null || value.isEmpty ? FontWeight.w500 : FontWeight.w600,
+                  fontWeight: value == null || value.isEmpty
+                      ? FontWeight.w500
+                      : FontWeight.w600,
                   color: enabled
-                      ? (value == null || value.isEmpty ? AppColors.hintText : AppColors.primaryText)
+                      ? (value == null || value.isEmpty
+                            ? AppColors.hintText
+                            : AppColors.primaryText)
                       : AppColors.hintText.withValues(alpha: 0.8),
                 ),
               ),
@@ -1294,7 +1327,9 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
             Icon(
               Icons.expand_more_rounded,
               size: 20,
-              color: enabled ? AppColors.hintText : AppColors.hintText.withValues(alpha: 0.6),
+              color: enabled
+                  ? AppColors.hintText
+                  : AppColors.hintText.withValues(alpha: 0.6),
             ),
           ],
         ),
@@ -1328,9 +1363,9 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
         .toList();
     final doctorIds = _isLpu
         ? selectedDoctors
-            .map((d) => d['id'] as int?)
-            .whereType<int>()
-            .toList(growable: false)
+              .map((d) => d['id'] as int?)
+              .whereType<int>()
+              .toList(growable: false)
         : const <int>[];
     final doctorNamesCsv = selectedDoctors
         .map((d) => (d['full_name'] ?? '').toString().trim())
@@ -1376,9 +1411,9 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось сохранить план: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Не удалось сохранить план: $e')));
       return;
     }
 
@@ -1412,7 +1447,8 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final bottom = MediaQuery.of(context).viewInsets.bottom +
+    final bottom =
+        MediaQuery.of(context).viewInsets.bottom +
         MediaQuery.of(context).padding.bottom;
     final selectedOrgId = _selectedOrg?['id'] as int?;
 
@@ -1473,7 +1509,11 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                     color: AppColors.primaryBg,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.close_rounded, size: 18, color: AppColors.secondaryText),
+                  child: const Icon(
+                    Icons.close_rounded,
+                    size: 18,
+                    color: AppColors.secondaryText,
+                  ),
                 ),
               ),
             ],
@@ -1510,14 +1550,18 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                       selected: selectedOrgId,
                       searchable: true,
                       options: _allOrgs
-                          .map((org) => _PickerOption<int>(
-                                value: org['id'] as int,
-                                label: (org['name'] ?? '').toString(),
-                              ))
+                          .map(
+                            (org) => _PickerOption<int>(
+                              value: org['id'] as int,
+                              label: (org['name'] ?? '').toString(),
+                            ),
+                          )
                           .toList(),
                     );
                     if (!mounted || picked == null) return;
-                    final org = _allOrgs.where((o) => o['id'] == picked).firstOrNull;
+                    final org = _allOrgs
+                        .where((o) => o['id'] == picked)
+                        .firstOrNull;
                     setState(() {
                       _selectedOrg = org;
                       _selectedDoctorIds.clear();
@@ -1537,10 +1581,12 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                   title: 'Выберите врачей',
                   selected: _selectedDoctorIds,
                   options: _doctors
-                      .map((d) => _PickerOption<int>(
-                            value: d['id'] as int,
-                            label: (d['full_name'] ?? '').toString(),
-                          ))
+                      .map(
+                        (d) => _PickerOption<int>(
+                          value: d['id'] as int,
+                          label: (d['full_name'] ?? '').toString(),
+                        ),
+                      )
                       .toList(),
                 );
                 if (!mounted || picked == null) return;
@@ -1595,7 +1641,10 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
               filled: true,
               fillColor: Colors.white,
               isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
               hintText: 'Комментарий (необязательно)',
               hintStyle: GoogleFonts.manrope(
                 fontSize: 11.5,
@@ -1604,15 +1653,24 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFD6DEE8), width: 0.8),
+                borderSide: const BorderSide(
+                  color: Color(0xFFD6DEE8),
+                  width: 0.8,
+                ),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFD6DEE8), width: 0.8),
+                borderSide: const BorderSide(
+                  color: Color(0xFFD6DEE8),
+                  width: 0.8,
+                ),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFD6DEE8), width: 0.8),
+                borderSide: const BorderSide(
+                  color: Color(0xFFD6DEE8),
+                  width: 0.8,
+                ),
               ),
             ),
           ),
@@ -1623,8 +1681,12 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
             onPressed: _canSubmit ? _submit : null,
             style: ElevatedButton.styleFrom(
               minimumSize: const Size(double.infinity, 50),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              disabledBackgroundColor: AppColors.primary.withValues(alpha: 0.55),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              disabledBackgroundColor: AppColors.primary.withValues(
+                alpha: 0.55,
+              ),
               disabledForegroundColor: Colors.white.withValues(alpha: 0.95),
             ),
             child: const Text('Запланировать'),

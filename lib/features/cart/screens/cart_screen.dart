@@ -104,7 +104,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                     children: [
                       ...groups.map(
                         (group) => Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.only(bottom: 8),
                           child: _cartGroupCard(context, ref, notifier, group),
                         ),
                       ),

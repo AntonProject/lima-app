@@ -98,7 +98,7 @@ class _HistoryVisitsScreenState extends ConsumerState<HistoryVisitsScreen> {
                 final visit = _visits[index];
                 final isPharmacy = visit.type == 'pharmacy';
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: AppTapScale(
                     onTap: () => showVisitDetailDialog(context, visit: visit),
                     pressedScale: 0.95,

@@ -247,7 +247,7 @@ class OrgCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 8),
       child: AppTapScale(
         onTap: onTap,
         child: Container(
@@ -360,7 +360,7 @@ class DrugCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.secondaryBg,
@@ -482,7 +482,7 @@ class DoctorCardCheckbox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 8),
       child: AppTapScale(
         onTap: onTap,
         pressedScale: 0.9,
@@ -937,8 +937,8 @@ class EmptyState extends StatelessWidget {
             Text(
               title,
               style: GoogleFonts.manrope(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
                 color: AppColors.secondaryText,
               ),
               textAlign: TextAlign.center,

@@ -132,7 +132,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           ? AppColors.success.withValues(alpha: 0.6)
                           : AppColors.primary;
                       return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.only(bottom: 8),
                         child: AppTapScale(
                           onTap: () => _openNotification(n),
                           pressedScale: 0.95,

@@ -278,12 +278,6 @@ class SyncNotifier extends StateNotifier<SyncState> {
               'message': 'Delta sync success',
             },
           );
-          await _notificationsService.add(
-            title: 'Синхронизация завершена',
-            body:
-                'Дельта: ЛПУ ${deltaOrgCounts.lpu}, аптеки ${deltaOrgCounts.pharmacy}, врачи ${delta.doctorsCount}, препараты ${delta.drugsCount}.',
-            kind: 'sync',
-          );
           _drainPendingReconcile();
           return;
         }
@@ -438,14 +432,6 @@ class SyncNotifier extends StateNotifier<SyncState> {
           'message': 'GET sync success',
         },
       );
-      await _notificationsService.add(
-        title: fullRefresh
-            ? 'Полная синхронизация завершена'
-            : 'Синхронизация завершена',
-        body:
-            'Изменения: ЛПУ ${fetchedOrgCounts.lpu}, аптеки ${fetchedOrgCounts.pharmacy}, врачи ${seed.doctors.length}, препараты ${seed.drugs.length}, визиты ${seed.visits.length}.',
-        kind: 'sync',
-      );
       _drainPendingReconcile();
     } catch (e, st) {
       state = state.copyWith(
@@ -454,11 +440,6 @@ class SyncNotifier extends StateNotifier<SyncState> {
         lastGetDebug: {'ok': false, 'error': '$e'},
         clearProgress: true,
         clearActiveOperation: true,
-      );
-      await _notificationsService.add(
-        title: 'Синхронизация с ошибкой',
-        body: 'Ошибка синхронизации: $e',
-        kind: 'sync',
       );
       _drainPendingReconcile();
       // Re-throw so callers can handle if needed.
@@ -513,14 +494,24 @@ class SyncNotifier extends StateNotifier<SyncState> {
       if (nextSyncId > 0) {
         await _db.setSyncMeta('last_sync_id', '$nextSyncId');
       }
-      // Only refresh user-facing state if no main sync is currently active —
-      // otherwise we'd overwrite its message/operation flags mid-flight.
-      if (state.activeOperation == null) {
+      // Finalize the sync UI. The layered main sync (skipDoctors:true) leaves
+      // the pull/fullRefresh operation active on purpose so the loading card
+      // stays up until doctors — the last layer — finish here. Clear it now so
+      // the spinner/progress card stops and the status reads "done".
+      // A concurrent push must not be clobbered, so only finalize when the
+      // active operation is a pull/fullRefresh (or already idle).
+      final op = state.activeOperation;
+      if (op == null ||
+          op == SyncOperation.pull ||
+          op == SyncOperation.fullRefresh) {
         final unsynced = await _db.unsyncedCount();
         state = state.copyWith(
           status: SyncStatus.success,
           clearProgress: true,
+          clearActiveOperation: true,
           unsyncedCount: unsynced,
+          lastSyncAt: DateTime.now(),
+          message: 'Данные обновлены',
         );
       }
       _drainPendingReconcile();
@@ -668,7 +659,11 @@ class SyncNotifier extends StateNotifier<SyncState> {
         clearActiveOperation: skipDoctors ? false : true,
         unsyncedCount: unsynced,
         lastSyncAt: skipDoctors ? null : now,
-        message: skipDoctors ? 'Данные обновлены' : 'Синхронизация завершена',
+        // While doctors still load in the background keep an honest "in
+        // progress" label — the loading card/spinner is still visible.
+        message: skipDoctors
+            ? 'Загружаем справочник врачей…'
+            : 'Синхронизация завершена',
         lastGetDebug: {
           'ok': true,
           'mode': fullRefresh ? 'layered_full' : 'layered_delta',
@@ -1803,19 +1798,20 @@ class SyncNotifier extends StateNotifier<SyncState> {
               : 'POST sync has errors',
         },
       );
-      await _notificationsService.add(
-        title: failed.isEmpty
-            ? (syncedIds.isEmpty
-                  ? 'Фоновая синхронизация завершена'
-                  : 'Отправка визитов завершена')
-            : 'Отправка визитов с ошибками',
-        body: failed.isEmpty
-            ? (syncedIds.isEmpty
-                  ? 'Очередь изменений обработана, осталось: $remaining.'
-                  : 'Отправлено: ${syncedIds.length}, осталось: $remaining.')
-            : 'Отправлено: ${syncedIds.length}, ошибок: ${failed.length}, осталось: $remaining.',
-        kind: 'sync',
-      );
+      // Only notify when something real happened for the user (visits actually
+      // sent, or there were errors). A silent background reconcile that pushed
+      // nothing must not spam the notification list.
+      if (syncedIds.isNotEmpty || failed.isNotEmpty) {
+        await _notificationsService.add(
+          title: failed.isEmpty
+              ? 'Отправка визитов завершена'
+              : 'Отправка визитов с ошибками',
+          body: failed.isEmpty
+              ? 'Отправлено: ${syncedIds.length}, осталось: $remaining.'
+              : 'Отправлено: ${syncedIds.length}, ошибок: ${failed.length}, осталось: $remaining.',
+          kind: 'sync',
+        );
+      }
 
       final pushCompleted = failed.isEmpty && remaining == 0;
 

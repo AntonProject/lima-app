@@ -1,7 +1,15 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// Number of unread in-app notifications. Refresh via
+/// `ref.invalidate(unreadNotificationsCountProvider)` after add/markRead.
+final unreadNotificationsCountProvider = FutureProvider<int>((ref) async {
+  final items = await InAppNotificationsService().getAll();
+  return items.where((e) => !e.isRead).length;
+});
 
 class InAppNotificationItem {
   final int id;
@@ -34,15 +42,14 @@ class InAppNotificationItem {
       id: (map['id'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
       title: '${map['title'] ?? ''}',
       body: '${map['body'] ?? ''}',
-      createdAt: DateTime.tryParse('${map['created_at'] ?? ''}') ?? DateTime.now(),
+      createdAt:
+          DateTime.tryParse('${map['created_at'] ?? ''}') ?? DateTime.now(),
       isRead: map['is_read'] == true || map['is_read'] == 1,
       kind: '${map['kind'] ?? 'generic'}',
     );
   }
 
-  InAppNotificationItem copyWith({
-    bool? isRead,
-  }) {
+  InAppNotificationItem copyWith({bool? isRead}) {
     return InAppNotificationItem(
       id: id,
       title: title,
@@ -67,7 +74,9 @@ class InAppNotificationsService {
       if (decoded is! List) return const [];
       final items = decoded
           .whereType<Map>()
-          .map((e) => InAppNotificationItem.fromMap(Map<String, dynamic>.from(e)))
+          .map(
+            (e) => InAppNotificationItem.fromMap(Map<String, dynamic>.from(e)),
+          )
           .toList();
       items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return items;
@@ -116,4 +125,3 @@ class InAppNotificationsService {
     );
   }
 }
-

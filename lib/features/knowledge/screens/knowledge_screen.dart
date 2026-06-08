@@ -42,7 +42,6 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
         _loading = false;
       });
     }
-
   }
 
   @override
@@ -122,9 +121,10 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
                       final manufacturer =
                           ((drug['manufacturer'] as String?) ?? '').trim();
                       return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.only(bottom: 8),
                         child: AppTapScale(
-                          onTap: () => context.push('/knowledge/drug/$drugId/materials'),
+                          onTap: () =>
+                              context.push('/knowledge/drug/$drugId/materials'),
                           pressedScale: 0.95,
                           child: GestureDetector(
                             onLongPress: () =>
@@ -137,7 +137,7 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
                                 ),
                                 boxShadow: shadowSm,
                               ),
-                              padding: const EdgeInsets.all(16),
+                              padding: const EdgeInsets.all(12),
                               child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -167,6 +167,7 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
                                           style: GoogleFonts.manrope(
                                             fontWeight: FontWeight.w600,
                                             fontSize: 15,
+                                            height: 1.2,
                                             color: AppColors.primaryText,
                                           ),
                                         ),
@@ -180,7 +181,7 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
                                             ),
                                           ),
                                         ],
-                                        const SizedBox(height: 6),
+                                        const SizedBox(height: 4),
                                         Row(
                                           children: [
                                             const Icon(

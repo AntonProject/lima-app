@@ -15,6 +15,7 @@ import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/providers/locale_provider.dart';
 import 'package:lima/core/providers/dashboard_counts_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
+import 'package:lima/core/services/in_app_notifications_service.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
@@ -30,8 +31,9 @@ class HomeScreen extends ConsumerStatefulWidget {
         const Duration(seconds: 6),
         onTimeout: () => const <Map<String, dynamic>>[],
       );
-      _HomeScreenState._cachedRecentVisits =
-          _HomeScreenState._processVisitRows(dbRows);
+      _HomeScreenState._cachedRecentVisits = _HomeScreenState._processVisitRows(
+        dbRows,
+      );
     } catch (_) {
       // Best-effort prewarm — home will retry via its own _loadRecentVisits().
     }
@@ -206,6 +208,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final collections = ref.watch(appCollectionsProvider);
     final dashboardCounts = ref.watch(dashboardCountsProvider).valueOrNull;
     final locale = ref.watch(appLocaleProvider);
+    final unreadNotifications =
+        ref.watch(unreadNotificationsCountProvider).valueOrNull ?? 0;
     ref.listen<SyncState>(syncProvider, (prev, next) {
       final prevAt = prev?.lastSyncAt;
       final nextAt = next.lastSyncAt;
@@ -250,13 +254,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   children: [
                     Image.asset(
                       'assets/images/lima_logo_2.png',
-                      width: 48,
-                      height: 48,
+                      width: 44,
+                      height: 44,
                     ),
-                    Image.asset(
-                      'assets/images/lima_text.png',
-                      height: 28,
-                    ),
+                    Image.asset('assets/images/lima_text.png', height: 18),
                     const Spacer(),
                     Builder(
                       builder: (btnCtx) => AppTapScale(
@@ -314,59 +315,67 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         },
                         pressedScale: 0.93,
                         child: Container(
+                          width: 44,
                           height: 36,
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.15),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.3),
+                            ),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(switch (_localeCode(locale)) {
-                                'en' => '🇬🇧',
-                                'uz_latn' || 'uz_cyrl' => '🇺🇿',
-                                _ => '🇷🇺',
-                              }, style: const TextStyle(fontSize: 14)),
-                              const SizedBox(width: 4),
-                              Text(
-                                switch (_localeCode(locale)) {
-                                  'uz_cyrl' => 'ЎЗ',
-                                  'uz_latn' => 'UZ',
-                                  _ => _localeCode(locale).toUpperCase(),
-                                },
-                                style: GoogleFonts.manrope(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(width: 2),
-                              const Icon(
-                                LucideIcons.chevronDown,
-                                color: Colors.white,
-                                size: 14,
-                              ),
-                            ],
-                          ),
+                          child: Text(switch (_localeCode(locale)) {
+                            'en' => '🇬🇧',
+                            'uz_latn' || 'uz_cyrl' => '🇺🇿',
+                            _ => '🇷🇺',
+                          }, style: const TextStyle(fontSize: 18)),
                         ),
                       ),
                     ),
                     const SizedBox(width: 8),
                     AppTapScale(
-                      onTap: () => context.push('/notifications'),
+                      onTap: () async {
+                        await context.push('/notifications');
+                        // Refresh the unread badge after returning.
+                        ref.invalidate(unreadNotificationsCountProvider);
+                      },
                       pressedScale: 0.93,
                       child: Container(
                         width: 36,
                         height: 36,
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.15),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.3),
+                          ),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: Icon(
-                          LucideIcons.bell,
-                          color: Colors.white,
-                          size: 19,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          alignment: Alignment.center,
+                          children: [
+                            const Icon(
+                              LucideIcons.bell,
+                              color: Colors.white,
+                              size: 19,
+                            ),
+                            if (unreadNotifications > 0)
+                              Positioned(
+                                top: 6,
+                                right: 7,
+                                child: Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.accent,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: AppColors.primary,
+                                      width: 1,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
@@ -378,7 +387,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           Expanded(
             child: ListView(
               padding: EdgeInsets.only(
-                top: 12,
+                top: 10,
                 bottom: LimaNavBarLayout.scrollBottomPadding(context),
               ),
               children: [
@@ -391,9 +400,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       Text(
                         context.l10n.t('myActivityToday'),
                         style: GoogleFonts.manrope(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primaryText,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.secondaryText,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -442,9 +451,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       Text(
                         context.l10n.t('quickActions'),
                         style: GoogleFonts.manrope(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primaryText,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.secondaryText,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -521,7 +530,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           ),
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
 
                       // ── Recent visits ──────────────────────────────────────────
                       Row(
@@ -529,9 +538,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           Text(
                             context.l10n.t('recentVisits'),
                             style: GoogleFonts.manrope(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.primaryText,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.secondaryText,
                             ),
                           ),
                           const Spacer(),
@@ -590,16 +599,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           icon: LucideIcons.calendarX2,
                           title: 'На эту дату визиты не запланированы',
                         ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 12),
                       Text(
                         context.l10n.t('offlineAndSync'),
                         style: GoogleFonts.manrope(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.primaryText,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.secondaryText,
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       GestureDetector(
                         onTap: () => context.push('/sync'),
                         child: Container(
@@ -971,13 +980,18 @@ class _ActivityCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Text(
-                    title,
-                    style: GoogleFonts.manrope(
-                      fontSize: 11,
-                      color: AppColors.secondaryText,
+                  child: Padding(
+                    // Nudge the title baseline up to the icon's top edge.
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Text(
+                      title,
+                      style: GoogleFonts.manrope(
+                        fontSize: 11,
+                        color: AppColors.secondaryText,
+                      ),
                     ),
                   ),
                 ),
@@ -992,7 +1006,7 @@ class _ActivityCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 2),
             Text(
               value,
               style: GoogleFonts.manrope(

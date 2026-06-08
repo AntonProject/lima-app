@@ -217,13 +217,13 @@ class ProfileScreen extends ConsumerWidget {
             ),
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
           // ── Contact info ─────────────────────────────────────────────────
           if (user?.phone != null || user?.company != null) ...[
             _SectionHeader(context.l10n.t('contactInfo')),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
               child: Container(
                 decoration: BoxDecoration(
                   color: AppColors.secondaryBg,
@@ -244,7 +244,6 @@ class ProfileScreen extends ConsumerWidget {
                       const Divider(
                         height: 1,
                         thickness: 0.5,
-                        indent: 56,
                         color: AppColors.divider,
                       ),
                     if (user?.company != null)
@@ -257,13 +256,13 @@ class ProfileScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
           ],
 
           // ── Quick actions ────────────────────────────────────────────────
           _SectionHeader(context.l10n.t('quickActions')),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: Container(
               decoration: BoxDecoration(
                 color: AppColors.secondaryBg,
@@ -327,12 +326,12 @@ class ProfileScreen extends ConsumerWidget {
             ),
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
           // ── Settings ─────────────────────────────────────────────────────
           _SectionHeader(context.l10n.t('settings')),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: Container(
               decoration: BoxDecoration(
                 color: AppColors.secondaryBg,
@@ -376,12 +375,12 @@ class ProfileScreen extends ConsumerWidget {
             ),
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
           // ── Support ─────────────────────────────────────────────────────
           _SectionHeader(context.l10n.t('support')),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: Container(
               decoration: BoxDecoration(
                 color: AppColors.secondaryBg,
@@ -409,7 +408,7 @@ class ProfileScreen extends ConsumerWidget {
             ),
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
           // ── Logout ───────────────────────────────────────────────────────
           Padding(
@@ -457,7 +456,6 @@ class ProfileScreen extends ConsumerWidget {
 const _divider = Divider(
   height: 1,
   thickness: 0.5,
-  indent: 56,
   color: AppColors.divider,
 );
 
@@ -524,31 +522,41 @@ class _HeaderStatCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      value,
-                      style: GoogleFonts.manrope(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        height: 1,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
+                // Fixed to the icon height so the value/label hug the icon's
+                // top/bottom edges, with 2px insets to pull them slightly in.
+                child: SizedBox(
+                  height: 36,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          value,
+                          style: GoogleFonts.manrope(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            height: 1,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
+                        ),
+                        Text(
+                          label,
+                          style: GoogleFonts.manrope(
+                            color: Colors.white.withValues(alpha: 0.75),
+                            fontSize: 10,
+                            height: 1,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ),
-                    Text(
-                      label,
-                      style: GoogleFonts.manrope(
-                        color: Colors.white.withValues(alpha: 0.75),
-                        fontSize: 10,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],

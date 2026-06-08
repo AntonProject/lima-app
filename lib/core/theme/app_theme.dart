@@ -32,7 +32,9 @@ class AppColors {
 class AppTheme {
   static ThemeData get light {
     final base = ThemeData(useMaterial3: true);
-    final manropeBase = base.copyWith(textTheme: GoogleFonts.manropeTextTheme(base.textTheme));
+    final manropeBase = base.copyWith(
+      textTheme: GoogleFonts.manropeTextTheme(base.textTheme),
+    );
     return manropeBase.copyWith(
       colorScheme: ColorScheme.fromSeed(
         seedColor: AppColors.primary,
@@ -174,9 +176,11 @@ class AppTheme {
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
         ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        // Keep the search/prefix icon close to the text (≤8px gap).
+        prefixIconConstraints: const BoxConstraints(
+          minWidth: 34,
+          minHeight: 34,
         ),
         hintStyle: TextStyle(color: AppColors.hintText, fontSize: 14),
         prefixIconColor: AppColors.hintText,

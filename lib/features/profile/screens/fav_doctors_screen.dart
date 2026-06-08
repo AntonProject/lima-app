@@ -483,7 +483,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                           doctorId != null && _pressedDoctorId == doctorId;
 
                       return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.only(bottom: 8),
                         child: GestureDetector(
                           onTapDown: (_) {
                             if (doctorId == null) return;

@@ -138,7 +138,7 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
                       final name = (pharmacy['name'] as String?) ?? '';
                       final address = (pharmacy['address'] as String?) ?? '';
                       return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.only(bottom: 8),
                         child: AppTapScale(
                           onTap: () => context.push(
                             Uri(

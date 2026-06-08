@@ -839,7 +839,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                           ),
                         if (_pendingDoctors.isNotEmpty &&
                             _pendingOrgUpdates.isNotEmpty)
-                          const Divider(height: 1, indent: 16),
+                          const Divider(height: 1),
                         if (_pendingOrgUpdates.isNotEmpty)
                           ListTile(
                             leading: const Icon(

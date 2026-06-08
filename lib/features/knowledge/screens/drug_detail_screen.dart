@@ -57,7 +57,8 @@ class _DrugDetailScreenState extends ConsumerState<DrugDetailScreen> {
     }
 
     final name = (_drug!['name'] as String?) ?? '';
-    final manufacturer = ((_drug!['manufacturer'] as String?) ?? '').trim().isEmpty
+    final manufacturer =
+        ((_drug!['manufacturer'] as String?) ?? '').trim().isEmpty
         ? '—'
         : ((_drug!['manufacturer'] as String?) ?? '').trim();
 
@@ -83,7 +84,10 @@ class _DrugDetailScreenState extends ConsumerState<DrugDetailScreen> {
                   onTap: () => context.pop(),
                   child: const Padding(
                     padding: EdgeInsets.only(top: 4),
-                    child: Icon(Icons.arrow_back_rounded, color: AppColors.primaryText),
+                    child: Icon(
+                      Icons.arrow_back_rounded,
+                      color: AppColors.primaryText,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -175,7 +179,9 @@ class _TopTab extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? AppColors.secondaryBg : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: active ? AppColors.divider : Colors.transparent),
+          border: Border.all(
+            color: active ? AppColors.divider : Colors.transparent,
+          ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -241,7 +247,7 @@ class _DocumentsTab extends StatelessWidget {
             : '';
 
         return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.only(bottom: 8),
           child: AppTapScale(
             onTap: () => context.push(
               Uri(
@@ -290,7 +296,10 @@ class _DocumentsTab extends StatelessWidget {
                         Row(
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: AppColors.primaryBg,
                                 borderRadius: BorderRadius.circular(8),
@@ -338,7 +347,10 @@ class _DocumentsTab extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Icon(Icons.chevron_right_rounded, color: AppColors.hintText),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.hintText,
+                  ),
                 ],
               ),
             ),
