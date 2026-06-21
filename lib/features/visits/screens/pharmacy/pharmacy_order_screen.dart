@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -130,7 +131,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                     children: [
                       Expanded(
                         child: Text(
-                          'Выберите количество',
+                          context.l10n.t('selectQuantity'),
                           style: GoogleFonts.manrope(
                             fontSize: 18,
                             fontWeight: FontWeight.w700,
@@ -163,37 +164,37 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                   child: Column(
                     children: [
                       _line(
-                        'Препарат',
+                        context.l10n.t('drug'),
                         drug.name,
                         valueFlex: 2,
                         maxLines: 3,
                         showDivider: true,
                       ),
                       _line(
-                        'Производитель',
+                        context.l10n.t('manufacturer'),
                         drug.manufacturer.isNotEmpty ? drug.manufacturer : '—',
                         showDivider: true,
                       ),
                       _line(
-                        'Срок годности',
+                        context.l10n.t('expiryDate'),
                         _formatExpiryMonthYear(drug.expiryDate),
                         showDivider: true,
                       ),
                       _line(
-                        'Серийный номер',
+                        context.l10n.t('serialNumber'),
                         drug.serialNumber?.isNotEmpty == true
                             ? drug.serialNumber!
                             : '—',
                         showDivider: true,
                       ),
                       _line(
-                        'На основном складе',
-                        '$mainStock шт.',
+                        context.l10n.t('mainStock'),
+                        context.l10n.t('pcsN', args: {'n': '$mainStock'}),
                         showDivider: true,
                       ),
-                      _line('Остаток', '$remains шт.', showDivider: true),
+                      _line(context.l10n.t('remains'), context.l10n.t('pcsN', args: {'n': '$remains'}), showDivider: true),
                       _line(
-                        'Цена',
+                        context.l10n.t('price'),
                         formatUzs(drug.price),
                         valueColor: AppColors.primary,
                         valueWeight: FontWeight.w700,
@@ -252,7 +253,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Text(
-                      'Доступно: $available шт.',
+                      context.l10n.t('availableN', args: {'n': '$available'}),
                       textAlign: TextAlign.center,
                       style: GoogleFonts.manrope(
                         fontSize: 12,
@@ -275,7 +276,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                     child: Row(
                       children: [
                         Text(
-                          'Итого:',
+                          context.l10n.t('totalColon'),
                           style: GoogleFonts.manrope(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
@@ -314,7 +315,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                       ),
                     ),
                     child: Text(
-                      'Подтвердить',
+                      context.l10n.t('confirm'),
                       style: GoogleFonts.manrope(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -347,7 +348,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
               (d) => d.id == e.key,
               orElse: () => Drug(
                 id: e.key,
-                name: 'Препарат #${e.key}',
+                name: context.l10n.t('drugHash', args: {'id': '${e.key}'}),
                 manufacturer: '',
                 price: 0,
               ),
@@ -402,11 +403,11 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
         }
         if (pricingDraft == null) {
           if (!mounted) return;
-          final buyerLabel = isWholesaler ? 'Опт' : 'Розница';
+          final buyerLabel = isWholesaler ? context.l10n.t('wholesale') : context.l10n.t('retail');
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'В API нет ценовой матрицы для $_prepayment% / $buyerLabel',
+                context.l10n.t('noPriceMatrix', args: {'prepay': '$_prepayment', 'buyer': buyerLabel}),
               ),
             ),
           );
@@ -582,7 +583,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Оформление брони',
+                            context.l10n.t('bronCheckout'),
                             style: GoogleFonts.manrope(
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
@@ -608,8 +609,8 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                 const SizedBox(height: 12),
                 TextFormField(
                   onChanged: (v) => setState(() => _query = v),
-                  decoration: const InputDecoration(
-                    hintText: 'Поиск препаратов...',
+                  decoration: InputDecoration(
+                    hintText: context.l10n.t('searchDrugs'),
                     prefixIcon: Icon(
                       Icons.search_rounded,
                       color: AppColors.hintText,
@@ -625,9 +626,9 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _filtered.isEmpty
-                ? const EmptyState(
+                ? EmptyState(
                     icon: Icons.search_off_rounded,
-                    title: 'Ничего не найдено',
+                    title: context.l10n.t('nothingFound'),
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -667,7 +668,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Итого:',
+                          context.l10n.t('totalColon'),
                           style: GoogleFonts.manrope(
                             fontSize: 12,
                             color: AppColors.secondaryText,
@@ -682,7 +683,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                           ),
                         ),
                         Text(
-                          '$_prepayment% · ${_buyerType == 1 ? 'Опт' : 'Розница'}',
+                          '$_prepayment% · ${_buyerType == 1 ? context.l10n.t('wholesale') : context.l10n.t('retail')}',
                           style: GoogleFonts.manrope(
                             fontSize: 12,
                             color: AppColors.primary,
@@ -722,8 +723,8 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                           ],
                           Text(
                             _confirming
-                                ? 'Подготавливаем заказ...'
-                                : 'Оформить бронь',
+                                ? context.l10n.t('preparingOrder')
+                                : context.l10n.t('placeBron'),
                             style: GoogleFonts.manrope(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
@@ -815,7 +816,7 @@ class _DrugCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Производитель: ${drug.manufacturer.isNotEmpty ? drug.manufacturer : '—'}',
+                          context.l10n.t('manufacturerColon', args: {'value': drug.manufacturer.isNotEmpty ? drug.manufacturer : '—'}),
                           style: GoogleFonts.manrope(
                             fontSize: 12,
                             color: AppColors.secondaryText,
@@ -823,7 +824,7 @@ class _DrugCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          'Серийный номер: ${drug.serialNumber?.isNotEmpty == true ? drug.serialNumber : '—'}',
+                          context.l10n.t('serialColon', args: {'value': drug.serialNumber?.isNotEmpty == true ? drug.serialNumber! : '—'}),
                           style: GoogleFonts.manrope(
                             fontSize: 12,
                             color: AppColors.secondaryText,
@@ -831,7 +832,7 @@ class _DrugCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          'Срок годности: ${drug.expiryDate?.isNotEmpty == true ? drug.expiryDate : '—'}',
+                          context.l10n.t('expiryColon', args: {'value': drug.expiryDate?.isNotEmpty == true ? drug.expiryDate! : '—'}),
                           style: GoogleFonts.manrope(
                             fontSize: 12,
                             color: AppColors.secondaryText,
@@ -839,7 +840,7 @@ class _DrugCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          'На основном складе: ${drug.mainStock ?? drug.stock ?? 0} шт.',
+                          context.l10n.t('mainStockColon', args: {'value': '${drug.mainStock ?? drug.stock ?? 0}'}),
                           style: GoogleFonts.manrope(
                             fontSize: 12,
                             color: AppColors.secondaryText,
@@ -847,7 +848,7 @@ class _DrugCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          'Остаток: ${drug.remainsStock ?? drug.stock ?? 0} шт.',
+                          context.l10n.t('remainsColon', args: {'value': '${drug.remainsStock ?? drug.stock ?? 0}'}),
                           style: GoogleFonts.manrope(
                             fontSize: 12,
                             color: AppColors.secondaryText,

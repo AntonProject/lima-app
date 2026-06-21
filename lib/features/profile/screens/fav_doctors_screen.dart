@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/db/local_database.dart';
@@ -60,10 +61,10 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
     });
   }
 
-  String _visitLabel(Map<String, dynamic> doctor) {
+  String _visitLabel(BuildContext context, Map<String, dynamic> doctor) {
     final count = (doctor['visit_count'] as num?)?.toInt() ?? 0;
-    if (count <= 0) return 'Визитов не было';
-    return '$count визитов';
+    if (count <= 0) return context.l10n.t('noVisitsYet');
+    return context.l10n.plural(count, 'visits');
   }
 
   Future<void> _onDoctorCardTap(Map<String, dynamic> doctor) async {
@@ -98,7 +99,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Удалено из избранного')));
+      ).showSnackBar(SnackBar(content: Text(context.l10n.t('removedFromFav'))));
     } catch (_) {
       if (ref.read(isOfflineProvider)) {
         pulseOfflineBanner(ref);
@@ -106,9 +107,9 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
       ref.invalidate(favoriteDoctorsCountProvider);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Удалено локально. Синхронизация с сервером не выполнена',
+            context.l10n.t('removedLocallyNoSync'),
           ),
         ),
       );
@@ -123,7 +124,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
     if (doctorId == null || orgId == null || orgId <= 0) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Для врача не найдено ЛПУ')));
+      ).showSnackBar(SnackBar(content: Text(context.l10n.t('noLpuForDoctor'))));
       return;
     }
     final doctorName = (doctor['full_name'] as String?) ?? '';
@@ -159,9 +160,9 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
       builder: (ctx) {
         final name = (doctor['full_name'] as String?) ?? '';
         final specialty = (doctor['specialty'] as String?) ?? '—';
-        final category = 'Категория ${doctor['category'] ?? 'C'}';
+        final category = ctx.l10n.t('categoryN', args: {'cat': '${doctor['category'] ?? 'C'}'});
         final city = (org?['city'] as String?) ?? '—';
-        final orgName = (org?['name'] as String?) ?? 'ЛПУ не указано';
+        final orgName = (org?['name'] as String?) ?? ctx.l10n.t('lpuNotSet');
         final orgAddress = (org?['address'] as String?) ?? '';
 
         return Padding(
@@ -225,12 +226,12 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: _SheetField(label: 'ФИО', value: name),
+                          child: _SheetField(label: ctx.l10n.t('fullName'), value: name),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: _SheetField(
-                            label: 'Специализация',
+                            label: ctx.l10n.t('specialization'),
                             value: specialty,
                           ),
                         ),
@@ -242,14 +243,14 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                       children: [
                         Expanded(
                           child: _SheetField(
-                            label: 'Категория',
+                            label: ctx.l10n.t('category'),
                             value: category,
                             isCategoryPill: true,
                           ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: _SheetField(label: 'Регион', value: city),
+                          child: _SheetField(label: ctx.l10n.t('region'), value: city),
                         ),
                       ],
                     ),
@@ -260,7 +261,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Место работы',
+                  ctx.l10n.t('workplace'),
                   style: GoogleFonts.manrope(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
@@ -336,7 +337,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        child: const Text('Визит'),
+                        child: Text(ctx.l10n.t('visit')),
                       ),
                     ),
                   ],
@@ -348,7 +349,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                   Expanded(
                     child: OutlinedButton(
                       onPressed: () => Navigator.pop(ctx),
-                      child: const Text('Закрыть'),
+                      child: Text(ctx.l10n.t('close')),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -361,7 +362,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.error,
                       ),
-                      child: const Text('Удалить'),
+                      child: Text(ctx.l10n.t('delete')),
                     ),
                   ),
                 ],
@@ -422,7 +423,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                             ),
                           ),
                           Text(
-                            'Избранные врачи',
+                            context.l10n.t('favoriteDoctors'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.manrope(
@@ -439,8 +440,8 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                 const SizedBox(height: 12),
                 TextFormField(
                   onChanged: (v) => setState(() => _query = v),
-                  decoration: const InputDecoration(
-                    hintText: 'Поиск',
+                  decoration: InputDecoration(
+                    hintText: context.l10n.t('search'),
                     prefixIcon: Icon(
                       Icons.search_rounded,
                       color: AppColors.hintText,
@@ -457,7 +458,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                 : _filtered.isEmpty
                 ? Center(
                     child: Text(
-                      'Нет избранных врачей',
+                      context.l10n.t('noFavDoctors'),
                       style: GoogleFonts.manrope(
                         fontSize: 14,
                         color: AppColors.secondaryText,
@@ -476,8 +477,8 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                       final d = _filtered[i];
                       final name = (d['full_name'] as String?) ?? '';
                       final specialty = (d['specialty'] as String?) ?? '—';
-                      final category = 'Категория ${d['category'] ?? 'C'}';
-                      final lastVisit = _visitLabel(d);
+                      final category = context.l10n.t('categoryN', args: {'cat': '${d['category'] ?? 'C'}'});
+                      final lastVisit = _visitLabel(context, d);
                       final doctorId = (d['id'] as num?)?.toInt();
                       final pressed =
                           doctorId != null && _pressedDoctorId == doctorId;

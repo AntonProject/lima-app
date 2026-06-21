@@ -125,7 +125,7 @@ class _ManagerSelectSheetState extends ConsumerState<_ManagerSelectSheet> {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 14),
                       child: Text(
-                        'Менеджеры не найдены',
+                        context.l10n.t('managersNotFound'),
                         textAlign: TextAlign.center,
                         style: GoogleFonts.manrope(
                           fontSize: 13,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import 'package:lima/core/services/app_actions.dart';
@@ -68,7 +69,7 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
                 Row(
                   children: [
                     Text(
-                      'База знаний',
+                      context.l10n.t('knowledge'),
                       style: GoogleFonts.manrope(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
@@ -83,8 +84,8 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
                     setState(() => _query = v);
                     _load();
                   },
-                  decoration: const InputDecoration(
-                    hintText: 'Поиск препаратов...',
+                  decoration: InputDecoration(
+                    hintText: context.l10n.t('searchDrugs'),
                     prefixIcon: Icon(
                       Icons.search_rounded,
                       color: AppColors.hintText,
@@ -100,9 +101,9 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _drugs.isEmpty
-                ? const EmptyState(
+                ? EmptyState(
                     icon: Icons.search_off_rounded,
-                    title: 'Ничего не найдено',
+                    title: context.l10n.t('nothingFound'),
                   )
                 : ListView.builder(
                     padding: EdgeInsets.fromLTRB(
@@ -191,7 +192,7 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
                                             ),
                                             const SizedBox(width: 4),
                                             Text(
-                                              '$documentsCount документов',
+                                              context.l10n.plural(documentsCount, 'documents'),
                                               style: GoogleFonts.manrope(
                                                 color: AppColors.primary,
                                                 fontSize: 10,

@@ -8,6 +8,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/services/app_actions.dart';
 
@@ -51,22 +52,26 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   Future<void> _requestLocation() async {
+    final tDisabled = context.l10n.t('geoUnavailable');
+    final tDenied = context.l10n.t('geoAccessDenied');
+    final tPermanent = context.l10n.t('geoAccessDeniedPermanent');
+    final tFail = context.l10n.t('couldNotGetLocation');
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        setState(() { _error = 'Службы геолокации отключены'; _loading = false; });
+        if (mounted) setState(() { _error = tDisabled; _loading = false; });
         return;
       }
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          setState(() { _error = 'Доступ к геолокации запрещён'; _loading = false; });
+          if (mounted) setState(() { _error = tDenied; _loading = false; });
           return;
         }
       }
       if (permission == LocationPermission.deniedForever) {
-        setState(() { _error = 'Доступ к геолокации запрещён навсегда.\nОткройте настройки приложения.'; _loading = false; });
+        if (mounted) setState(() { _error = tPermanent; _loading = false; });
         return;
       }
       final pos = await Geolocator.getCurrentPosition(
@@ -74,7 +79,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
       await _loadNearbyOrgs(pos);
     } catch (e) {
-      setState(() { _error = 'Не удалось определить местоположение'; _loading = false; });
+      if (mounted) setState(() { _error = tFail; _loading = false; });
     }
   }
 
@@ -178,7 +183,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       org.name,
                     ),
                     icon: const Icon(Icons.directions_rounded, size: 18),
-                    label: const Text('Маршрут'),
+                    label: Text(context.l10n.t('route')),
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
                       side: const BorderSide(color: AppColors.primary),
@@ -212,7 +217,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: Text('Открыть',
+                    child: Text(context.l10n.t('open'),
                         style: GoogleFonts.manrope(
                             fontSize: 15, fontWeight: FontWeight.w600,
                             color: Colors.white)),
@@ -249,7 +254,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 ),
                 const SizedBox(width: 12),
                 Text(
-                  widget.isPharmacy ? 'Аптеки рядом' : 'ЛПУ рядом',
+                  widget.isPharmacy ? context.l10n.t('pharmaciesNearby') : context.l10n.t('lpuNearby'),
                   style: GoogleFonts.manrope(
                     fontSize: 18, fontWeight: FontWeight.w700,
                     color: AppColors.primaryText,
@@ -263,7 +268,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
-              '${_orgs.length} объекта',
+                    context.l10n.plural(_orgs.length, 'objects'),
                     style: GoogleFonts.manrope(
                         fontSize: 12, color: AppColors.primary,
                         fontWeight: FontWeight.w600),
@@ -371,7 +376,7 @@ class _ErrorView extends StatelessWidget {
             ElevatedButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh_rounded, size: 18, color: Colors.white),
-              label: Text('Повторить',
+              label: Text(context.l10n.t('retry'),
                   style: GoogleFonts.manrope(
                       fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
               style: ElevatedButton.styleFrom(

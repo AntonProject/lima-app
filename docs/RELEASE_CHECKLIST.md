@@ -28,16 +28,30 @@
 | **App Store Provisioning Profile** для `uz.lima.lima` | привязка сборки к App ID | Apple Developer → Profiles |
 
 ### Что нужно сделать
-- [ ] Подтвердить **Team ID**. Сейчас в проекте прописан `J8L2BLUC85`
-  (`ios/Runner.xcodeproj/project.pbxproj`). Если аккаунт заказчика другой —
-  сменить Team ID в Xcode (Signing & Capabilities).
+- [x] **Team ID** = `5N9G35WULY` (LIMA NEO TECHNO, MCHJ) — прописан в
+  `ios/Runner.xcodeproj/project.pbxproj` и `ios/ExportOptions.plist`.
 - [ ] Для **Release**-таргета выставить `CODE_SIGN_STYLE = Automatic`
   (рекомендуется) и убедиться, что Xcode подтягивает cert + profile.
   Сейчас явная подпись задана только для тестовых таргетов.
-- [ ] Создать `ios/ExportOptions.plist` (`method: app-store`) для
-  `flutter build ipa` / CI.
+- [x] Создать `ios/ExportOptions.plist` (`method: app-store`) для
+  `flutter build ipa` / CI. **Создан** (teamID `5N9G35WULY`,
+  `signingStyle: automatic`).
 - [ ] Завести приложение в **App Store Connect** (bundle `uz.lima.lima`),
   заполнить метаданные, скриншоты, **политику конфиденциальности** (обязательна).
+
+### App Store Connect
+- **App Apple ID:** `6781654387` (bundle `uz.lima.lima`).
+
+### Секреты iOS (хранятся в `~/Documents/lima-secrets/`, не в git)
+- **App Store Connect API key:** `AuthKey_8KKGG6LX7K.p8`
+  - Key ID `8KKGG6LX7K`, Issuer ID и пример команды — в
+    `~/Documents/lima-secrets/appstore-api-key.txt`.
+  - Нужен только для автозагрузки (CI / `xcrun altool|notarytool --apiKey ...`).
+    Для ручной загрузки через Xcode/Transporter не требуется.
+  - ⚠️ Скачивается у Apple один раз — это единственная копия.
+- **Сертификаты:** `distribution.cer` (релиз), `development.cer` (тест).
+  Перед подписью дважды кликнуть → установить в Keychain (нужен приватный ключ
+  от CSR на этой машине, иначе identity будет неполным).
 
 ### Уже готово ✅
 - Bundle id: `uz.lima.lima` (не example).
@@ -77,11 +91,13 @@
   > Хранить копию в облаке/менеджере паролей. Потеря = невозможность апдейтов.
 - Permissions, label, adaptive-иконка (`#417DF7` фон + `lima_logo_2`) на месте.
 
-### Риск (задокументировано)
-- В `build.gradle.kts` release-сборка падает на **debug-ключ**, если
-  `key.properties` отсутствует (удобно для локального `flutter run --release`).
-  **Для прод-сборки/CI `key.properties` обязан существовать** — иначе AAB
-  будет подписан debug-ключом и Play его отклонит.
+### Риск (закрыт страховкой)
+- В `build.gradle.kts` стоит guard: `flutter build apk/appbundle --release`
+  **падает с понятной ошибкой**, если `key.properties` отсутствует — debug-ключ
+  больше не подставляется молча (Play отклонил бы такой AAB). Для локальной
+  debug-подписанной release-сборки есть явный обход:
+  `flutter build apk --release` c `-PallowDebugSigning=true` через
+  `android/gradle.properties` либо `./gradlew assembleRelease -PallowDebugSigning=true`.
 
 ---
 

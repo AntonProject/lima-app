@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 
 class DrugDetailScreen extends ConsumerStatefulWidget {
   final int drugId;
@@ -48,10 +49,10 @@ class _DrugDetailScreenState extends ConsumerState<DrugDetailScreen> {
     }
     if (_drug == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Препарат')),
-        body: const EmptyState(
+        appBar: AppBar(title: Text(context.l10n.t('drug'))),
+        body: EmptyState(
           icon: Icons.medication_rounded,
-          title: 'Препарат не найден',
+          title: context.l10n.t('drugNotFound'),
         ),
       );
     }
@@ -129,7 +130,7 @@ class _DrugDetailScreenState extends ConsumerState<DrugDetailScreen> {
                 Expanded(
                   child: _TopTab(
                     active: _tab == 0,
-                    title: 'Документы',
+                    title: context.l10n.t('documents'),
                     badge: _materials.length,
                     onTap: () => setState(() => _tab = 0),
                   ),
@@ -138,7 +139,7 @@ class _DrugDetailScreenState extends ConsumerState<DrugDetailScreen> {
                 Expanded(
                   child: _TopTab(
                     active: _tab == 1,
-                    title: 'Информация',
+                    title: context.l10n.t('information'),
                     onTap: () => setState(() => _tab = 1),
                   ),
                 ),
@@ -230,9 +231,9 @@ class _DocumentsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (materials.isEmpty) {
-      return const EmptyState(
+      return EmptyState(
         icon: Icons.description_outlined,
-        title: 'Нет документов',
+        title: context.l10n.t('noDocs'),
       );
     }
     return ListView.builder(
@@ -240,7 +241,7 @@ class _DocumentsTab extends StatelessWidget {
       itemCount: materials.length,
       itemBuilder: (_, i) {
         final m = materials[i];
-        final title = (m['title'] as String?) ?? 'Документ';
+        final title = (m['title'] as String?) ?? context.l10n.t('document');
         final uploaded = (m['uploaded_at'] as String?) ?? '';
         final dateLabel = uploaded.length >= 10
             ? '${uploaded.substring(8, 10)}.${uploaded.substring(5, 7)}.${uploaded.substring(0, 4)}'
@@ -383,7 +384,7 @@ class _InfoTab extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'НАЗВАНИЕ ПРЕПАРАТА',
+                context.l10n.t('drugName').toUpperCase(),
                 style: GoogleFonts.manrope(
                   fontSize: 10,
                   color: AppColors.secondaryText,
@@ -414,7 +415,7 @@ class _InfoTab extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'ПРОИЗВОДИТЕЛЬ',
+                context.l10n.t('manufacturer').toUpperCase(),
                 style: GoogleFonts.manrope(
                   fontSize: 10,
                   color: AppColors.secondaryText,

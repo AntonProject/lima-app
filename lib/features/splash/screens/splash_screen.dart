@@ -11,6 +11,7 @@ import 'package:lima/core/network/api_client.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/features/home/screens/home_screen.dart';
 import 'package:lima/features/visits/screens/visits_hub_screen.dart';
@@ -76,7 +77,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
       debugPrint('[SPLASH] step 1: init DB');
       setState(() {
-        _step = 'Инициализация базы данных...';
+        _step = 'splashInitDb';
         _progress = 0.1;
       });
       final db = ref.read(localDatabaseProvider);
@@ -99,7 +100,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
               '[SPLASH] offline + no token + owned local data -> offline mode',
             );
             setState(() {
-              _step = 'Офлайн режим...';
+              _step = 'splashOfflineMode';
               _progress = 0.9;
             });
             final loaded = await ref
@@ -122,7 +123,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           debugPrint('[SPLASH] offline + no token + no data -> require login');
           if (!mounted) return;
           setState(() {
-            _step = 'Нет подключения к интернету...';
+            _step = 'splashNoInternet';
             _progress = 0.9;
           });
           await Future.delayed(const Duration(milliseconds: 250));
@@ -134,7 +135,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
         // Online but no token — try silent re-auth with saved credentials
         setState(() {
-          _step = 'Восстановление сессии...';
+          _step = 'splashRestoringSession';
           _progress = 0.2;
         });
         final reauthed = await _trySilentReauth();
@@ -144,7 +145,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
               '[SPLASH] reauth failed, owned local data exists -> offline mode',
             );
             setState(() {
-              _step = 'Офлайн режим...';
+              _step = 'splashOfflineMode';
               _progress = 0.9;
             });
             final loaded = await ref
@@ -166,7 +167,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           debugPrint('[SPLASH] no token, no saved creds -> require login');
           if (!mounted) return;
           setState(() {
-            _step = 'Требуется авторизация...';
+            _step = 'splashAuthRequired';
             _progress = 0.9;
           });
           await Future.delayed(const Duration(milliseconds: 250));
@@ -191,7 +192,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         '[SPLASH] step 2: parallel sync (firstRun=$isFirstRun, budget=${budget.inSeconds}s)',
       );
       setState(() {
-        _step = isFirstRun ? 'Загружаем данные' : 'Обновляем данные';
+        _step = isFirstRun ? 'splashLoadingData' : 'splashUpdatingData';
         _progress = 0.35;
       });
       final syncNotifier = ref.read(syncProvider.notifier);
@@ -269,8 +270,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       }
       if (!mounted) return;
       setState(() {
-        _step =
-            'Ошибка синхронизации. Проверьте интернет и перезапустите приложение.';
+        _step = 'splashSyncError';
         _progress = 0.0;
         _canRetry = true;
       });
@@ -343,7 +343,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                   color: Colors.white,
                   size: 22,
                 ),
-                tooltip: 'Выйти',
+                tooltip: context.l10n.t('logout'),
               ),
             ),
             Center(
@@ -379,16 +379,19 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                       );
                       if (_canRetry) {
                         return Text(
-                          _step,
+                          _step.isEmpty ? '' : context.l10n.t(_step),
                           style: baseStyle,
                           textAlign: TextAlign.center,
                         );
                       }
-                      final syncMsg = ref.watch(syncProvider).message;
+                      // Rebuild on sync progress so the dots keep animating,
+                      // but show the localized phase text (_step) rather than
+                      // syncProvider.message: the latter is set inside the
+                      // notifier without a BuildContext and is Russian-only.
+                      ref.watch(syncProvider);
+                      final stepText = _step.isEmpty ? '' : context.l10n.t(_step);
                       final base =
-                          (_loading && syncMsg != null && syncMsg.isNotEmpty)
-                          ? syncMsg.replaceFirst(RegExp(r'[.…]+\s*$'), '')
-                          : _step.replaceFirst(RegExp(r'[.…]+\s*$'), '');
+                          stepText.replaceFirst(RegExp(r'[.…]+\s*$'), '');
                       // Reserve space for 3 dots so the centered text doesn't
                       // shift left/right as dots animate. Hidden dots are
                       // rendered transparent.
@@ -436,7 +439,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                         backgroundColor: Colors.white,
                         foregroundColor: AppColors.primary,
                       ),
-                      child: const Text('Повторить'),
+                      child: Text(context.l10n.t('retry')),
                     ),
                   ],
                 ],

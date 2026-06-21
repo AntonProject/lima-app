@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:lima/core/config/env_config.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/models/local_visit.dart';
 import 'package:lima/core/models/models.dart';
@@ -14,6 +15,7 @@ import 'package:lima/core/network/api_client.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/services/in_app_notifications_service.dart';
 import 'package:lima/core/services/material_cache_service.dart';
+import 'package:lima/core/utils/swallowed.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 
@@ -181,7 +183,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
     if (_isOffline()) {
       state = state.copyWith(
         status: SyncStatus.idle,
-        message: 'Офлайн режим: загрузка с сервера пропущена',
+        message: AppI18n.tr('syncOfflineSkipped'),
         clearActiveOperation: true,
       );
       return;
@@ -203,8 +205,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
           ? SyncOperation.fullRefresh
           : SyncOperation.pull,
       message: fullRefresh
-          ? 'Full refresh: подготовка загрузки…'
-          : 'Загрузка данных: проверяем дельту…',
+          ? AppI18n.tr('syncFullPrep')
+          : AppI18n.tr('syncCheckDelta'),
       clearProgress: true,
     );
 
@@ -227,8 +229,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
           state = state.copyWith(
             status: SyncStatus.loading,
             message: liveStale
-                ? 'Дельта получена, обновляем живые данные…'
-                : 'Дельта получена, живые данные актуальны',
+                ? AppI18n.tr('syncDeltaGotUpdating')
+                : AppI18n.tr('syncDeltaGotFresh'),
             clearProgress: true,
           );
           final live = liveStale
@@ -245,7 +247,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
             clearProgress: true,
             clearActiveOperation: true,
             unsyncedCount: unsynced,
-            message: 'Дельта-синхронизация выполнена',
+            message: AppI18n.tr('syncDeltaDone'),
             lastSyncAt: now,
             lastGetDebug: {
               'ok': true,
@@ -290,7 +292,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
             clearProgress: true,
             clearActiveOperation: true,
             unsyncedCount: unsynced,
-            message: 'Дельта недоступна, полный справочник не запускался',
+            message: AppI18n.tr('syncDeltaUnavailNoFull'),
             lastSyncAt: now,
             lastGetDebug: {
               'ok': false,
@@ -314,7 +316,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
         }
         state = state.copyWith(
           status: SyncStatus.loading,
-          message: 'Дельта недоступна, загружаем полный справочник…',
+          message: AppI18n.tr('syncDeltaUnavailLoadingFull'),
           clearProgress: true,
         );
       }
@@ -330,15 +332,15 @@ class SyncNotifier extends StateNotifier<SyncState> {
       if (seed.orgs.isEmpty) {
         throw StateError(
           localTotalsBeforeReplace.organizations > 0
-              ? 'Сервер вернул пустой справочник организаций. Локальные данные сохранены без перезаписи.'
-              : 'Сервер вернул пустой справочник организаций. Локальная база не заполнена.',
+              ? AppI18n.tr('syncEmptyOrgsKept')
+              : AppI18n.tr('syncEmptyOrgsEmpty'),
         );
       }
       state = state.copyWith(
         status: SyncStatus.loading,
         message: fullRefresh
-            ? 'Full refresh: записываем данные в локальную БД…'
-            : 'Загрузка: записываем данные в локальную БД…',
+            ? AppI18n.tr('syncWritingFull')
+            : AppI18n.tr('syncWriting'),
         clearProgress: true,
       );
       await _db.replaceRemoteSnapshotPreservingUnsynced(
@@ -396,8 +398,14 @@ class SyncNotifier extends StateNotifier<SyncState> {
         clearProgress: true,
         clearActiveOperation: true,
         unsyncedCount: unsynced,
-        message:
-            '${fullRefresh ? 'Полное обновление' : 'Загружено'}: ЛПУ ${fetchedOrgCounts.lpu}, аптеки ${fetchedOrgCounts.pharmacy}, препараты ${seed.drugs.length}',
+        message: AppI18n.tr('syncCountsSummary', args: {
+          'mode': fullRefresh
+              ? AppI18n.tr('syncModeFull')
+              : AppI18n.tr('syncModeLoaded'),
+          'lpu': '${fetchedOrgCounts.lpu}',
+          'pharmacy': '${fetchedOrgCounts.pharmacy}',
+          'drugs': '${seed.drugs.length}',
+        }),
         lastSyncAt: now,
         lastGetDebug: {
           'ok': true,
@@ -436,7 +444,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
     } catch (e, st) {
       state = state.copyWith(
         status: SyncStatus.error,
-        message: 'Ошибка загрузки: $e',
+        message: AppI18n.tr('syncLoadError', args: {'e': '$e'}),
         lastGetDebug: {'ok': false, 'error': '$e'},
         clearProgress: true,
         clearActiveOperation: true,
@@ -511,7 +519,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
           clearActiveOperation: true,
           unsyncedCount: unsynced,
           lastSyncAt: DateTime.now(),
-          message: 'Данные обновлены',
+          message: AppI18n.tr('syncDataUpdated'),
         );
       }
       _drainPendingReconcile();
@@ -532,7 +540,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
       await refreshUnsyncedCount();
       state = state.copyWith(
         status: SyncStatus.idle,
-        message: 'Офлайн режим: загрузка с сервера пропущена',
+        message: AppI18n.tr('syncOfflineSkipped'),
         clearActiveOperation: true,
       );
       return;
@@ -549,8 +557,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
         initialTotals.doctors == 0 &&
         initialTotals.drugs == 0;
     final initialMessage = isFirstRun
-        ? 'Загружаем данные…'
-        : 'Обновляем данные…';
+        ? AppI18n.tr('syncLoadingData')
+        : AppI18n.tr('syncUpdatingDataEllipsis');
 
     state = state.copyWith(
       status: SyncStatus.loading,
@@ -611,7 +619,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
       } else {
         state = state.copyWith(
           status: SyncStatus.loading,
-          message: 'Загружаем врачей…',
+          message: AppI18n.tr('syncLoadingDoctors'),
           clearProgress: true,
         );
         final doctorBootstrapped = await _isDoctorDirectoryBootstrapped();
@@ -662,8 +670,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
         // While doctors still load in the background keep an honest "in
         // progress" label — the loading card/spinner is still visible.
         message: skipDoctors
-            ? 'Загружаем справочник врачей…'
-            : 'Синхронизация завершена',
+            ? AppI18n.tr('syncLoadingDoctorsRef')
+            : AppI18n.tr('syncDone'),
         lastGetDebug: {
           'ok': true,
           'mode': fullRefresh ? 'layered_full' : 'layered_delta',
@@ -689,7 +697,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
     } catch (e, st) {
       state = state.copyWith(
         status: SyncStatus.error,
-        message: 'Ошибка загрузки: $e',
+        message: AppI18n.tr('syncLoadError', args: {'e': '$e'}),
         lastGetDebug: {'ok': false, 'error': '$e'},
         clearProgress: true,
         clearActiveOperation: true,
@@ -783,7 +791,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
         await _db.upsertDrugs(rows);
         drugsCount = rows.length;
       }
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncDrugsAndMaterialsLayer');
+    }
 
     try {
       final docs = await _remoteApi.getDrugDocuments(companyId: companyId);
@@ -797,7 +807,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
       for (final e in docs.drugNames.entries) {
         await _db.updateDrugName(e.key, e.value);
       }
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncDrugsAndMaterialsLayer');
+    }
 
     return (drugsCount, materialsCount, changedDrugRows);
   }
@@ -851,7 +863,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
     state = state.copyWith(
       status: SyncStatus.loading,
       unsyncedCount: pending,
-      message: 'Сначала отправляем несинхронизированные записи: $pending',
+      message: AppI18n.tr('syncPushFirst', args: {'n': '$pending'}),
       clearProgress: true,
     );
 
@@ -863,7 +875,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
         status: SyncStatus.error,
         unsyncedCount: remaining,
         message:
-            'Не удалось отправить локальные записи. Загрузка с сервера отложена',
+            AppI18n.tr('syncPushFailedDeferred'),
         clearProgress: true,
         clearActiveOperation: true,
       );
@@ -880,11 +892,11 @@ class SyncNotifier extends StateNotifier<SyncState> {
       unsyncedCount: remaining,
       message: remaining > 0
           ? (fullRefresh
-                ? 'Часть записей ещё не отправлена ($remaining), продолжаем full refresh…'
-                : 'Часть записей ещё не отправлена ($remaining), загружаем дельту…')
+                ? AppI18n.tr('syncSomeUnsentFull', args: {'n': '$remaining'})
+                : AppI18n.tr('syncSomeUnsentDelta', args: {'n': '$remaining'}))
           : (fullRefresh
-                ? 'Локальная очередь отправлена, начинаем full refresh…'
-                : 'Локальная очередь отправлена, загружаем дельту…'),
+                ? AppI18n.tr('syncQueueSentFull')
+                : AppI18n.tr('syncQueueSentDelta')),
       clearProgress: true,
     );
     return true;
@@ -932,7 +944,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
                 .whereType<int>()
                 .toList();
           }
-        } catch (_) {}
+        } catch (e) {
+          logSwallowed(e, 'Sync._pushPendingPlans');
+        }
       }
 
       try {
@@ -1043,6 +1057,13 @@ class SyncNotifier extends StateNotifier<SyncState> {
     }
   }
 
+  /// Reads the single scalar of a COUNT(*) query, tolerating an empty result
+  /// set (e.g. a cleared or corrupted table) instead of crashing on `.first`.
+  static int _scalarCount(List<Map<String, dynamic>> rows) {
+    if (rows.isEmpty) return 0;
+    return (rows.first['c'] as num?)?.toInt() ?? 0;
+  }
+
   Future<_LocalTotals> _collectLocalTotals() async {
     final db = _db.db;
     final orgs = await db.rawQuery('SELECT COUNT(*) AS c FROM organisations');
@@ -1064,10 +1085,10 @@ class SyncNotifier extends StateNotifier<SyncState> {
     final materials = await db.rawQuery(
       'SELECT COUNT(*) AS c FROM drug_materials',
     );
-    final orgTotal = (orgs.first['c'] as int?) ?? 0;
-    final lpuTotal = (lpu.first['c'] as int?) ?? 0;
-    final pharmacyTotal = (pharmacies.first['c'] as int?) ?? 0;
-    final distributorTotal = (distributors.first['c'] as int?) ?? 0;
+    final orgTotal = _scalarCount(orgs);
+    final lpuTotal = _scalarCount(lpu);
+    final pharmacyTotal = _scalarCount(pharmacies);
+    final distributorTotal = _scalarCount(distributors);
     return _LocalTotals(
       organizations: orgTotal,
       lpu: lpuTotal,
@@ -1075,11 +1096,11 @@ class SyncNotifier extends StateNotifier<SyncState> {
       distributor: distributorTotal,
       otherOrganizations:
           orgTotal - lpuTotal - pharmacyTotal - distributorTotal,
-      doctors: (doctors.first['c'] as int?) ?? 0,
-      visits: (visits.first['c'] as int?) ?? 0,
-      plannedVisits: (plannedVisits.first['c'] as int?) ?? 0,
-      drugs: (drugs.first['c'] as int?) ?? 0,
-      materials: (materials.first['c'] as int?) ?? 0,
+      doctors: _scalarCount(doctors),
+      visits: _scalarCount(visits),
+      plannedVisits: _scalarCount(plannedVisits),
+      drugs: _scalarCount(drugs),
+      materials: _scalarCount(materials),
     );
   }
 
@@ -1145,7 +1166,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
               .toList();
           await _db.upsertDrugs(rows);
         }
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+      }
     }
 
     // Favourite doctors
@@ -1161,7 +1184,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
           if (id != null) await _db.updateDoctorFavorite(id, true);
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+    }
 
     // Favourite organisations
     try {
@@ -1176,7 +1201,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
           if (id != null) await _db.updateOrgFavorite(id, true);
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+    }
 
     // All visit history
     try {
@@ -1188,7 +1215,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
       ]) {
         try {
           allVisits.addAll(await fn());
-        } catch (_) {}
+        } catch (e) {
+          logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+        }
       }
       if (allVisits.isNotEmpty) {
         // Deduplicate by remote_id — last endpoint wins (more specific type)
@@ -1273,7 +1302,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
               return remoteId != null && !fetchedRemoteIds.contains(remoteId);
             }).length;
       }
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+    }
 
     // Planned visits — convert PlannedVisit model → DB row
     try {
@@ -1291,13 +1322,17 @@ class SyncNotifier extends StateNotifier<SyncState> {
               planned.add(row);
             }
           }
-        } catch (_) {}
+        } catch (e) {
+          logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+        }
       }
       if (planned.isNotEmpty) {
         await _db.upsertPlannedVisits(planned);
         plannedVisitsCount = planned.length;
       }
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+    }
 
     if (!quickOnly) {
       // Drug documents/materials + per-drug documents count.
@@ -1329,7 +1364,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
             .map(
               (e) => {
                 'id': e.key,
-                'name': docs.drugNames[e.key] ?? 'Препарат #${e.key}',
+                'name':
+                    docs.drugNames[e.key] ??
+                    AppI18n.tr('drugNumbered', args: {'n': '${e.key}'}),
                 'manufacturer': '',
                 'price': 0,
                 'serial_number': '',
@@ -1347,14 +1384,18 @@ class SyncNotifier extends StateNotifier<SyncState> {
         if (documentOnlyDrugs.isNotEmpty) {
           await _db.upsertDrugs(documentOnlyDrugs);
         }
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+      }
     }
 
     // Daily stats
     try {
       final stats = await _remoteApi.getDailyVisitStatistics();
       await _db.setCachedStat('daily_stats', stats);
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+    }
 
     // Managers
     try {
@@ -1372,7 +1413,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
             .toList();
         await _db.upsertManagers(rows);
       }
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+    }
 
     // Day types
     try {
@@ -1389,7 +1432,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
             .toList();
         await _db.upsertDayTypes(rows);
       }
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+    }
 
     // Visit formats (used by plan-screen format picker).
     try {
@@ -1406,7 +1451,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
             .toList();
         await _db.upsertVisitFormats(rows);
       }
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+    }
 
     if (!quickOnly) {
       // Download material files for offline access
@@ -1416,13 +1463,17 @@ class SyncNotifier extends StateNotifier<SyncState> {
           authToken: _apiClient.token,
         );
         cachedFilesCount = await cacheService.downloadPending(_db);
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+      }
     }
 
     if (repairDoctors) {
       try {
         await _repairDoctorDirectoryIfNeeded();
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
+      }
     }
 
     return _LiveSyncResult(
@@ -1491,7 +1542,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
     try {
       final decoded = jsonDecode(rawJson);
       if (decoded is Map) return Map<String, dynamic>.from(decoded);
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'Sync._decodeJsonMap');
+    }
     return null;
   }
 
@@ -1514,7 +1567,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
           expectedTotal = remoteTotal;
           await _setDoctorDirectoryExpectedTotal(remoteTotal);
         }
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync._doctorDirectoryNeedsRepair');
+      }
     }
     if (expectedTotal != null &&
         expectedTotal > 0 &&
@@ -1576,7 +1631,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
     );
     await _db.upsertDoctorOrganisationLinks(relations);
     await _publishLayerProgress(
-      'Обновляем данные…',
+      AppI18n.tr('syncUpdatingDataEllipsis'),
       debug: {
         'mode': 'layered',
         'layer': 'doctor_relations',
@@ -1618,7 +1673,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
         final progressTotal = expectedTotal;
         final percent = _progressPercent(progressCurrent, progressTotal);
         await _publishLayerProgress(
-          percent == null ? 'Обновляем данные…' : 'Обновляем данные: $percent%',
+          percent == null
+              ? AppI18n.tr('syncUpdatingDataEllipsis')
+              : AppI18n.tr('syncUpdatingDataPct', args: {'percent': '$percent'}),
           debug: {
             'mode': 'layered',
             'layer': 'doctors',
@@ -1675,7 +1732,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
       state = state.copyWith(
         status: SyncStatus.idle,
         unsyncedCount: count,
-        message: 'Офлайн режим: отправка пропущена',
+        message: AppI18n.tr('syncOfflinePushSkipped'),
         clearActiveOperation: true,
       );
       return;
@@ -1683,7 +1740,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
     state = state.copyWith(
       status: SyncStatus.loading,
       activeOperation: SyncOperation.push,
-      message: 'Отправка данных…',
+      message: AppI18n.tr('syncPushingData'),
       clearProgress: true,
     );
 
@@ -1696,7 +1753,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
       );
 
       final syncedIds = <int>[];
-      final removedIds = <int>[];
+      final parkedIds = <int>[];
       final failed = <String>[];
       final responses = <Map<String, dynamic>>[];
 
@@ -1715,16 +1772,30 @@ class SyncNotifier extends StateNotifier<SyncState> {
           if (visit.id != null) syncedIds.add(visit.id!);
         } catch (e) {
           if (visit.id != null && isPermanentVisitPushFailure(e)) {
-            await _db.deleteVisit(visit.id!);
-            removedIds.add(visit.id!);
+            // Server rejected the payload: keep the row (field data must never
+            // be lost), park it and let the user retry/delete from sync screen.
+            if (e is RemotePushException) {
+              await _db.setVisitPushPayload(
+                visitId: visit.id!,
+                requestJson: jsonEncode(e.request),
+                responseJson: jsonEncode(e.response),
+              );
+            } else {
+              await _db.setVisitPushPayload(
+                visitId: visit.id!,
+                responseJson: jsonEncode({'error': '$e'}),
+              );
+            }
+            await _db.markVisitPushFailedPermanently(visit.id!);
+            parkedIds.add(visit.id!);
             responses.add({
               'visit_id': visit.id,
               'ok': false,
-              'removed': true,
+              'parked': true,
               'error': _pushErrorMessage(e),
             });
             failed.add(
-              'visit#${visit.id ?? '-'}: удалён после отклонения сервером',
+              'visit#${visit.id ?? '-'}: отклонён сервером, не отправлен — требует внимания',
             );
             continue;
           }
@@ -1741,19 +1812,20 @@ class SyncNotifier extends StateNotifier<SyncState> {
               responseJson: responseJson,
             );
             // Transient failure: bump attempt count + schedule backoff. After
-            // too many tries, give up so the queue does not spin forever.
+            // too many tries, park the visit (keep the row) so the queue does
+            // not spin forever but no field data is lost.
             final attempts = await _db.recordVisitPushFailure(visit.id!);
             if (attempts >= _maxPushAttempts) {
-              await _db.deleteVisit(visit.id!);
-              removedIds.add(visit.id!);
+              await _db.markVisitPushFailedPermanently(visit.id!);
+              parkedIds.add(visit.id!);
               responses.add({
                 'visit_id': visit.id,
                 'ok': false,
-                'removed': true,
+                'parked': true,
                 'error': _pushErrorMessage(e),
               });
               failed.add(
-                'visit#${visit.id}: удалён после $attempts неудачных попыток',
+                'visit#${visit.id}: не отправлен после $attempts попыток — требует внимания',
               );
               continue;
             }
@@ -1783,9 +1855,16 @@ class SyncNotifier extends StateNotifier<SyncState> {
         unsyncedCount: remaining,
         message: failed.isEmpty
             ? (syncedIds.isEmpty
-                  ? 'Данные очереди отправлены'
-                  : 'Отправлено ${syncedIds.length} визитов')
-            : 'Отправлено ${syncedIds.length}, удалено ${removedIds.length}, ошибок: ${failed.length}. ${failed.first}',
+                  ? AppI18n.tr('syncQueueSent')
+                  : AppI18n.tr('syncSentVisits', args: {
+                      'n': '${syncedIds.length}',
+                    }))
+            : AppI18n.tr('syncSentWithAttention', args: {
+                'sent': '${syncedIds.length}',
+                'parked': '${parkedIds.length}',
+                'failed': '${failed.length}',
+                'first': failed.first,
+              }),
         lastSyncAt: now,
         lastPostDebug: {
           'ok': failed.isEmpty,
@@ -1804,11 +1883,18 @@ class SyncNotifier extends StateNotifier<SyncState> {
       if (syncedIds.isNotEmpty || failed.isNotEmpty) {
         await _notificationsService.add(
           title: failed.isEmpty
-              ? 'Отправка визитов завершена'
-              : 'Отправка визитов с ошибками',
+              ? AppI18n.tr('syncPushVisitsDone')
+              : AppI18n.tr('syncPushVisitsErrors'),
           body: failed.isEmpty
-              ? 'Отправлено: ${syncedIds.length}, осталось: $remaining.'
-              : 'Отправлено: ${syncedIds.length}, ошибок: ${failed.length}, осталось: $remaining.',
+              ? AppI18n.tr('syncSentRemaining', args: {
+                  'sent': '${syncedIds.length}',
+                  'remaining': '$remaining',
+                })
+              : AppI18n.tr('syncSentErrorsRemaining', args: {
+                  'sent': '${syncedIds.length}',
+                  'failed': '${failed.length}',
+                  'remaining': '$remaining',
+                }),
           kind: 'sync',
         );
       }
@@ -1839,10 +1925,14 @@ class SyncNotifier extends StateNotifier<SyncState> {
             }
             await _db.deletePendingFavorite(id);
           } catch (_) {
-            // Keep in queue for next sync attempt
+            // Keep in queue for next sync attempt; after too many tries the
+            // row is parked (failed=1) and surfaced on the sync screen.
+            await _db.recordPendingFavoriteFailure(id);
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync.pushToRemote');
+      }
 
       // Flush pending feedback queue
       try {
@@ -1861,13 +1951,19 @@ class SyncNotifier extends StateNotifier<SyncState> {
             for (final p in photoPaths) {
               try {
                 File(p).deleteSync();
-              } catch (_) {}
+              } catch (e) {
+                logSwallowed(e, 'Sync.pushToRemote');
+              }
             }
           } catch (_) {
-            // Keep in queue for next sync attempt
+            // Keep in queue for next sync attempt; after too many tries the
+            // row is parked (failed=1) and surfaced on the sync screen.
+            await _db.recordPendingFeedbackFailure(id);
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync.pushToRemote');
+      }
 
       // Flush pending new doctors queue
       try {
@@ -1890,11 +1986,14 @@ class SyncNotifier extends StateNotifier<SyncState> {
               await _db.replaceDoctorTempId(tempLocalId, remoteId);
               await _db.deletePendingDoctor(id);
             }
-          } catch (_) {
+          } catch (e) {
             // Keep in queue for next sync attempt
+            logSwallowed(e, 'Sync.pushPendingDoctor#$id');
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync.pushToRemote');
+      }
 
       // Flush pending organization updates queue
       try {
@@ -1917,18 +2016,23 @@ class SyncNotifier extends StateNotifier<SyncState> {
               longitude: (row['longitude'] as num?)?.toDouble(),
             );
             await _db.deletePendingOrgUpdate(id);
-          } catch (_) {
+          } catch (e) {
             // Keep in queue for next sync attempt
+            logSwallowed(e, 'Sync.pushPendingOrgUpdate#$id');
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync.pushToRemote');
+      }
 
       // Flush pending planned-visit submissions. Rows survive transient
       // failures (network, 5xx) and get retried on the next push/reconcile.
       // 4xx validation errors drop the row inside _pushPendingPlans().
       try {
         await _pushPendingPlans();
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'Sync.pushToRemote');
+      }
 
       state = state.copyWith(clearActiveOperation: true);
       if (pushCompleted) {
@@ -1940,12 +2044,12 @@ class SyncNotifier extends StateNotifier<SyncState> {
       final message = _pushErrorMessage(e);
       state = state.copyWith(
         status: SyncStatus.error,
-        message: 'Ошибка отправки: $message',
+        message: AppI18n.tr('syncSendError', args: {'message': message}),
         lastPostDebug: {'ok': false, 'error': '$e'},
         clearActiveOperation: true,
       );
       await _notificationsService.add(
-        title: 'Ошибка отправки визитов',
+        title: AppI18n.tr('syncSendVisitsErrorTitle'),
         body: message,
         kind: 'sync',
       );
@@ -2052,13 +2156,15 @@ class SyncNotifier extends StateNotifier<SyncState> {
       }
       try {
         await pushToRemote();
-      } catch (_) {
+      } catch (e) {
         // Pull must continue: old invalid pending records should not block
         // completing local reference tables such as doctors and pharmacies.
+        logSwallowed(e, 'Sync.reconcile.push');
       }
       await syncLaunchDeltaIfNeeded();
-    } catch (_) {
+    } catch (e) {
       // Keep silent: background reconcile should not break UX.
+      logSwallowed(e, 'Sync.reconcile');
     } finally {
       _isReconciling = false;
       _drainPendingReconcile();

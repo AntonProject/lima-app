@@ -321,7 +321,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Text(
-                                      auth.errorMessage!,
+                                      context.l10n.t(auth.errorMessage!),
                                       textAlign: TextAlign.center,
                                       style: GoogleFonts.manrope(
                                         color: AppColors.error,

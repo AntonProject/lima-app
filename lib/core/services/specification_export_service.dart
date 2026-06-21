@@ -9,6 +9,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:lima/core/i18n/app_i18n.dart';
+
 enum SpecificationFormat { xlsx, png }
 
 class SpecificationItem {
@@ -70,7 +72,9 @@ class SpecificationExportService {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка генерации спецификации: $e')),
+        SnackBar(
+          content: Text(AppI18n.tr('exportGenError', args: {'e': '$e'})),
+        ),
       );
       return;
     }
@@ -82,8 +86,8 @@ class SpecificationExportService {
       if (result.type != ResultType.done) {
         await Share.shareXFiles(
           [XFile(saved.path)],
-          text: 'Спецификация',
-          subject: 'Спецификация',
+          text: AppI18n.tr('specification'),
+          subject: AppI18n.tr('specification'),
         );
       }
     } on MissingPluginException {
@@ -103,7 +107,11 @@ class SpecificationExportService {
     if (!context.mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('Файл сохранен: ${saved.path}')));
+    ).showSnackBar(
+      SnackBar(
+        content: Text(AppI18n.tr('exportFileSaved', args: {'path': saved.path})),
+      ),
+    );
   }
 
   Future<File> _saveFile(Uint8List bytes, String name) async {

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/dialogs/manager_select_dialog.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
@@ -52,11 +53,14 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
 
   String get _visitModeTitle {
     if (_mode == _VisitMode.manager && _selectedManager != null) {
-      return 'Менеджер: $_selectedManager';
+      return context.l10n.t(
+        'managerColon',
+        args: {'name': _selectedManager ?? ''},
+      );
     }
-    if (_selected.isEmpty) return 'Выберите врачей для визита';
-    if (_selected.length == 1) return 'Визит 1 на 1';
-    return 'Групповая презентация';
+    if (_selected.isEmpty) return context.l10n.t('selectDoctorsForVisit');
+    if (_selected.length == 1) return context.l10n.t('visitOneOnOne');
+    return context.l10n.t('groupPresentation');
   }
 
   @override
@@ -139,21 +143,21 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     final normalized = (category == null || category.isEmpty)
         ? 'C'
         : category.toUpperCase();
-    return 'Категория $normalized';
+    return '${context.l10n.t('category')} $normalized';
   }
 
   String _visitLabel(Map<String, dynamic> d) {
     final count = (d['visit_count'] as num?)?.toInt() ?? 0;
-    if (count <= 0) return 'Визитов не было';
-    return '$count визитов';
+    if (count <= 0) return context.l10n.t('noVisitsYet');
+    return context.l10n.plural(count, 'visits');
   }
 
   Future<void> _openAddDoctorSheet() async {
     if (!_canEditDirectory) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Добавление врача доступно только администратору'),
+        SnackBar(
+          content: Text(context.l10n.t('addDoctorAdminOnly')),
         ),
       );
       return;
@@ -190,7 +194,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
               Row(
                 children: [
                   Text(
-                    'Добавить врача',
+                    context.l10n.t('addDoctor'),
                     style: GoogleFonts.manrope(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -204,12 +208,12 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
                   ),
                 ],
               ),
-              _field('Номер телефона', phoneCtrl),
-              _field('ФИО *', nameCtrl),
-              _field('Должность *', specialtyCtrl),
-              _field('Хобби', hobbyCtrl),
-              _field('Интересы', interestsCtrl),
-              _field('Дата рождения', birthdayCtrl),
+              _field(context.l10n.t('phoneNumber'), phoneCtrl),
+              _field(context.l10n.t('fullNameField'), nameCtrl),
+              _field(context.l10n.t('position'), specialtyCtrl),
+              _field(context.l10n.t('hobby'), hobbyCtrl),
+              _field(context.l10n.t('interests'), interestsCtrl),
+              _field(context.l10n.t('birthDate'), birthdayCtrl),
               const SizedBox(height: 12),
               AppTapScale(
                 pressedScale: 0.97,
@@ -231,7 +235,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
                     disabledBackgroundColor: AppColors.primary,
                     disabledForegroundColor: Colors.white,
                   ),
-                  child: const Text('Добавить врача'),
+                  child: Text(context.l10n.t('addDoctor')),
                 ),
               ),
             ],
@@ -241,6 +245,8 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     );
 
     if (result == null) return;
+    if (!mounted) return;
+    final noVisitsLabel = context.l10n.t('noVisitsYet');
     final db = ref.read(localDatabaseProvider);
     final api = ref.read(remoteApiServiceProvider);
     final now = DateTime.now().toIso8601String();
@@ -256,7 +262,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
       'organisation_id': widget.orgId,
       'is_favorite': 0,
       'category': 'C',
-      'last_visit_label': 'Визитов не было',
+      'last_visit_label': noVisitsLabel,
       'updated_at': now,
     });
 
@@ -287,9 +293,9 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Врач сохранён локально и будет синхронизирован при появлении сети',
+              context.l10n.t('doctorSavedLocally'),
             ),
             duration: Duration(seconds: 3),
           ),
@@ -329,7 +335,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
         children: [
           // ── Фиксированный AppBar ──────────────────────────────────────────
           AppCenteredHeader(
-            title: 'Выбор врача',
+            title: context.l10n.t('doctorSelect'),
             subtitle: widget.orgName,
             leftAlign: true,
             onBack: () {
@@ -370,8 +376,8 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
                     setState(() => _query = v);
                     _loadDoctors();
                   },
-                  decoration: const InputDecoration(
-                    hintText: 'Поиск врача...',
+                  decoration: InputDecoration(
+                    hintText: context.l10n.t('searchDoctor'),
                     prefixIcon: Icon(Icons.search_rounded),
                   ),
                 ),
@@ -433,7 +439,10 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
                 const SizedBox(height: 10),
                 // Заголовок списка
                 Text(
-                  'ВРАЧИ (${_filtered.length})',
+                  context.l10n.t(
+                    'doctorsCountCaps',
+                    args: {'count': '${_filtered.length}'},
+                  ),
                   style: GoogleFonts.manrope(
                     fontSize: 12,
                     color: AppColors.hintText,
@@ -479,7 +488,10 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'Выбрано врачей: ${_selected.length}',
+                          context.l10n.t(
+                            'selectedDoctors',
+                            args: {'count': '${_selected.length}'},
+                          ),
                           style: GoogleFonts.manrope(
                             fontSize: 13,
                             color: AppColors.success,
@@ -576,7 +588,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text('Продолжить'),
+                    Text(context.l10n.t('continue')),
                     if (_canContinue) ...[
                       const SizedBox(width: 6),
                       const Icon(Icons.arrow_forward_rounded, size: 16),

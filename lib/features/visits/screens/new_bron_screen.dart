@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/models/models.dart';
 import 'package:lima/core/network/remote_api_service.dart';
@@ -112,7 +113,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
             if (id == null) continue;
             _drugById[id] = Drug(
               id: id,
-              name: (m['name'] as String?) ?? 'Препарат #$id',
+              name: (m['name'] as String?) ?? context.l10n.t('drugHash', args: {'id': '$id'}),
               manufacturer: (m['manufacturer'] as String?) ?? '',
               price: ((m['sale_price'] as num?) ?? (m['price'] as num?) ?? 0)
                   .toDouble(),
@@ -226,7 +227,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     if (_actionLocked) return;
     if (_hasInvalidQuantities) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Количество больше доступного остатка')),
+        SnackBar(content: Text(context.l10n.t('qtyExceedsStock'))),
       );
       return;
     }
@@ -251,8 +252,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     if (savedCount == 0) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Подождите, загружаются данные препаратов'),
+          SnackBar(
+            content: Text(context.l10n.t('loadingDrugData')),
           ),
         );
       }
@@ -261,9 +262,9 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     }
     if (!mounted) return;
     await _showResultDialog(
-      title: 'Заказ добавлен в корзину',
-      subtitle: 'Ваш заказ успешно сохранен в корзине',
-      badge: 'Заказ будет доступен 12 часов',
+      title: context.l10n.t('orderAddedToCart'),
+      subtitle: context.l10n.t('orderSavedInCart'),
+      badge: context.l10n.t('orderAvailable12h'),
     );
   }
 
@@ -271,12 +272,13 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     if (_actionLocked) return;
     if (_hasInvalidQuantities) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Количество больше доступного остатка')),
+        SnackBar(content: Text(context.l10n.t('qtyExceedsStock'))),
       );
       return;
     }
     setState(() => _actionLocked = true);
     final now = DateTime.now().toIso8601String();
+    final serverRejectedMsg = context.l10n.t('serverRejectedOrder');
 
     // Build drugs payload using income_detailing_id (= current_stock_id from
     // price-list) so the backend creates a proper Бронь order, not a presentation.
@@ -324,8 +326,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     if (itemsPayload.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Подождите, загружаются данные препаратов'),
+          SnackBar(
+            content: Text(context.l10n.t('loadingDrugData')),
           ),
         );
       }
@@ -346,7 +348,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       if (orderUserId == null || orderUserId <= 0) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Не удалось определить пользователя')),
+            SnackBar(content: Text(context.l10n.t('cannotIdentifyUser'))),
           );
         }
         if (mounted) setState(() => _actionLocked = false);
@@ -383,11 +385,11 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         }
         if (pricingTerms == null) {
           if (mounted) {
-            final buyerLabel = isWholesaler ? 'Опт' : 'Розница';
+            final buyerLabel = isWholesaler ? context.l10n.t('wholesale') : context.l10n.t('retail');
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  'В API нет ценовой матрицы для $_prepayment% / $buyerLabel',
+                  context.l10n.t('noPriceMatrix', args: {'prepay': '$_prepayment', 'buyer': buyerLabel}),
                 ),
               ),
             );
@@ -506,8 +508,19 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
             remoteRejected = true;
             remoteRejectMessage = e is RemotePushException
                 ? e.displayMessage
-                : 'Сервер отклонил заказ';
-            await db.deleteVisit(localId);
+                : serverRejectedMsg;
+            // Keep the visit locally as "parked": user can fix and retry or
+            // explicitly delete it from the sync screen. Never drop field data.
+            await db.setVisitPushPayload(
+              visitId: localId,
+              requestJson: e is RemotePushException
+                  ? jsonEncode(e.request)
+                  : null,
+              responseJson: e is RemotePushException
+                  ? jsonEncode(e.response)
+                  : jsonEncode({'error': '$e'}),
+            );
+            await db.markVisitPushFailedPermanently(localId);
             ref.invalidate(dashboardCountsProvider);
           } else {
             remoteError = true;
@@ -529,7 +542,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось оформить заказ: $e')),
+          SnackBar(content: Text(context.l10n.t('orderFailedError', args: {'error': '$e'}))),
         );
         setState(() => _actionLocked = false);
       }
@@ -539,9 +552,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     if (remoteRejected) {
       if (!mounted) return;
       await _showResultDialog(
-        title: 'Заказ не создан',
+        title: context.l10n.t('orderNotSent'),
         subtitle:
-            remoteRejectMessage ?? 'Сервер отклонил заказ, он не сохранён',
+            '${remoteRejectMessage ?? context.l10n.t('serverRejectedOrder')}. '
+            '${context.l10n.t('orderSavedLocallyRetry')}',
         success: false,
         stayOnPageOnClose: true,
       );
@@ -551,7 +565,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     if (skippedInvalidItems > 0 && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Пропущено позиций без остатков: $skippedInvalidItems'),
+          content: Text(context.l10n.t('skippedNoStockN', args: {'count': '$skippedInvalidItems'})),
         ),
       );
     }
@@ -579,12 +593,12 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     );
     if (!mounted) return;
     await _showResultDialog(
-      title: remoteSynced ? 'Заказ оформлен' : 'Заказ сохранен',
+      title: remoteSynced ? context.l10n.t('orderPlaced') : context.l10n.t('orderSaved'),
       subtitle: remoteSynced
-          ? 'Ваш заказ успешно отправлен оператору'
+          ? context.l10n.t('orderSentToOperator')
           : remoteError
-          ? 'Не удалось отправить на сервер. Заказ останется в очереди синхронизации'
-          : 'Заказ будет отправлен при синхронизации',
+          ? context.l10n.t('orderQueuedSyncFail')
+          : context.l10n.t('orderWillSendOnSync'),
     );
   }
 
@@ -672,7 +686,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                 children: [
                   Expanded(
                     child: Text(
-                      'Выберите формат',
+                      context.l10n.t('selectFormat'),
                       style: GoogleFonts.manrope(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
@@ -766,7 +780,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                   ),
                 ),
                 child: Text(
-                  'Изображение (.png)',
+                  context.l10n.t('imagePng'),
                   style: GoogleFonts.manrope(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -888,7 +902,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                       ),
                     ),
                     child: Text(
-                      'Перейти к компании',
+                      context.l10n.t('goToCompany'),
                       style: GoogleFonts.manrope(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -915,7 +929,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                       ),
                     ),
                     child: Text(
-                      stayOnPageOnClose ? 'Понятно' : 'На главную',
+                      stayOnPageOnClose ? context.l10n.t('understood') : context.l10n.t('toHome'),
                       style: GoogleFonts.manrope(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -983,8 +997,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                     children: [
                       Text(
                         widget.isCheckoutMode
-                            ? 'Оформление заказа'
-                            : 'Оформление брони',
+                            ? context.l10n.t('orderCheckout')
+                            : context.l10n.t('bronCheckout'),
                         style: GoogleFonts.manrope(
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
@@ -1021,11 +1035,11 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                   padding: const EdgeInsets.all(14),
                   child: Column(
                     children: [
-                      _pair('Предоплата:', '$_prepayment%'),
+                      _pair(context.l10n.t('prepaymentColon'), '$_prepayment%'),
                       const Divider(color: AppColors.divider, height: 16),
                       _pair(
-                        'Тип покупателя:',
-                        _buyerType == 1 ? 'Опт' : 'Розница',
+                        context.l10n.t('buyerTypeColon'),
+                        _buyerType == 1 ? context.l10n.t('wholesale') : context.l10n.t('retail'),
                       ),
                     ],
                   ),
@@ -1042,7 +1056,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Комментарий',
+                        context.l10n.t('comment'),
                         style: GoogleFonts.manrope(
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
@@ -1052,8 +1066,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                       TextField(
                         controller: _commentCtrl,
                         maxLines: 3,
-                        decoration: const InputDecoration(
-                          hintText: 'Введите комментарий...',
+                        decoration: InputDecoration(
+                          hintText: context.l10n.t('enterComment'),
                         ),
                       ),
                     ],
@@ -1088,7 +1102,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
               child: Row(
                 children: [
                   Text(
-                    'К оплате:',
+                    context.l10n.t('toPayColon'),
                     style: GoogleFonts.manrope(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -1124,8 +1138,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                   : const Icon(Icons.check_rounded),
               label: Text(
                 _actionLocked
-                    ? 'Оформляем заказ...'
-                    : 'Отправить заказ оператору',
+                    ? context.l10n.t('placingOrder')
+                    : context.l10n.t('sendOrderToOperator'),
                 style: GoogleFonts.manrope(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -1150,7 +1164,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                   color: Color(0xFF2C9E63),
                 ),
                 label: Text(
-                  'Сохранить в корзину',
+                  context.l10n.t('saveToCart'),
                   style: GoogleFonts.manrope(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -1174,7 +1188,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                   : _showSpecFormatDialog,
               icon: const Icon(Icons.file_download_outlined),
               label: Text(
-                'Скачать спецификацию',
+                context.l10n.t('downloadSpec'),
                 style: GoogleFonts.manrope(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -1208,8 +1222,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
             children: [
               Text(
                 widget.isCheckoutMode
-                    ? 'Детализация заказа'
-                    : 'Детализация брони',
+                    ? context.l10n.t('orderDetails')
+                    : context.l10n.t('bronDetails'),
                 style: GoogleFonts.manrope(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
@@ -1217,7 +1231,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
               ),
               const Spacer(),
               Text(
-                '$itemsCount шт.',
+                context.l10n.t('pcsN', args: {'n': '$itemsCount'}),
                 style: GoogleFonts.manrope(
                   fontSize: 14,
                   color: AppColors.secondaryText,
@@ -1245,7 +1259,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _drugById[id]?.name ?? 'Препарат #$id',
+                          _drugById[id]?.name ?? context.l10n.t('drugHash', args: {'id': '$id'}),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.manrope(
@@ -1279,7 +1293,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                   const SizedBox(width: 8),
                   if (widget.isCheckoutMode)
                     Text(
-                      '${_qtyByDrugId[id] ?? 0} шт.',
+                      context.l10n.t('pcsN', args: {'n': '${_qtyByDrugId[id] ?? 0}'}),
                       style: GoogleFonts.manrope(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,

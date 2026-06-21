@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../core/i18n/app_i18n.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 
@@ -41,7 +42,7 @@ class VisitSummaryScreen extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'Сводка визита',
+                  context.l10n.t('visitSummary'),
                   style: GoogleFonts.manrope(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -71,7 +72,7 @@ class VisitSummaryScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    'Визит сохранён',
+                    context.l10n.t('visitSaved'),
                     style: GoogleFonts.manrope(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -80,7 +81,7 @@ class VisitSummaryScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Данные доступны в истории визитов',
+                    context.l10n.t('dataAvailableInHistory'),
                     style: GoogleFonts.manrope(
                       fontSize: 13,
                       color: AppColors.secondaryText,
@@ -97,16 +98,16 @@ class VisitSummaryScreen extends StatelessWidget {
                     child: Column(
                       children: [
                         _row(
-                          'Дата',
+                          context.l10n.t('date'),
                           '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}',
                         ),
                         const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
                         _row(
-                          'Время',
+                          context.l10n.t('time'),
                           '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
                         ),
                         const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
-                        _row('Статус', 'Завершён'),
+                        _row(context.l10n.t('status'), context.l10n.t('completed')),
                       ],
                     ),
                   ),
@@ -121,7 +122,7 @@ class VisitSummaryScreen extends StatelessWidget {
                         disabledBackgroundColor: AppColors.primary,
                         disabledForegroundColor: Colors.white,
                       ),
-                      child: const Text('К визитам'),
+                      child: Text(context.l10n.t('toVisits')),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -135,7 +136,7 @@ class VisitSummaryScreen extends StatelessWidget {
                         disabledForegroundColor: AppColors.primary,
                         side: const BorderSide(color: AppColors.primary),
                       ),
-                      child: const Text('Открыть историю'),
+                      child: Text(context.l10n.t('openHistory')),
                     ),
                   ),
                 ],

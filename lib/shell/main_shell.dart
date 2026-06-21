@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import '../core/theme/app_theme.dart';
 import '../core/providers/connectivity_provider.dart';
@@ -96,8 +97,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     return '/home';
   }
 
-  bool? _lastIsLightStatusBar;
-
   @override
   void dispose() {
     _offlineToastTimer?.cancel();
@@ -138,20 +137,15 @@ class _MainShellState extends ConsumerState<MainShell> {
     _currentIndex = _indexFromLocation(currentPath);
     final isHome = currentPath == '/home';
 
-    // Белые иконки статус-бара на синих экранах, тёмные на светлых
+    // Белые иконки статус-бара на синих экранах, тёмные на светлых.
+    // Применяем декларативно через AnnotatedRegion (ниже): иначе при
+    // смене языка MaterialApp перестраивается, сбрасывает overlay в дефолт,
+    // а императивный setSystemUIOverlayStyle с кэш-гардом это не переустанавливал.
     final isLightStatusBar =
         currentPath == '/home' ||
         currentPath == '/profile' ||
         currentPath.contains('/detailing') ||
         currentPath.contains('/complete');
-    if (_lastIsLightStatusBar != isLightStatusBar) {
-      _lastIsLightStatusBar = isLightStatusBar;
-      SystemChrome.setSystemUIOverlayStyle(
-        isLightStatusBar
-            ? SystemUiOverlayStyle.light
-            : SystemUiOverlayStyle.dark,
-      );
-    }
 
     final hideNavBar =
         currentPath.startsWith('/visits/pharmacy/detail/') &&
@@ -175,7 +169,11 @@ class _MainShellState extends ConsumerState<MainShell> {
 
     final isTopLevelTab = _isTopLevelTab(currentPath);
 
-    return PopScope(
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: isLightStatusBar
+          ? SystemUiOverlayStyle.light
+          : SystemUiOverlayStyle.dark,
+      child: PopScope(
       canPop: !isTopLevelTab,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop || !isTopLevelTab) return;
@@ -241,6 +239,7 @@ class _MainShellState extends ConsumerState<MainShell> {
           ),
         ),
       ),
+      ),
     );
   }
 }
@@ -304,7 +303,7 @@ class _LimaNavBar extends StatelessWidget {
                         _NavItem(
                           icon: LucideIcons.house,
                           activeIcon: LucideIcons.house,
-                          label: 'Главная',
+                          label: context.l10n.t('navHome'),
                           index: 0,
                           current: currentIndex,
                           onTap: onTap,
@@ -312,7 +311,7 @@ class _LimaNavBar extends StatelessWidget {
                         _NavItem(
                           icon: LucideIcons.calendarDays,
                           activeIcon: LucideIcons.calendarDays,
-                          label: 'План',
+                          label: context.l10n.t('navPlan'),
                           index: 1,
                           current: currentIndex,
                           onTap: onTap,
@@ -325,7 +324,7 @@ class _LimaNavBar extends StatelessWidget {
                         _NavItem(
                           icon: LucideIcons.bookmark,
                           activeIcon: LucideIcons.bookmark,
-                          label: 'База',
+                          label: context.l10n.t('navKnowledge'),
                           index: 3,
                           current: currentIndex,
                           onTap: onTap,
@@ -333,7 +332,7 @@ class _LimaNavBar extends StatelessWidget {
                         _NavItem(
                           icon: LucideIcons.user,
                           activeIcon: LucideIcons.user,
-                          label: 'Профиль',
+                          label: context.l10n.t('navProfile'),
                           index: 4,
                           current: currentIndex,
                           onTap: onTap,
@@ -450,7 +449,7 @@ class _CenterNavItem extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Визиты',
+            context.l10n.t('navVisits'),
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w500,

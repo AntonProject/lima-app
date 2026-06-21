@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 
 import '../../../core/db/local_database.dart';
+import '../../../core/i18n/app_i18n.dart';
 import '../../../core/models/models.dart';
 import '../../../core/providers/sync_provider.dart';
 import '../../../core/theme/app_theme.dart';
@@ -174,6 +175,8 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
   }
 
   Future<void> _openVisitDetail(PlannedVisit v) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final l10n = context.l10n;
     try {
       final record = _toHistoryRecord(v);
       if (!mounted) return;
@@ -181,9 +184,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
     } catch (e, st) {
       debugPrint('Plan: openVisitDetail failed: $e\n$st');
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Не удалось открыть визит: $e')));
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.t('couldNotOpenVisit', args: {'error': '$e'}))),
+      );
     }
   }
 
@@ -236,7 +239,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'План визитов',
+                              context.l10n.t('visitPlan'),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: GoogleFonts.manrope(
@@ -256,14 +259,14 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                             child: Row(
                               children: [
                                 _modeBtn(
-                                  'Неделя',
+                                  context.l10n.t('week'),
                                   _calendarFormat == CalendarFormat.week,
                                   () => setState(
                                     () => _calendarFormat = CalendarFormat.week,
                                   ),
                                 ),
                                 _modeBtn(
-                                  'Месяц',
+                                  context.l10n.t('month'),
                                   _calendarFormat == CalendarFormat.month,
                                   () => setState(
                                     () =>
@@ -452,9 +455,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                               ),
                             ),
                             const SizedBox(height: 24),
-                            const EmptyState(
+                            EmptyState(
                               icon: Icons.calendar_month_rounded,
-                              title: 'На эту дату визитов нет',
+                              title: context.l10n.t('noVisitsForDate'),
                             ),
                           ],
                         ),
@@ -506,7 +509,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
               child: ElevatedButton.icon(
                 onPressed: null,
                 icon: const Icon(Icons.add_rounded),
-                label: const Text('Создать визит'),
+                label: Text(context.l10n.t('createVisit')),
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 44),
                   disabledBackgroundColor: AppColors.primary,
@@ -620,9 +623,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
       _selectedDay.month,
       _selectedDay.day,
     );
-    if (selected == today) return 'Визиты на Сегодня';
+    if (selected == today) return context.l10n.t('visitsForToday');
     final dateStr = DateFormat('d MMMM', _localeTag).format(_selectedDay);
-    return 'Визиты на $dateStr';
+    return context.l10n.t('visitsFor', args: {'date': dateStr});
   }
 
   String _calendarTitle() {
@@ -656,19 +659,20 @@ class _PlanVisitCard extends StatelessWidget {
 
   const _PlanVisitCard({required this.visit, required this.onTap});
 
-  String _formatAddress() {
+  String _formatAddress(BuildContext context) {
     final c = (visit.city ?? '').trim();
     final d = (visit.district ?? '').trim();
     if (c.isEmpty && d.isEmpty) return '';
     if (c.isEmpty) return d;
-    if (d.isEmpty) return 'г. $c';
-    return 'г. $c, $d';
+    final cs = context.l10n.t('cityShort');
+    if (d.isEmpty) return '$cs $c';
+    return '$cs $c, $d';
   }
 
   @override
   Widget build(BuildContext context) {
     final isCompleted = visit.status == VisitStatus.completed;
-    final statusText = isCompleted ? 'Проведено' : 'Запланировано';
+    final statusText = isCompleted ? context.l10n.t('conducted') : context.l10n.t('planned');
     // Cream/orange palette for "Запланировано", green-ish for "Проведено".
     final statusBg = isCompleted
         ? const Color(0xFFE6F7EE)
@@ -677,7 +681,7 @@ class _PlanVisitCard extends StatelessWidget {
         ? const Color(0xFF1F8A4C)
         : const Color(0xFFB46A1B);
     final doctorCsv = (visit.doctorName ?? '').trim();
-    final address = _formatAddress();
+    final address = _formatAddress(context);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -710,7 +714,7 @@ class _PlanVisitCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      doctorCsv.isEmpty ? 'Врач не назначен' : doctorCsv,
+                      doctorCsv.isEmpty ? context.l10n.t('doctorNotAssigned') : doctorCsv,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.manrope(
@@ -821,13 +825,8 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
   // cache (which itself is refreshed from /api/visits/formats on splash).
   // Format id=4 («Групповая презентация и двойной визит») is filtered out of
   // the picker because product wants users to pick group/double separately.
-  List<_PickerOption<String>> _lpuFormats = const [
-    _PickerOption(value: 'group', label: 'Групповая презентация'),
-    _PickerOption(value: 'double', label: 'Двойной визит'),
-  ];
-  List<_PickerOption<String>> _pharmacyFormats = const [
-    _PickerOption(value: 'circle', label: 'Фармкружок'),
-  ];
+  List<_PickerOption<String>> _lpuFormats = const [];
+  List<_PickerOption<String>> _pharmacyFormats = const [];
 
   Map<String, dynamic>? _selectedOrg;
   final Set<int> _selectedDoctorIds = <int>{};
@@ -835,6 +834,20 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
   List<Map<String, dynamic>> _doctors = [];
 
   final _commentCtrl = TextEditingController();
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_lpuFormats.isEmpty) {
+      _lpuFormats = [
+        _PickerOption(value: 'group', label: context.l10n.t('groupPresentation')),
+        _PickerOption(value: 'double', label: context.l10n.t('doubleVisit')),
+      ];
+      _pharmacyFormats = [
+        _PickerOption(value: 'circle', label: context.l10n.t('pharmCircle')),
+      ];
+    }
+  }
 
   @override
   void initState() {
@@ -995,7 +1008,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                           decoration: InputDecoration(
                             border: InputBorder.none,
                             isDense: true,
-                            hintText: 'Поиск...',
+                            hintText: context.l10n.t('searching'),
                             hintStyle: GoogleFonts.manrope(
                               fontSize: 12.5,
                               color: AppColors.hintText,
@@ -1028,7 +1041,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                             child: Padding(
                               padding: const EdgeInsets.all(16),
                               child: Text(
-                                'Ничего не найдено',
+                                context.l10n.t('nothingFound'),
                                 style: GoogleFonts.manrope(
                                   fontSize: 13,
                                   color: AppColors.secondaryText,
@@ -1208,7 +1221,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                         ),
                       ),
                       child: Text(
-                        'Готово (${draft.length})',
+                        context.l10n.t('doneCount', args: {'count': '${draft.length}'}),
                         style: GoogleFonts.manrope(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
@@ -1262,7 +1275,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                   ? Padding(
                       padding: const EdgeInsets.only(left: 4),
                       child: Text(
-                        'Выберите врачей...',
+                        context.l10n.t('selectDoctorsHint'),
                         style: GoogleFonts.manrope(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w500,
@@ -1356,6 +1369,8 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
     final visitFormatId = _resolveVisitFormatId();
     if (orgId == null || visitFormatId == null) return;
 
+    final messenger = ScaffoldMessenger.of(context);
+    final l10n = context.l10n;
     setState(() => _submitting = true);
 
     final selectedDoctors = _doctors
@@ -1378,7 +1393,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
       10,
       0,
     );
-    final userName = ref.read(authProvider).user?.fullName ?? 'Вы';
+    final userName = ref.read(authProvider).user?.fullName ?? context.l10n.t('you');
     final comment = _commentCtrl.text.trim();
 
     final localRow = <String, dynamic>{
@@ -1411,9 +1426,9 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Не удалось сохранить план: $e')));
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.t('couldNotSavePlan', args: {'error': '$e'}))),
+      );
       return;
     }
 
@@ -1475,7 +1490,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
           Row(
             children: [
               Text(
-                'Новый визит',
+                context.l10n.t('newVisit'),
                 style: GoogleFonts.manrope(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -1531,8 +1546,8 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
             ),
             child: Row(
               children: [
-                _tabBtn('ЛПУ', _isLpu, () => _switchTab(true)),
-                _tabBtn('Аптека', !_isLpu, () => _switchTab(false)),
+                _tabBtn(context.l10n.t('lpu'), _isLpu, () => _switchTab(true)),
+                _tabBtn(context.l10n.t('pharmacyOne'), !_isLpu, () => _switchTab(false)),
               ],
             ),
           ),
@@ -1540,13 +1555,13 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
 
           // Organization dropdown
           _selectField(
-            hint: _isLpu ? 'Название организации...' : 'Название аптеки...',
+            hint: _isLpu ? context.l10n.t('orgNameHint') : context.l10n.t('pharmacyNameHint'),
             value: _selectedOrg?['name']?.toString(),
             onTap: _allOrgs.isEmpty
                 ? null
                 : () async {
                     final picked = await _openPicker<int>(
-                      title: _isLpu ? 'Выберите ЛПУ' : 'Выберите аптеку',
+                      title: _isLpu ? context.l10n.t('selectLpu') : context.l10n.t('selectPharmacyTitle'),
                       selected: selectedOrgId,
                       searchable: true,
                       options: _allOrgs
@@ -1578,7 +1593,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
               enabled: _selectedOrg != null && _doctors.isNotEmpty,
               onTap: () async {
                 final picked = await _openMultiPicker<int>(
-                  title: 'Выберите врачей',
+                  title: context.l10n.t('selectDoctorsForVisit'),
                   selected: _selectedDoctorIds,
                   options: _doctors
                       .map(
@@ -1602,7 +1617,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
 
           // Visit form type dropdown
           _selectField(
-            hint: _isLpu ? 'Форма визита...' : 'Тип визита...',
+            hint: _isLpu ? context.l10n.t('visitFormatHint') : context.l10n.t('visitTypeHint'),
             value: () {
               if (_selectedForm == null) return null;
               final opts = _isLpu ? _lpuFormats : _pharmacyFormats;
@@ -1617,7 +1632,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
             onTap: () async {
               final options = _isLpu ? _lpuFormats : _pharmacyFormats;
               final picked = await _openPicker<String>(
-                title: _isLpu ? 'Форма визита' : 'Тип визита',
+                title: _isLpu ? context.l10n.t('visitFormatTitle') : context.l10n.t('visitType'),
                 selected: _selectedForm,
                 options: options,
               );
@@ -1645,7 +1660,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                 horizontal: 14,
                 vertical: 12,
               ),
-              hintText: 'Комментарий (необязательно)',
+              hintText: context.l10n.t('commentOptional'),
               hintStyle: GoogleFonts.manrope(
                 fontSize: 11.5,
                 color: AppColors.hintText,
@@ -1689,7 +1704,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
               ),
               disabledForegroundColor: Colors.white.withValues(alpha: 0.95),
             ),
-            child: const Text('Запланировать'),
+            child: Text(context.l10n.t('schedule')),
           ),
         ],
       ),

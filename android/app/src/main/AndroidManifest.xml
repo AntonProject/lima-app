@@ -1,10 +1,25 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.CAMERA"/>
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <!--
+        Media permissions are intentionally NOT used:
+        - Image attachment in Feedback uses the Android Photo Picker (image_picker),
+          which requires no permission.
+        - Opening downloaded files/PDFs uses FileProvider (content:// URIs from the
+          app's own storage), which requires no media permission.
+        The declarations below are merged in by the open_filex plugin; we remove them
+        so Google Play does not flag the sensitive Photos/Videos permissions.
+        READ_EXTERNAL_STORAGE (also from open_filex, maxSdkVersion=32) is removed too:
+        the app only opens its own files from private storage via FileProvider.
+    -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove"/>
     <application
         android:label="LIMA"
         android:name="${applicationName}"

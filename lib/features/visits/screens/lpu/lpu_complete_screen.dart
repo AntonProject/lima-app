@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../../core/i18n/app_i18n.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/app_widgets.dart';
 
@@ -35,7 +36,7 @@ class LpuCompleteScreen extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'Визит завершён',
+                  context.l10n.t('visitDone'),
                   style: GoogleFonts.manrope(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -71,7 +72,7 @@ class LpuCompleteScreen extends StatelessWidget {
                 const SizedBox(height: 14),
                 Center(
                   child: Text(
-                    'Визит успешно завершён',
+                    context.l10n.t('visitDoneSuccess'),
                     style: GoogleFonts.manrope(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -82,7 +83,7 @@ class LpuCompleteScreen extends StatelessWidget {
                 const SizedBox(height: 4),
                 Center(
                   child: Text(
-                    'Данные сохранены в системе',
+                    context.l10n.t('dataSavedInSystem'),
                     style: GoogleFonts.manrope(
                       fontSize: 13,
                       color: AppColors.secondaryText,
@@ -101,27 +102,27 @@ class LpuCompleteScreen extends StatelessWidget {
                     children: [
                       _SummaryRow(
                         icon: Icons.access_time_rounded,
-                        label: 'Начало',
+                        label: context.l10n.t('visitStart'),
                         value:
                             '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
                       ),
                       const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
                       _SummaryRow(
                         icon: Icons.check_circle_outline_rounded,
-                        label: 'Окончание',
+                        label: context.l10n.t('visitEnd'),
                         value:
                             '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}',
                       ),
                       const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
                       _SummaryRow(
                         icon: Icons.timer_outlined,
-                        label: 'Длительность',
-                        value: '${duration.inMinutes} мин',
+                        label: context.l10n.t('duration'),
+                        value: '${duration.inMinutes} ${context.l10n.t('minutesShort')}',
                       ),
                       const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
                       _SummaryRow(
                         icon: Icons.medication_outlined,
-                        label: 'Препаратов показано',
+                        label: context.l10n.t('drugsShown'),
                         value: '3',
                       ),
                     ],
@@ -138,7 +139,7 @@ class LpuCompleteScreen extends StatelessWidget {
                       disabledBackgroundColor: AppColors.primary,
                       disabledForegroundColor: Colors.white,
                     ),
-                    child: const Text('К визитам'),
+                    child: Text(context.l10n.t('toVisits')),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -152,7 +153,7 @@ class LpuCompleteScreen extends StatelessWidget {
                       disabledForegroundColor: AppColors.primary,
                       side: const BorderSide(color: AppColors.primary),
                     ),
-                    child: const Text('Новый визит'),
+                    child: Text(context.l10n.t('newVisit')),
                   ),
                 ),
               ],

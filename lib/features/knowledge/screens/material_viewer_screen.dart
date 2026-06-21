@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/network/api_client.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
@@ -356,10 +357,10 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
           child: Column(
             children: [
               _buildHeader(''),
-              const Expanded(
+              Expanded(
                 child: Center(
-                  child: Text('Материалы не найдены',
-                      style: TextStyle(color: Colors.white70)),
+                  child: Text(context.l10n.t('materialsNotFound'),
+                      style: const TextStyle(color: Colors.white70)),
                 ),
               ),
             ],
@@ -406,7 +407,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Документы',
+                Text(context.l10n.t('documents'),
                     style: GoogleFonts.manrope(
                         color: Colors.white54,
                         fontSize: 11,
@@ -439,7 +440,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
     switch (type) {
       case _MediaType.image:
         final localPath = _localPaths[index];
-        if (isLoading) return _loadingPlaceholder('Загрузка изображения...');
+        if (isLoading) return _loadingPlaceholder(context.l10n.t('loadingImage'));
         if (hasErr || localPath == null) return _errorPlaceholder(index);
         return Stack(
           children: [
@@ -458,9 +459,9 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
 
       case _MediaType.video:
         final controller = _videoControllers[index];
-        if (isLoading) return _loadingPlaceholder('Загрузка видео...');
+        if (isLoading) return _loadingPlaceholder(context.l10n.t('loadingVideo'));
         if (hasErr) return _errorPlaceholder(index);
-        if (controller == null) return _loadingPlaceholder('Загрузка видео...');
+        if (controller == null) return _loadingPlaceholder(context.l10n.t('loadingVideo'));
         return Stack(
           alignment: Alignment.center,
           children: [
@@ -515,7 +516,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
 
       case _MediaType.pdf:
       case _MediaType.document:
-        if (isLoading) return _loadingPlaceholder('Загрузка документа...');
+        if (isLoading) return _loadingPlaceholder(context.l10n.t('loadingDoc'));
         final mat = _materials[index];
         final cachedDoc = (mat['cached_path'] as String?) ?? '';
         final isDocCached = cachedDoc.isNotEmpty && File(cachedDoc).existsSync();
@@ -552,7 +553,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    isDocCached ? 'Доступно офлайн' : 'Открывается во внешнем приложении',
+                    isDocCached ? context.l10n.t('availableOffline') : context.l10n.t('opensInExtApp'),
                     style: GoogleFonts.manrope(
                         color: isDocCached ? AppColors.success : Colors.white54,
                         fontSize: 12),
@@ -569,7 +570,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                     color: AppColors.primary,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Text('Открыть',
+                  child: Text(context.l10n.t('open'),
                       style: GoogleFonts.manrope(
                           color: Colors.white,
                           fontSize: 14,
@@ -686,7 +687,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12)),
               ),
-              child: Text('Закрыть',
+              child: Text(context.l10n.t('close'),
                   style: GoogleFonts.manrope(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -719,7 +720,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
             const Icon(Icons.error_outline_rounded,
                 color: Colors.white38, size: 48),
             const SizedBox(height: 12),
-            Text('Не удалось загрузить',
+            Text(context.l10n.t('failedToLoad'),
                 style: GoogleFonts.manrope(
                     color: Colors.white54, fontSize: 13)),
             const SizedBox(height: 16),
@@ -728,7 +729,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                 setState(() => _hasError[index] = false);
                 _prepare(index);
               },
-              child: Text('Повторить',
+              child: Text(context.l10n.t('retry'),
                   style: GoogleFonts.manrope(
                       color: AppColors.primary, fontSize: 13)),
             ),

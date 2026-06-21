@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/services/app_actions.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
@@ -66,6 +67,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
   }
 
   Future<void> _loadDoctors() async {
+    final hadVisitLabel = context.l10n.t('hadVisit');
     final db = ref.read(localDatabaseProvider);
     var results = await db.getDoctors(
       orgId: widget.orgId,
@@ -114,7 +116,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       for (final row in mutableResults) {
         final id = row['id'] as int?;
         if (id != null && (visitCounts[id] ?? 0) > 0) {
-          row['last_visit_label'] = 'Был визит';
+          row['last_visit_label'] = hadVisitLabel;
         }
       }
     } catch (_) {}
@@ -164,7 +166,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            next ? 'Добавлено в избранное' : 'Убрано из избранного',
+            next ? context.l10n.t('addedToFav') : context.l10n.t('removedFromFav'),
           ),
         ),
       );
@@ -184,7 +186,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            next ? 'Добавлено в избранное' : 'Убрано из избранного',
+            next ? context.l10n.t('addedToFav') : context.l10n.t('removedFromFav'),
           ),
         ),
       );
@@ -273,7 +275,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     if (lat == null || lon == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('У организации нет координат')),
+        SnackBar(content: Text(context.l10n.t('orgNoCoords'))),
       );
       return;
     }
@@ -297,8 +299,8 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     if (!_canEditDirectory) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Редактирование доступно только администратору'),
+        SnackBar(
+          content: Text(context.l10n.t('editAdminOnly')),
         ),
       );
       return;
@@ -344,7 +346,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Редактировать организацию',
+              context.l10n.t('editOrg'),
               style: GoogleFonts.manrope(
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
@@ -353,43 +355,43 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
             const SizedBox(height: 12),
             TextField(
               controller: nameCtrl,
-              decoration: const InputDecoration(labelText: 'Название *'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldName')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: innCtrl,
-              decoration: const InputDecoration(labelText: 'ИНН *'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldInn')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: phoneCtrl,
-              decoration: const InputDecoration(labelText: 'Телефон'),
+              decoration: InputDecoration(labelText: context.l10n.t('phone')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: cityCtrl,
-              decoration: const InputDecoration(labelText: 'Регион *'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldRegion')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: districtCtrl,
-              decoration: const InputDecoration(labelText: 'Район'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldDistrict')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: addressCtrl,
-              decoration: const InputDecoration(labelText: 'Адрес *'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldAddress')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: categoryCtrl,
-              decoration: const InputDecoration(labelText: 'Категория'),
+              decoration: InputDecoration(labelText: context.l10n.t('category')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: responsibleCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Ответственное лицо',
+              decoration: InputDecoration(
+                labelText: context.l10n.t('fieldResponsible'),
               ),
             ),
             const SizedBox(height: 8),
@@ -403,8 +405,8 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
               ),
               child: Text(
                 (lat != null && lon != null)
-                    ? 'Местоположение установлено'
-                    : 'Местоположение не задано',
+                    ? context.l10n.t('locationSet')
+                    : context.l10n.t('locationNotSet'),
                 style: GoogleFonts.manrope(
                   fontSize: 14,
                   color: AppColors.secondaryText,
@@ -418,7 +420,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48),
               ),
-              child: const Text('Обновить'),
+              child: Text(context.l10n.t('update')),
             ),
           ],
         ),
@@ -456,7 +458,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('Организация обновлена')));
+    ).showSnackBar(SnackBar(content: Text(context.l10n.t('orgUpdated'))));
 
     // Отправляем в API в фоне; при ошибке кладём в очередь
     try {
@@ -510,7 +512,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
           Column(
             children: [
               // ── AppBar ────────────────────────────────────────────────────
-              AppCenteredHeader(title: 'ЛПУ', onBack: () => context.pop()),
+              AppCenteredHeader(title: context.l10n.t('lpu'), onBack: () => context.pop()),
 
               Expanded(
                 child: ListView(
@@ -592,8 +594,8 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                               ),
                               child: Text(
                                 worksWithUs == true
-                                    ? 'Работает с нами'
-                                    : 'Не работает с нами',
+                                    ? context.l10n.t('worksWithUs')
+                                    : context.l10n.t('notWorksWithUs'),
                                 style: GoogleFonts.manrope(
                                   fontSize: 12,
                                   color: worksWithUs == true
@@ -610,7 +612,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                     const SizedBox(height: 10),
 
                     // ── Info ───────────────────────────────────────────────────
-                    const SectionLabel(text: 'ИНФОРМАЦИЯ'),
+                    SectionLabel(text: context.l10n.t('informationCaps')),
                     Container(
                       decoration: BoxDecoration(
                         color: AppColors.secondaryBg,
@@ -622,22 +624,22 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                         children: [
                           if ((_org?['city'] as String? ?? '').isNotEmpty)
                             InfoRow(
-                              label: 'Регион',
+                              label: context.l10n.t('region'),
                               value: _org!['city'] as String,
                             ),
                           if (displayAddress.isNotEmpty)
-                            InfoRow(label: 'Адрес', value: displayAddress),
+                            InfoRow(label: context.l10n.t('address'), value: displayAddress),
                           if (phone != null && phone.isNotEmpty)
                             InfoRow(
-                              label: 'Телефон',
+                              label: context.l10n.t('phone'),
                               value: phone,
                               isLink: true,
                               onTap: () => launchPhone(phone),
                             ),
                           if (inn != null && inn.isNotEmpty)
-                            InfoRow(label: 'ИНН', value: inn),
+                            InfoRow(label: context.l10n.t('inn'), value: inn),
                           if (responsible != null && responsible.isNotEmpty)
-                            InfoRow(label: 'Ответственный', value: responsible),
+                            InfoRow(label: context.l10n.t('responsible'), value: responsible),
                         ],
                       ),
                     ),
@@ -649,7 +651,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                         Expanded(
                           child: _ActionBtn(
                             icon: Icons.call_rounded,
-                            label: 'Позвонить',
+                            label: context.l10n.t('call'),
                             onTap: hasPhone
                                 ? () async {
                                     if (phone == null || phone.isEmpty) return;
@@ -662,7 +664,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                         Expanded(
                           child: _ActionBtn(
                             icon: Icons.near_me_rounded,
-                            label: 'Маршрут',
+                            label: context.l10n.t('route'),
                             onTap: _buildYandexRoute,
                           ),
                         ),
@@ -670,7 +672,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                         Expanded(
                           child: _ActionBtn(
                             icon: Icons.edit_rounded,
-                            label: 'Редактировать',
+                            label: context.l10n.t('edit'),
                             onTap: canEditDirectory
                                 ? _openEditOrganizationSheet
                                 : null,
@@ -719,7 +721,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
-                                  'История визитов',
+                                  context.l10n.t('visitHistory'),
                                   style: GoogleFonts.manrope(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w600,
@@ -741,7 +743,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                     // ── Doctors ────────────────────────────────────────────────
                     Row(
                       children: [
-                        const SectionLabel(text: 'ВРАЧИ'),
+                        SectionLabel(text: context.l10n.t('doctorsCaps')),
                         const Spacer(),
                         Text(
                           '${_doctors.length}',
@@ -761,7 +763,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                         ),
                         child: ListTile(
                           title: Text(
-                            'Врачи не найдены',
+                            context.l10n.t('doctorsNotFound'),
                             style: GoogleFonts.manrope(
                               color: AppColors.secondaryText,
                             ),
@@ -778,7 +780,8 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                           final expanded = _expandedDoctorIds.contains(
                             doctorId,
                           );
-                          final category = 'Категория ${d['category'] ?? 'C'}';
+                          final category =
+                              '${context.l10n.t('category')} ${d['category'] ?? 'C'}';
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: Container(
@@ -948,7 +951,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text('Начать визит'),
+              child: Text(context.l10n.t('startVisit')),
             ),
           ),
         ],

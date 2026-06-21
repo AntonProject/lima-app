@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -70,7 +71,7 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
             child: Column(
               children: [
                 AppCenteredHeader(
-                  title: 'Избранные аптеки',
+                  title: context.l10n.t('favPharmacies'),
                   onBack: () => context.pop(),
                 ),
                 const SizedBox(height: 12),
@@ -78,8 +79,8 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: TextFormField(
                     onChanged: (value) => setState(() => _query = value),
-                    decoration: const InputDecoration(
-                      hintText: 'Поиск аптек...',
+                    decoration: InputDecoration(
+                      hintText: context.l10n.t('searchPharmacy'),
                       prefixIcon: Icon(
                         Icons.search_rounded,
                         color: AppColors.hintText,
@@ -106,7 +107,7 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Нет избранных аптек',
+                          context.l10n.t('noFavPharmacies'),
                           style: GoogleFonts.manrope(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
@@ -115,7 +116,7 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Добавьте аптеку из карточки визита',
+                          context.l10n.t('addPharmacyFromVisit'),
                           style: GoogleFonts.manrope(
                             fontSize: 13,
                             color: AppColors.hintText,

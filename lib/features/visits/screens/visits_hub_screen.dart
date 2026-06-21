@@ -249,7 +249,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Геолокация недоступна')));
+        ).showSnackBar(SnackBar(content: Text(context.l10n.t('geoUnavailable'))));
       }
       return null;
     }
@@ -262,8 +262,8 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
         permission == LocationPermission.deniedForever) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Разрешите геолокацию в настройках приложения'),
+          SnackBar(
+            content: Text(context.l10n.t('enableGeoInSettings')),
           ),
         );
       }
@@ -287,7 +287,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Ошибка загрузки данных')));
+      ).showSnackBar(SnackBar(content: Text(context.l10n.t('dataLoadError'))));
     } finally {
       if (mounted) setState(() => _isFindingNearby = false);
     }
@@ -353,9 +353,9 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
     });
     if (map.isEmpty && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Нет координат для сортировки рядом, показан общий список',
+            context.l10n.t('noCoordsNearby'),
           ),
         ),
       );

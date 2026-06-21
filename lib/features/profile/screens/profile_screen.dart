@@ -17,6 +17,7 @@ import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/network/api_client.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/services/material_cache_service.dart';
+import 'package:lima/core/models/models.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
@@ -44,30 +45,11 @@ String _formatUzPhone(String raw) {
   return '+998 ${d.substring(0, 2)} ${d.substring(2, 5)} ${d.substring(5, 7)} ${d.substring(7, 9)}';
 }
 
-String _ruPlural(int count, String one, String few, String many) {
-  final mod100 = count % 100;
-  final mod10 = count % 10;
-  if (mod100 >= 11 && mod100 <= 14) return many;
-  if (mod10 == 1) return one;
-  if (mod10 >= 2 && mod10 <= 4) return few;
-  return many;
-}
+String _visitsLabel(BuildContext context, int count) =>
+    context.l10n.pluralWord(count, 'visits');
 
-String _visitsLabel(BuildContext context, int count) {
-  final lang = Localizations.localeOf(context).languageCode;
-  if (lang == 'ru') {
-    return _ruPlural(count, 'визит', 'визита', 'визитов');
-  }
-  return context.l10n.t('visits');
-}
-
-String _doctorsLabel(BuildContext context, int count) {
-  final lang = Localizations.localeOf(context).languageCode;
-  if (lang == 'ru') {
-    return _ruPlural(count, 'врач', 'врача', 'врачей');
-  }
-  return context.l10n.t('doctors');
-}
+String _doctorsLabel(BuildContext context, int count) =>
+    context.l10n.pluralWord(count, 'doctors');
 
 final favoriteDoctorsCountProvider = FutureProvider.autoDispose<int>((
   ref,
@@ -344,7 +326,7 @@ class ProfileScreen extends ConsumerWidget {
                   _divider,
                   _ActionTile(
                     icon: LucideIcons.trash2,
-                    label: 'Очистить кеш',
+                    label: context.l10n.t('clearCache'),
                     iconBg: AppColors.iconBgOrange,
                     iconColor: AppColors.accent,
                     onTap: () async {
@@ -361,14 +343,20 @@ class ProfileScreen extends ConsumerWidget {
                       await db.db.delete('cached_stats');
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Кеш очищен: корзина, офлайн-файлы и временные данные',
-                            ),
+                          SnackBar(
+                            content: Text(context.l10n.t('cacheCleared')),
                           ),
                         );
                       }
                     },
+                  ),
+                  _divider,
+                  _ActionTile(
+                    icon: LucideIcons.userMinus,
+                    label: context.l10n.t('deleteAccount'),
+                    iconBg: const Color(0xFFFFEEEE),
+                    iconColor: AppColors.error,
+                    onTap: () => _confirmDeleteAccount(context, ref, user),
                   ),
                 ],
               ),
@@ -449,6 +437,56 @@ class ProfileScreen extends ConsumerWidget {
           const SizedBox(height: 8),
         ],
       ),
+    );
+  }
+}
+
+/// Account deletion for org-provisioned (B2B) accounts: the user cannot
+/// self-delete, so we send a deletion request to LIMA support and sign out
+/// locally. Satisfies App Store Guideline 5.1.1(v) for managed accounts.
+Future<void> _confirmDeleteAccount(
+  BuildContext context,
+  WidgetRef ref,
+  UserModel? user,
+) async {
+  final l10n = context.l10n;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(l10n.t('deleteAccountTitle')),
+      content: Text(l10n.t('deleteAccountInfo')),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text(l10n.t('cancel')),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          style: TextButton.styleFrom(foregroundColor: AppColors.error),
+          child: Text(l10n.t('deleteAccountSend')),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+
+  final body = StringBuffer()
+    ..writeln('Account deletion request / Запрос на удаление аккаунта')
+    ..writeln('---')
+    ..writeln('User ID: ${user?.id ?? '-'}')
+    ..writeln('Name: ${user?.fullName ?? '-'}')
+    ..writeln('Phone: ${user?.phone ?? '-'}')
+    ..writeln('Company: ${user?.company ?? '-'}');
+  await launchEmailRequest(
+    'info@lima.uz',
+    subject: 'LIMA — account deletion request (ID ${user?.id ?? '-'})',
+    body: body.toString(),
+  );
+
+  await ref.read(authProvider.notifier).logout();
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(context.l10n.t('deleteAccountRequested'))),
     );
   }
 }
@@ -740,18 +778,16 @@ class _NotificationTileState extends State<_NotificationTile> {
         final openSettings = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('Доступ к уведомлениям'),
-            content: const Text(
-              'Разрешение отключено в системе. Откройте настройки приложения и включите уведомления.',
-            ),
+            title: Text(ctx.l10n.t('notifAccessTitle')),
+            content: Text(ctx.l10n.t('notifPermDisabled')),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Отмена'),
+                child: Text(ctx.l10n.t('cancel')),
               ),
               TextButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Открыть настройки'),
+                child: Text(ctx.l10n.t('openSettings')),
               ),
             ],
           ),

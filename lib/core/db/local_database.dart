@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
+import 'package:lima/core/utils/swallowed.dart';
+
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 final localDatabaseProvider = Provider<LocalDatabase>((ref) => LocalDatabase());
@@ -43,7 +45,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 15,
+      version: 16,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -153,6 +155,7 @@ class LocalDatabase {
         created_at  TEXT NOT NULL,
         updated_at  TEXT NOT NULL,
         is_synced   INTEGER DEFAULT 0,
+        sync_failed INTEGER DEFAULT 0,
         raw_json    TEXT,
         last_push_request_json  TEXT,
         last_push_response_json TEXT
@@ -271,15 +274,21 @@ class LocalDatabase {
     if (oldVersion < 2) {
       try {
         await db.execute('ALTER TABLE organisations ADD COLUMN latitude REAL');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute('ALTER TABLE organisations ADD COLUMN longitude REAL');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute(
           'ALTER TABLE organisations ADD COLUMN distance_m REAL',
         );
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
     }
     if (oldVersion < 3) {
       await _ensureRawAndSyncColumns(db);
@@ -287,30 +296,42 @@ class LocalDatabase {
     if (oldVersion < 4) {
       try {
         await db.execute('ALTER TABLE organisations ADD COLUMN phone TEXT');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
     }
     if (oldVersion < 5) {
       try {
         await db.execute('ALTER TABLE organisations ADD COLUMN district TEXT');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute('ALTER TABLE organisations ADD COLUMN inn TEXT');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute('ALTER TABLE organisations ADD COLUMN category TEXT');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute(
           'ALTER TABLE organisations ADD COLUMN responsible TEXT',
         );
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
     }
     if (oldVersion < 6) {
       try {
         await db.execute(
           'ALTER TABLE organisations ADD COLUMN is_favorite INTEGER DEFAULT 0',
         );
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS planned_visits (
@@ -329,7 +350,9 @@ class LocalDatabase {
             raw_json     TEXT
           )
         ''');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS day_types (
@@ -338,7 +361,9 @@ class LocalDatabase {
             raw_json TEXT
           )
         ''');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS managers (
@@ -349,7 +374,9 @@ class LocalDatabase {
             raw_json   TEXT
           )
         ''');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS cached_stats (
@@ -358,7 +385,9 @@ class LocalDatabase {
             updated_at TEXT
           )
         ''');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
     }
     if (oldVersion < 8) {
       try {
@@ -373,7 +402,9 @@ class LocalDatabase {
             created_at    TEXT NOT NULL
           )
         ''');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
       try {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS pending_org_updates (
@@ -393,7 +424,9 @@ class LocalDatabase {
             UNIQUE(org_id)
           )
         ''');
-      } catch (_) {}
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
     }
     if (oldVersion < 9) {
       await _ensureRegionColumns(db);
@@ -404,58 +437,92 @@ class LocalDatabase {
     if (oldVersion < 15) {
       await _ensureVisitRetryColumns(db);
     }
+    if (oldVersion < 16) {
+      await _ensureSyncFailureColumns(db);
+    }
   }
 
   Future<void> _ensureOptionalColumns() async {
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN latitude REAL');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN longitude REAL');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN distance_m REAL');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN phone TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN district TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     await _ensureRegionColumns(db);
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN inn TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN category TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE organisations ADD COLUMN responsible TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE drugs ADD COLUMN serial_number TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE drugs ADD COLUMN expiry_date TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE drugs ADD COLUMN stock INTEGER');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE drugs ADD COLUMN main_stock INTEGER');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE drugs ADD COLUMN remains_stock INTEGER');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE drugs ADD COLUMN current_stock_id INTEGER');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     try {
       await db.execute('ALTER TABLE drugs ADD COLUMN binding_drug_id INTEGER');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
     await _ensureRawAndSyncColumns(db);
     await _ensureDoctorOrganisationTable(db);
     await _ensureVisitRetryColumns(db);
+    await _ensureSyncFailureColumns(db);
   }
 
   Future<void> _ensureDoctorOrganisationTable(Database database) async {
@@ -478,12 +545,48 @@ class LocalDatabase {
       await database.execute(
         'ALTER TABLE visits ADD COLUMN push_attempts INTEGER DEFAULT 0',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureVisitRetryColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE visits ADD COLUMN next_retry_at TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureVisitRetryColumns');
+    }
+  }
+
+  /// Columns supporting "failed, kept for the user" semantics (schema v16).
+  /// [visits.sync_failed] marks a visit the push loop gave up on: the row stays
+  /// in the DB (is_synced remains 0) but is excluded from automatic pushes
+  /// until the user retries or deletes it from the sync screen.
+  /// [pending_favorites]/[pending_feedback] gain the same attempts/failed pair
+  /// so their queue items stop retrying forever but are never silently lost.
+  Future<void> _ensureSyncFailureColumns(Database database) async {
+    try {
+      await database.execute(
+        'ALTER TABLE visits ADD COLUMN sync_failed INTEGER DEFAULT 0',
+      );
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureSyncFailureColumns');
+    }
+    for (final table in ['pending_favorites', 'pending_feedback']) {
+      try {
+        await database.execute(
+          'ALTER TABLE $table ADD COLUMN attempts INTEGER DEFAULT 0',
+        );
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._ensureSyncFailureColumns');
+      }
+      try {
+        await database.execute(
+          'ALTER TABLE $table ADD COLUMN failed INTEGER DEFAULT 0',
+        );
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._ensureSyncFailureColumns');
+      }
+    }
   }
 
   Future<void> _ensureRegionColumns(Database database) async {
@@ -491,12 +594,16 @@ class LocalDatabase {
       await database.execute(
         'ALTER TABLE organisations ADD COLUMN region_id INTEGER',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRegionColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE organisations ADD COLUMN area_id INTEGER',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRegionColumns');
+    }
   }
 
   Future<void> _ensureRawAndSyncColumns(Database database) async {
@@ -504,62 +611,90 @@ class LocalDatabase {
       await database.execute(
         'ALTER TABLE organisations ADD COLUMN sync_id INTEGER',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE organisations ADD COLUMN raw_json TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute('ALTER TABLE doctors ADD COLUMN sync_id INTEGER');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute('ALTER TABLE doctors ADD COLUMN raw_json TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute('ALTER TABLE drugs ADD COLUMN sync_id INTEGER');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute('ALTER TABLE drugs ADD COLUMN raw_json TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE drug_materials ADD COLUMN raw_json TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE organisations ADD COLUMN is_favorite INTEGER DEFAULT 0',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute('ALTER TABLE visits ADD COLUMN raw_json TEXT');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE visits ADD COLUMN last_push_request_json TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE visits ADD COLUMN last_push_response_json TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE drug_materials ADD COLUMN cached_path TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE drug_materials ADD COLUMN uploaded_at TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE visits ADD COLUMN medical_rep_name TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute('''
         CREATE TABLE IF NOT EXISTS pending_feedback (
@@ -569,7 +704,9 @@ class LocalDatabase {
           created_at  TEXT NOT NULL
         )
       ''');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute('''
         CREATE TABLE IF NOT EXISTS pending_favorites (
@@ -581,7 +718,9 @@ class LocalDatabase {
           UNIQUE(entity_type, entity_id)
         )
       ''');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute('''
         CREATE TABLE IF NOT EXISTS pending_plans (
@@ -598,17 +737,23 @@ class LocalDatabase {
           UNIQUE(local_plan_id)
         )
       ''');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE planned_visits ADD COLUMN district TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute(
         'ALTER TABLE planned_visits ADD COLUMN visit_format TEXT',
       );
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
     try {
       await database.execute('''
         CREATE TABLE IF NOT EXISTS visit_formats (
@@ -617,7 +762,9 @@ class LocalDatabase {
           raw_json TEXT
         )
       ''');
-    } catch (_) {}
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
+    }
   }
 
   // ── Pending favorites queue ───────────────────────────────────────────────
@@ -638,12 +785,69 @@ class LocalDatabase {
   }
 
   Future<List<Map<String, dynamic>>> getPendingFavorites() async {
-    return db.query('pending_favorites', orderBy: 'id ASC');
+    return db.query(
+      'pending_favorites',
+      where: 'failed IS NULL OR failed = 0',
+      orderBy: 'id ASC',
+    );
   }
 
   Future<void> deletePendingFavorite(int id) async {
     await db.delete('pending_favorites', where: 'id = ?', whereArgs: [id]);
     _notifyChanged(['pending_favorites']);
+  }
+
+  /// Max push attempts for pending_favorites/pending_feedback rows before the
+  /// row is parked (failed = 1). Parked rows stop retrying but stay in the DB
+  /// and are surfaced as a count on the sync screen.
+  static const int maxPendingQueueAttempts = 10;
+
+  /// Increments the attempt counter for a pending-queue row and parks it once
+  /// [maxPendingQueueAttempts] is reached. Returns the new attempt count.
+  Future<int> _recordPendingQueueFailure(String table, int id) async {
+    final rows = await db.query(
+      table,
+      columns: ['attempts'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    final current = rows.isEmpty
+        ? 0
+        : ((rows.first['attempts'] as num?)?.toInt() ?? 0);
+    final attempts = current + 1;
+    await db.update(
+      table,
+      {
+        'attempts': attempts,
+        if (attempts >= maxPendingQueueAttempts) 'failed': 1,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    _notifyChanged([table]);
+    return attempts;
+  }
+
+  Future<int> recordPendingFavoriteFailure(int id) =>
+      _recordPendingQueueFailure('pending_favorites', id);
+
+  Future<int> recordPendingFeedbackFailure(int id) =>
+      _recordPendingQueueFailure('pending_feedback', id);
+
+  /// Counts of parked queue rows, for the sync diagnostics screen.
+  Future<({int favorites, int feedback})> failedPendingCounts() async {
+    Future<int> countFrom(String table) async {
+      final rows = await db.rawQuery(
+        'SELECT COUNT(*) AS cnt FROM $table WHERE failed = 1',
+      );
+      return Sqflite.firstIntValue(rows) ?? 0;
+    }
+
+    return (
+      favorites: await countFrom('pending_favorites'),
+      feedback: await countFrom('pending_feedback'),
+    );
   }
 
   // ── Pending feedback queue ────────────────────────────────────────────────
@@ -658,7 +862,11 @@ class LocalDatabase {
   }
 
   Future<List<Map<String, dynamic>>> getPendingFeedback() async {
-    return db.query('pending_feedback', orderBy: 'id ASC');
+    return db.query(
+      'pending_feedback',
+      where: 'failed IS NULL OR failed = 0',
+      orderBy: 'id ASC',
+    );
   }
 
   Future<void> deletePendingFeedback(int id) async {
@@ -859,6 +1067,7 @@ class LocalDatabase {
     }
 
     await batch.commit(noResult: true);
+    await _applyPendingOrgEdits(db);
     _notifyChanged([
       'organisations',
       'doctors',
@@ -874,6 +1083,34 @@ class LocalDatabase {
 
     if (dailyStats != null) {
       await setCachedStat('daily_stats', dailyStats);
+    }
+  }
+
+  /// Re-applies queued local organisation edits (pending_org_updates) on top
+  /// of freshly pulled server rows, so an offline edit stays visible in the UI
+  /// until it is pushed. Server data wins for every org without a pending edit.
+  Future<void> _applyPendingOrgEdits(DatabaseExecutor executor) async {
+    final pending = await executor.query('pending_org_updates');
+    for (final row in pending) {
+      final orgId = row['org_id'];
+      if (orgId == null) continue;
+      await executor.update(
+        'organisations',
+        {
+          'name': row['name'],
+          'address': row['address'],
+          if (row['phone'] != null) 'phone': row['phone'],
+          if (row['city'] != null) 'city': row['city'],
+          if (row['district'] != null) 'district': row['district'],
+          if (row['inn'] != null) 'inn': row['inn'],
+          if (row['category'] != null) 'category': row['category'],
+          if (row['responsible'] != null) 'responsible': row['responsible'],
+          if (row['latitude'] != null) 'latitude': row['latitude'],
+          if (row['longitude'] != null) 'longitude': row['longitude'],
+        },
+        where: 'id = ?',
+        whereArgs: [orgId],
+      );
     }
   }
 
@@ -1153,6 +1390,7 @@ class LocalDatabase {
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
+      await _applyPendingOrgEdits(txn);
 
       final favIds = favOrgIds.map((e) => e['id']).whereType<int>().toSet();
       for (final id in favIds) {
@@ -1753,6 +1991,7 @@ class LocalDatabase {
       }
     }
     await batch.commit(noResult: true);
+    await _applyPendingOrgEdits(db);
     _notifyChanged(['organisations']);
   }
 
@@ -1777,19 +2016,22 @@ class LocalDatabase {
       // When [dueForRetryOnly] is set, skip visits whose backoff window has not
       // elapsed yet (next_retry_at in the future) so the push loop does not
       // hammer the server on every reconcile.
+      // Visits marked sync_failed are parked: they stay in the DB but are
+      // excluded from automatic pushes until the user retries them manually.
       if (dueForRetryOnly) {
         final nowIso = DateTime.now().toIso8601String();
         return db.query(
           'visits',
           where:
-              'is_synced = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)',
+              'is_synced = ? AND (sync_failed IS NULL OR sync_failed = 0) '
+              'AND (next_retry_at IS NULL OR next_retry_at <= ?)',
           whereArgs: [0, nowIso],
           orderBy: 'created_at DESC',
         );
       }
       return db.query(
         'visits',
-        where: 'is_synced = ?',
+        where: 'is_synced = ? AND (sync_failed IS NULL OR sync_failed = 0)',
         whereArgs: [0],
         orderBy: 'created_at DESC',
       );
@@ -1833,6 +2075,46 @@ class LocalDatabase {
   Future<void> deleteVisit(int id) async {
     await db.delete('visits', where: 'id = ?', whereArgs: [id]);
     _notifyChanged(['visits']);
+  }
+
+  /// Parks a visit the push loop gave up on (server rejected it, or all retry
+  /// attempts were exhausted). The row is kept so field data is never lost:
+  /// it disappears from the automatic push queue and shows up in the sync
+  /// screen, where the user can retry or explicitly delete it.
+  Future<void> markVisitPushFailedPermanently(int id) async {
+    await db.update(
+      'visits',
+      {'sync_failed': 1, 'next_retry_at': null},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    _notifyChanged(['visits']);
+  }
+
+  /// Returns a parked visit to the push queue with a clean retry slate.
+  Future<void> retryFailedVisit(int id) async {
+    await db.update(
+      'visits',
+      {'sync_failed': 0, 'push_attempts': 0, 'next_retry_at': null},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    _notifyChanged(['visits']);
+  }
+
+  Future<List<Map<String, dynamic>>> getFailedVisits() async {
+    return db.query(
+      'visits',
+      where: 'sync_failed = 1',
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  Future<int> failedVisitsCount() async {
+    final rows = await db.rawQuery(
+      'SELECT COUNT(*) AS cnt FROM visits WHERE sync_failed = 1',
+    );
+    return Sqflite.firstIntValue(rows) ?? 0;
   }
 
   Future<int> deleteLegacyTestVisits() async {
@@ -1979,8 +2261,11 @@ class LocalDatabase {
   }
 
   Future<int> unsyncedCount() async {
+    // Parked (sync_failed) visits are counted separately via
+    // [failedVisitsCount] — they need user attention, not another auto-push.
     final visits = await db.rawQuery(
-      'SELECT COUNT(*) AS cnt FROM visits WHERE is_synced = 0',
+      'SELECT COUNT(*) AS cnt FROM visits '
+      'WHERE is_synced = 0 AND (sync_failed IS NULL OR sync_failed = 0)',
     );
     // Pending plan submissions also count as "ожидают отправки" so the badge
     // accurately reflects everything that still needs to reach the server.

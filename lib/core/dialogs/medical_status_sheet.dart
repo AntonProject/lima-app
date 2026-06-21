@@ -125,7 +125,7 @@ class _MedicalStatusSheetState extends State<_MedicalStatusSheet> {
             if (_selected == DrugStatus.familiarPrescribes) ...[
               const SizedBox(height: 4),
               Text(
-                'Количество лимиков',
+                context.l10n.t('limicCount'),
                 style: GoogleFonts.manrope(
                   fontSize: 13,
                   color: AppColors.secondaryText,
@@ -178,7 +178,7 @@ class _MedicalStatusSheetState extends State<_MedicalStatusSheet> {
             if (_selected != null) ...[
               const SizedBox(height: 12),
               Text(
-                'Комментарий',
+                context.l10n.t('comment'),
                 style: GoogleFonts.manrope(
                   fontSize: 13,
                   color: AppColors.secondaryText,
@@ -196,10 +196,10 @@ class _MedicalStatusSheetState extends State<_MedicalStatusSheet> {
                   controller: _commentController,
                   maxLines: 3,
                   onChanged: (_) => setState(() {}),
-                  decoration: const InputDecoration(
-                    hintText: 'Добавьте комментарий...',
+                  decoration: InputDecoration(
+                    hintText: context.l10n.t('enterComment'),
                     border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
                 ),
               ),

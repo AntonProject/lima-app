@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/auth/screens/login_screen.dart';
@@ -60,6 +61,39 @@ String _routeLocation(
     path: path,
     queryParameters: filteredQuery.isEmpty ? null : filteredQuery,
   ).toString();
+}
+
+/// Numeric path parameter, or null when missing/malformed (e.g. a deep link
+/// like `/knowledge/drug/abc`) — callers fall back to [_RouteNotFoundScreen]
+/// instead of crashing on `int.parse(...!)`.
+int? _intParam(GoRouterState state, String name) =>
+    int.tryParse(state.pathParameters[name] ?? '');
+
+class _RouteNotFoundScreen extends StatelessWidget {
+  const _RouteNotFoundScreen({this.fallbackLocation = '/home'});
+
+  final String fallbackLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.search_off_rounded, size: 48, color: Colors.grey),
+            const SizedBox(height: 12),
+            Text(context.l10n.t('pageNotFound')),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () => context.go(fallbackLocation),
+              child: Text(context.l10n.t('goBack')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -159,11 +193,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/knowledge/drug/:drugId/materials',
         builder: (_, state) {
-          final drugId = state.pathParameters['drugId']!;
+          final drugId = _intParam(state, 'drugId');
+          if (drugId == null) {
+            return const _RouteNotFoundScreen(fallbackLocation: '/knowledge');
+          }
           return _SystemBackFallback(
             fallbackLocation: '/knowledge/drug/$drugId',
             child: MaterialViewerScreen(
-              drugId: int.parse(drugId),
+              drugId: drugId,
               initialIndex:
                   int.tryParse(state.uri.queryParameters['index'] ?? '') ?? 0,
             ),
@@ -182,23 +219,27 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/visits/lpu/detail/:orgId/doctors',
         builder: (_, state) {
-          final orgId = state.pathParameters['orgId']!;
+          final orgId = _intParam(state, 'orgId');
+          if (orgId == null) {
+            return const _RouteNotFoundScreen(fallbackLocation: '/visits');
+          }
           final orgName = state.uri.queryParameters['name'] ?? '';
           return _SystemBackFallback(
             fallbackLocation: _routeLocation('/visits/lpu/detail/$orgId', {
               'name': orgName,
             }),
-            child: LpuDoctorSelectScreen(
-              orgId: int.parse(orgId),
-              orgName: orgName,
-            ),
+            child: LpuDoctorSelectScreen(orgId: orgId, orgName: orgName),
           );
         },
         routes: [
           GoRoute(
             path: ':doctorId/detailing',
             builder: (_, state) {
-              final orgId = state.pathParameters['orgId']!;
+              final orgId = _intParam(state, 'orgId');
+              final doctorId = _intParam(state, 'doctorId');
+              if (orgId == null || doctorId == null) {
+                return const _RouteNotFoundScreen(fallbackLocation: '/visits');
+              }
               final orgName = state.uri.queryParameters['orgName'] ?? '';
               return _SystemBackFallback(
                 fallbackLocation: _routeLocation(
@@ -206,8 +247,8 @@ final routerProvider = Provider<GoRouter>((ref) {
                   {'name': orgName},
                 ),
                 child: LpuDetailingScreen(
-                  orgId: int.parse(orgId),
-                  doctorId: int.parse(state.pathParameters['doctorId']!),
+                  orgId: orgId,
+                  doctorId: doctorId,
                   doctorName: state.uri.queryParameters['doctorName'] ?? '',
                   orgName: orgName,
                   doctorIds: state.uri.queryParameters['doctorIds'],
@@ -264,67 +305,123 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: 'lpu/detail/:orgId',
-                builder: (_, state) => LpuDetailScreen(
-                  orgId: int.parse(state.pathParameters['orgId']!),
-                  orgName: state.uri.queryParameters['name'] ?? '',
-                  orgAddress: state.uri.queryParameters['address'] ?? '',
-                ),
+                builder: (_, state) {
+                  final orgId = _intParam(state, 'orgId');
+                  if (orgId == null) {
+                    return const _RouteNotFoundScreen(
+                      fallbackLocation: '/visits',
+                    );
+                  }
+                  return LpuDetailScreen(
+                    orgId: orgId,
+                    orgName: state.uri.queryParameters['name'] ?? '',
+                    orgAddress: state.uri.queryParameters['address'] ?? '',
+                  );
+                },
               ),
               GoRoute(
                 path: 'pharmacy/detail/:pharmacyId',
-                builder: (_, state) => PharmacyDetailScreen(
-                  pharmacyId: int.parse(state.pathParameters['pharmacyId']!),
-                  pharmacyName: state.uri.queryParameters['name'] ?? '',
-                ),
+                builder: (_, state) {
+                  final pharmacyId = _intParam(state, 'pharmacyId');
+                  if (pharmacyId == null) {
+                    return const _RouteNotFoundScreen(
+                      fallbackLocation: '/visits',
+                    );
+                  }
+                  return PharmacyDetailScreen(
+                    pharmacyId: pharmacyId,
+                    pharmacyName: state.uri.queryParameters['name'] ?? '',
+                  );
+                },
                 routes: [
                   GoRoute(
                     path: 'type',
-                    builder: (_, state) => PharmacyTypeScreen(
-                      pharmacyId: int.parse(
-                        state.pathParameters['pharmacyId']!,
-                      ),
-                      pharmacyName: state.uri.queryParameters['name'] ?? '',
-                    ),
+                    builder: (_, state) {
+                      final pharmacyId = _intParam(state, 'pharmacyId');
+                      if (pharmacyId == null) {
+                        return const _RouteNotFoundScreen(
+                          fallbackLocation: '/visits',
+                        );
+                      }
+                      return PharmacyTypeScreen(
+                        pharmacyId: pharmacyId,
+                        pharmacyName: state.uri.queryParameters['name'] ?? '',
+                      );
+                    },
                     routes: [
                       GoRoute(
                         path: 'order',
-                        builder: (_, state) => PharmacyOrderScreen(
-                          pharmacyId: int.parse(
-                            state.pathParameters['pharmacyId']!,
-                          ),
-                          pharmacyName: state.uri.queryParameters['name'] ?? '',
-                        ),
+                        builder: (_, state) {
+                          final pharmacyId = _intParam(state, 'pharmacyId');
+                          if (pharmacyId == null) {
+                            return const _RouteNotFoundScreen(
+                              fallbackLocation: '/visits',
+                            );
+                          }
+                          return PharmacyOrderScreen(
+                            pharmacyId: pharmacyId,
+                            pharmacyName:
+                                state.uri.queryParameters['name'] ?? '',
+                          );
+                        },
                       ),
                       GoRoute(
                         path: 'stock',
-                        builder: (_, state) => PharmacyStockScreen(
-                          pharmacyId: int.parse(
-                            state.pathParameters['pharmacyId']!,
-                          ),
-                          pharmacyName: state.uri.queryParameters['name'] ?? '',
-                        ),
+                        builder: (_, state) {
+                          final pharmacyId = _intParam(state, 'pharmacyId');
+                          if (pharmacyId == null) {
+                            return const _RouteNotFoundScreen(
+                              fallbackLocation: '/visits',
+                            );
+                          }
+                          return PharmacyStockScreen(
+                            pharmacyId: pharmacyId,
+                            pharmacyName:
+                                state.uri.queryParameters['name'] ?? '',
+                          );
+                        },
                       ),
                       GoRoute(
                         path: 'circle',
-                        builder: (_, state) => PharmaCircleScreen(
-                          pharmacyId: int.parse(
-                            state.pathParameters['pharmacyId']!,
-                          ),
-                          pharmacyName: state.uri.queryParameters['name'] ?? '',
-                        ),
+                        builder: (_, state) {
+                          final pharmacyId = _intParam(state, 'pharmacyId');
+                          if (pharmacyId == null) {
+                            return const _RouteNotFoundScreen(
+                              fallbackLocation: '/visits',
+                            );
+                          }
+                          return PharmaCircleScreen(
+                            pharmacyId: pharmacyId,
+                            pharmacyName:
+                                state.uri.queryParameters['name'] ?? '',
+                          );
+                        },
                       ),
                       GoRoute(
                         path: 'bron',
-                        builder: (_, state) => NewBronScreen(
-                          pharmacyId: int.parse(
-                            state.pathParameters['pharmacyId']!,
-                          ),
-                          pharmacyName: state.uri.queryParameters['name'] ?? '',
-                        ),
+                        builder: (_, state) {
+                          final pharmacyId = _intParam(state, 'pharmacyId');
+                          if (pharmacyId == null) {
+                            return const _RouteNotFoundScreen(
+                              fallbackLocation: '/visits',
+                            );
+                          }
+                          return NewBronScreen(
+                            pharmacyId: pharmacyId,
+                            pharmacyName:
+                                state.uri.queryParameters['name'] ?? '',
+                          );
+                        },
                       ),
                       GoRoute(
                         path: 'checkout',
                         builder: (_, state) {
+                          final pharmacyId = _intParam(state, 'pharmacyId');
+                          if (pharmacyId == null) {
+                            return const _RouteNotFoundScreen(
+                              fallbackLocation: '/visits',
+                            );
+                          }
                           final extra = state.extra;
                           final checkoutPayload = extra is Map<String, dynamic>
                               ? extra
@@ -332,9 +429,7 @@ final routerProvider = Provider<GoRouter>((ref) {
                               ? Map<String, dynamic>.from(extra)
                               : null;
                           return NewBronScreen(
-                            pharmacyId: int.parse(
-                              state.pathParameters['pharmacyId']!,
-                            ),
+                            pharmacyId: pharmacyId,
                             pharmacyName:
                                 state.uri.queryParameters['name'] ?? '',
                             isCheckoutMode: true,
@@ -363,9 +458,15 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: 'drug/:drugId',
-                builder: (_, state) => DrugDetailScreen(
-                  drugId: int.parse(state.pathParameters['drugId']!),
-                ),
+                builder: (_, state) {
+                  final drugId = _intParam(state, 'drugId');
+                  if (drugId == null) {
+                    return const _RouteNotFoundScreen(
+                      fallbackLocation: '/knowledge',
+                    );
+                  }
+                  return DrugDetailScreen(drugId: drugId);
+                },
               ),
             ],
           ),

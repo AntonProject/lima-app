@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 
 class OfflineBanner extends StatelessWidget {
   final bool visible;
@@ -52,7 +53,7 @@ class OfflineBanner extends StatelessWidget {
                           const SizedBox(width: 8),
                           Flexible(
                             child: Text(
-                              'Работаете в оффлайне',
+                              context.l10n.t('workingOffline'),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: GoogleFonts.manrope(
@@ -78,7 +79,7 @@ class OfflineBanner extends StatelessWidget {
                         const Icon(Icons.wifi_off, color: Colors.white, size: 18),
                         const SizedBox(width: 8),
                         Text(
-                          'Нет подключения к интернету',
+                          context.l10n.t('noInternetConnection'),
                           style: GoogleFonts.manrope(
                             color: Colors.white,
                             fontSize: 13,
@@ -96,7 +97,7 @@ class OfflineBanner extends StatelessWidget {
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Text(
-                            'ОФЛАЙН',
+                            context.l10n.t('offlineMode').toUpperCase(),
                             style: GoogleFonts.manrope(
                               color: Colors.white,
                               fontSize: 10,

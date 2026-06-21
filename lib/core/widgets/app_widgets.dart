@@ -313,8 +313,8 @@ class OrgCard extends StatelessWidget {
                           const SizedBox(width: 3),
                           Text(
                             distanceMeters! < 1000
-                                ? '${distanceMeters!.round()} м'
-                                : '${(distanceMeters! / 1000).toStringAsFixed(1)} км',
+                                ? '${distanceMeters!.round()} ${context.l10n.t('metersShort')}'
+                                : '${(distanceMeters! / 1000).toStringAsFixed(1)} ${context.l10n.t('kmShort')}',
                             style: GoogleFonts.manrope(
                               fontSize: 11,
                               color: AppColors.primary.withValues(alpha: 0.85),

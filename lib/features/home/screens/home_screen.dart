@@ -401,7 +401,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         context.l10n.t('myActivityToday'),
                         style: GoogleFonts.manrope(
                           fontSize: 13,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w600,
                           color: Colors.black,
                         ),
                       ),
@@ -452,7 +452,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         context.l10n.t('quickActions'),
                         style: GoogleFonts.manrope(
                           fontSize: 13,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w600,
                           color: Colors.black,
                         ),
                       ),
@@ -506,7 +506,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           ),
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       AppTapScale(
                         onTap: () => showFeedbackDialog(context),
                         pressedScale: 0.97,
@@ -539,7 +539,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                             context.l10n.t('recentVisits'),
                             style: GoogleFonts.manrope(
                               fontSize: 13,
-                              fontWeight: FontWeight.w500,
+                              fontWeight: FontWeight.w600,
                               color: Colors.black,
                             ),
                           ),
@@ -563,11 +563,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           (v) => Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: _VisitItem(
-                              name: v.name,
+                              name: v.name.isEmpty
+                                  ? context.l10n.t('visit')
+                                  : v.name,
                               id: v.id.isEmpty ? '' : '#${v.id}',
-                              date: v.dateLabel,
+                              date: () {
+                                if (v.dateDay == null ||
+                                    v.dateMonthIdx == null) {
+                                  return '';
+                                }
+                                final months = [
+                                  context.l10n.t('monthJan'),
+                                  context.l10n.t('monthFeb'),
+                                  context.l10n.t('monthMar'),
+                                  context.l10n.t('monthApr'),
+                                  context.l10n.t('monthMay'),
+                                  context.l10n.t('monthJun'),
+                                  context.l10n.t('monthJul'),
+                                  context.l10n.t('monthAug'),
+                                  context.l10n.t('monthSep'),
+                                  context.l10n.t('monthOct'),
+                                  context.l10n.t('monthNov'),
+                                  context.l10n.t('monthDec'),
+                                ];
+                                return '${v.dateDay} ${months[(v.dateMonthIdx! - 1).clamp(0, 11)]}';
+                              }(),
                               time: v.timeLabel,
-                              status: v.statusLabel,
+                              status: _l10nStatus(context, v.statusKey),
                               statusKey: v.statusKey,
                               type: v.type,
                               subType: v.subType,
@@ -595,16 +617,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           ),
                         )
                       else
-                        const EmptyState(
+                        EmptyState(
                           icon: LucideIcons.calendarX2,
-                          title: 'На эту дату визиты не запланированы',
+                          title: context.l10n.t('noVisitsPlanned'),
                         ),
                       const SizedBox(height: 12),
                       Text(
                         context.l10n.t('offlineAndSync'),
                         style: GoogleFonts.manrope(
                           fontSize: 13,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w600,
                           color: Colors.black,
                         ),
                       ),
@@ -729,7 +751,8 @@ String _safeStr(Object? value, {String fallback = ''}) {
 class _RecentVisitVm {
   final String id;
   final String name;
-  final String dateLabel;
+  final int? dateDay;
+  final int? dateMonthIdx;
   final String timeLabel;
   final String statusLabel;
   final String statusKey;
@@ -742,7 +765,8 @@ class _RecentVisitVm {
   const _RecentVisitVm({
     required this.id,
     required this.name,
-    required this.dateLabel,
+    this.dateDay,
+    this.dateMonthIdx,
     required this.timeLabel,
     required this.statusLabel,
     required this.statusKey,
@@ -871,27 +895,9 @@ class _RecentVisitVm {
     final statusKey = _statusKeyFromRaw(normalizedStatusRaw);
     return _RecentVisitVm(
       id: resolvedId,
-      name: _safeStr(
-        row['organization_name'] ?? row['org_name'],
-        fallback: 'Визит',
-      ),
-      dateLabel: () {
-        const months = [
-          'янв',
-          'фев',
-          'мар',
-          'апр',
-          'май',
-          'июн',
-          'июл',
-          'авг',
-          'сен',
-          'окт',
-          'ноя',
-          'дек',
-        ];
-        return '${dt.day} ${months[dt.month - 1]}';
-      }(),
+      name: _safeStr(row['organization_name'] ?? row['org_name']),
+      dateDay: dt.day,
+      dateMonthIdx: dt.month,
       timeLabel:
           '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
       statusLabel: _statusLabelFromKey(statusKey),
@@ -937,6 +943,19 @@ class _RecentVisitVm {
   }
 }
 
+String _l10nStatus(BuildContext context, String key) {
+  switch (key) {
+    case 'completed':
+      return context.l10n.t('conducted');
+    case 'in_progress':
+      return context.l10n.t('visitStatusInProgress');
+    case 'cancelled':
+      return context.l10n.t('cancelled');
+    default:
+      return context.l10n.t('visitStatusPlanned');
+  }
+}
+
 String _localeCode(Locale locale) {
   if (locale.languageCode == 'uz' && locale.scriptCode == 'Cyrl') {
     return 'uz_cyrl';
@@ -944,6 +963,10 @@ String _localeCode(Locale locale) {
   if (locale.languageCode == 'uz') return 'uz_latn';
   return locale.languageCode;
 }
+
+/// Shared fixed height for the home activity / quick-action cards so both
+/// rows line up. Content is single-line (counts, short labels) and ellipsized.
+const double _homeCardHeight = 82;
 
 class _ActivityCard extends StatelessWidget {
   final String title;
@@ -970,57 +993,71 @@ class _ActivityCard extends StatelessWidget {
       onTap: onTap,
       pressedScale: 0.95,
       child: Container(
-        padding: const EdgeInsets.all(12),
+        height: _homeCardHeight,
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: AppColors.secondaryBg,
           borderRadius: BorderRadius.circular(12),
           boxShadow: shadowSm,
         ),
-        child: Column(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Padding(
+            // Text block: title → value → subtitle stacked on the left.
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
                     // Nudge the title baseline up to the icon's top edge.
                     padding: const EdgeInsets.only(top: 1),
                     child: Text(
                       title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.manrope(
                         fontSize: 11,
+                        height: 1.25,
                         color: AppColors.secondaryText,
                       ),
                     ),
                   ),
-                ),
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: iconBg,
-                    borderRadius: BorderRadius.circular(8),
+                  const SizedBox(height: 4),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.manrope(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      height: 1.25,
+                      color: AppColors.primaryText,
+                    ),
                   ),
-                  child: Icon(icon, color: iconColor, size: 17),
-                ),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text(
-              value,
-              style: GoogleFonts.manrope(
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
-                color: AppColors.primaryText,
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.manrope(
+                      fontSize: 11,
+                      height: 1.25,
+                      color: AppColors.secondaryText,
+                    ),
+                  ),
+                ],
               ),
             ),
-            Text(
-              subtitle,
-              style: GoogleFonts.manrope(
-                fontSize: 11,
-                color: AppColors.secondaryText,
+            const SizedBox(width: 8),
+            // Icon pinned to the top-right of the whole text block.
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: iconBg,
+                borderRadius: BorderRadius.circular(8),
               ),
+              child: Icon(icon, color: iconColor, size: 17),
             ),
           ],
         ),
@@ -1054,19 +1091,19 @@ class _QuickCard extends StatelessWidget {
       onTap: onTap,
       pressedScale: 0.95,
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: AppColors.secondaryBg,
           borderRadius: BorderRadius.circular(12),
           boxShadow: shadowSm,
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Icon (with optional badge) on the left.
             SizedBox(
-              width: 40,
-              height: 40,
+              width: 36,
+              height: 36,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
@@ -1104,29 +1141,44 @@ class _QuickCard extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: GoogleFonts.manrope(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                color: AppColors.primaryText,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-            ),
-            if (subtitle.isNotEmpty)
-              Text(
-                subtitle,
-                style: GoogleFonts.manrope(
-                  fontSize: 11,
-                  color: AppColors.secondaryText,
+            const SizedBox(width: 8),
+            // Title + subtitle aligned to the icon's top/bottom edges (with a
+            // 2px inset), matching the profile stat cards.
+            Expanded(
+              child: SizedBox(
+                height: 36,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        title,
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          height: 1.0,
+                          color: AppColors.primaryText,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        subtitle.isNotEmpty ? subtitle : '',
+                        style: GoogleFonts.manrope(
+                          fontSize: 11,
+                          height: 1.0,
+                          color: AppColors.secondaryText,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
               ),
+            ),
           ],
         ),
       ),
@@ -1168,6 +1220,12 @@ class _VisitItem extends StatelessWidget {
     final isLpu = type == 'lpu';
     final isStock = type == 'stock';
     final isCircle = type == 'pharmacy' && subType == 'circle';
+    final localizedStatus = switch (statusKey) {
+      'completed' => context.l10n.t('conducted'),
+      'in_progress' => context.l10n.t('visitStatusInProgress'),
+      'cancelled' => context.l10n.t('cancelled'),
+      _ => context.l10n.t('visitStatusPlanned'),
+    };
     final (statusBg, statusFg) = switch (statusKey) {
       'completed' => (const Color(0xFFEFF2F7), const Color(0xFF77839A)),
       'in_progress' => (const Color(0xFFFAF1DF), const Color(0xFFC89B3C)),
@@ -1258,7 +1316,7 @@ class _VisitItem extends StatelessWidget {
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
-                          status,
+                          localizedStatus,
                           style: GoogleFonts.manrope(
                             fontSize: 10,
                             color: statusFg,
@@ -1312,7 +1370,8 @@ class _VisitItem extends StatelessWidget {
                                 ),
                                 if (participantsCount > 0)
                                   TextSpan(
-                                    text: ' ($participantsCount чел.)',
+                                    text:
+                                        ' (${context.l10n.t('participantsN', args: {'count': '$participantsCount'})})',
                                     style: const TextStyle(
                                       color: Color(0xFF8390A3),
                                     ),

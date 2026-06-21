@@ -186,7 +186,7 @@ class _PaymentTypeSheetState extends State<_PaymentTypeSheet> {
           if (!widget.allowWholesale) ...[
             const SizedBox(height: 10),
             Text(
-              'Оптовый тип покупателя недоступен для вашей компании',
+              context.l10n.t('wholesaleUnavailable'),
               style: GoogleFonts.manrope(
                 fontSize: 12,
                 color: AppColors.hintText,

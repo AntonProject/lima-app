@@ -204,13 +204,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       } else {
         state = state.copyWith(
           status: AuthStatus.error,
-          errorMessage: 'Неверный логин или пароль',
+          errorMessage: 'errInvalidCredentials',
         );
       }
     } on Exception {
       state = state.copyWith(
         status: AuthStatus.error,
-        errorMessage: 'Неверный логин или пароль',
+        errorMessage: 'errInvalidCredentials',
       );
     }
   }
@@ -223,7 +223,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // No cached profile at all — need internet for first login.
       state = state.copyWith(
         status: AuthStatus.error,
-        errorMessage: 'Не удалось подключиться к серверу',
+        errorMessage: 'errCannotConnect',
       );
       return;
     }
@@ -234,7 +234,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // Different user trying to access — deny
       state = state.copyWith(
         status: AuthStatus.error,
-        errorMessage: 'Неверный логин или пароль',
+        errorMessage: 'errInvalidCredentials',
       );
       return;
     }
@@ -257,7 +257,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     } catch (_) {
       state = state.copyWith(
         status: AuthStatus.error,
-        errorMessage: 'Не удалось открыть сохранённый профиль',
+        errorMessage: 'errCannotOpenProfile',
       );
     }
   }

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
@@ -130,8 +131,8 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
     if (!_canEditDirectory) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Редактирование доступно только администратору'),
+        SnackBar(
+          content: Text(context.l10n.t('editAdminOnly')),
         ),
       );
       return;
@@ -177,7 +178,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Редактировать организацию',
+              context.l10n.t('editOrg'),
               style: GoogleFonts.manrope(
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
@@ -186,43 +187,43 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
             const SizedBox(height: 12),
             TextField(
               controller: nameCtrl,
-              decoration: const InputDecoration(labelText: 'Название *'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldName')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: innCtrl,
-              decoration: const InputDecoration(labelText: 'ИНН *'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldInn')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: phoneCtrl,
-              decoration: const InputDecoration(labelText: 'Телефон'),
+              decoration: InputDecoration(labelText: context.l10n.t('phone')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: cityCtrl,
-              decoration: const InputDecoration(labelText: 'Регион *'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldRegion')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: districtCtrl,
-              decoration: const InputDecoration(labelText: 'Район'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldDistrict')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: addressCtrl,
-              decoration: const InputDecoration(labelText: 'Адрес *'),
+              decoration: InputDecoration(labelText: context.l10n.t('fieldAddress')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: categoryCtrl,
-              decoration: const InputDecoration(labelText: 'Категория'),
+              decoration: InputDecoration(labelText: context.l10n.t('category')),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: responsibleCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Ответственное лицо',
+              decoration: InputDecoration(
+                labelText: context.l10n.t('fieldResponsible'),
               ),
             ),
             const SizedBox(height: 8),
@@ -236,8 +237,8 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
               ),
               child: Text(
                 (lat != null && lon != null)
-                    ? 'Местоположение установлено'
-                    : 'Местоположение не задано',
+                    ? context.l10n.t('locationSet')
+                    : context.l10n.t('locationNotSet'),
                 style: GoogleFonts.manrope(
                   fontSize: 14,
                   color: AppColors.secondaryText,
@@ -251,7 +252,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48),
               ),
-              child: const Text('Обновить'),
+              child: Text(context.l10n.t('update')),
             ),
           ],
         ),
@@ -289,7 +290,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('Организация обновлена')));
+    ).showSnackBar(SnackBar(content: Text(context.l10n.t('orgUpdated'))));
 
     // Отправляем в API в фоне; при ошибке кладём в очередь
     try {
@@ -364,7 +365,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
         children: [
           Column(
             children: [
-              AppCenteredHeader(title: 'Аптека', onBack: () => context.pop()),
+              AppCenteredHeader(title: context.l10n.t('pharmacyOne'), onBack: () => context.pop()),
               Expanded(
                 child: ListView(
                   padding: EdgeInsets.fromLTRB(16, 12, 16, ctaBottom + 56),
@@ -453,8 +454,8 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                               ),
                               child: Text(
                                 worksWithUs == true
-                                    ? 'Работает с нами'
-                                    : 'Не работает с нами',
+                                    ? context.l10n.t('worksWithUs')
+                                    : context.l10n.t('notWorksWithUs'),
                                 style: GoogleFonts.manrope(
                                   fontSize: 12,
                                   color: worksWithUs == true
@@ -475,8 +476,8 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                                 SnackBar(
                                   content: Text(
                                     added
-                                        ? 'Добавлено в избранное'
-                                        : 'Убрано из избранного',
+                                        ? context.l10n.t('addedToFav')
+                                        : context.l10n.t('removedFromFav'),
                                   ),
                                 ),
                               );
@@ -502,7 +503,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                     ),
                     const SizedBox(height: 10),
                     const SizedBox(height: 10),
-                    const SectionLabel(text: 'ИНФОРМАЦИЯ'),
+                    SectionLabel(text: context.l10n.t('informationCaps')),
                     Container(
                       decoration: BoxDecoration(
                         color: AppColors.secondaryBg,
@@ -513,18 +514,18 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                       child: Column(
                         children: [
                           if (city.isNotEmpty)
-                            InfoRow(label: 'Регион', value: city),
+                            InfoRow(label: context.l10n.t('region'), value: city),
                           if (address.isNotEmpty)
-                            InfoRow(label: 'Адрес', value: address),
+                            InfoRow(label: context.l10n.t('address'), value: address),
                           if (phone != null && phone.isNotEmpty)
                             InfoRow(
-                              label: 'Телефон',
+                              label: context.l10n.t('phone'),
                               value: phone,
                               isLink: true,
                               onTap: () => launchPhone(phone),
                             ),
                           if (inn != null && inn.isNotEmpty)
-                            InfoRow(label: 'ИНН', value: inn),
+                            InfoRow(label: context.l10n.t('inn'), value: inn),
                         ],
                       ),
                     ),
@@ -534,7 +535,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                         Expanded(
                           child: _ActionBtn(
                             icon: Icons.call_rounded,
-                            label: 'Позвонить',
+                            label: context.l10n.t('call'),
                             onTap: (phone == null || phone.isEmpty)
                                 ? null
                                 : () => launchPhone(phone),
@@ -544,7 +545,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                         Expanded(
                           child: _ActionBtn(
                             icon: Icons.near_me_rounded,
-                            label: 'Маршрут',
+                            label: context.l10n.t('route'),
                             onTap: _buildYandexRoute,
                           ),
                         ),
@@ -552,7 +553,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                         Expanded(
                           child: _ActionBtn(
                             icon: Icons.edit_rounded,
-                            label: 'Редактировать',
+                            label: context.l10n.t('edit'),
                             onTap: canEditDirectory
                                 ? _openEditOrganizationSheet
                                 : null,
@@ -582,7 +583,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                           ),
                         ),
                         title: Text(
-                          'История заказов',
+                          context.l10n.t('orderHistory'),
                           style: GoogleFonts.manrope(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
@@ -626,7 +627,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text('Начать визит'),
+              child: Text(context.l10n.t('startVisit')),
             ),
           ),
         ],

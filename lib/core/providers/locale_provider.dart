@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/network/api_client.dart';
 
 const _localeCodeKey = 'app_locale_code';
@@ -16,6 +17,8 @@ class AppLocaleNotifier extends StateNotifier<Locale> {
       state = parsed;
       _localeCode = saved ?? _toCode(parsed);
     }
+    // Keep the context-free translator in sync for services/providers.
+    AppI18n.global = AppI18n(state);
   }
 
   String get localeCode => _localeCode;
@@ -27,6 +30,7 @@ class AppLocaleNotifier extends StateNotifier<Locale> {
     if (next != state) {
       state = next;
     }
+    AppI18n.global = AppI18n(next);
     final prefs = _ref.read(sharedPreferencesProvider);
     await prefs.setString(_localeCodeKey, code);
   }

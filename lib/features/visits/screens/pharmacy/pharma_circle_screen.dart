@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/models/local_visit.dart';
 import 'package:lima/core/network/remote_api_service.dart';
@@ -99,7 +100,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Фарм кружок',
+                        context.l10n.t('pharmCircle'),
                         style: GoogleFonts.manrope(
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
@@ -126,8 +127,8 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: TextFormField(
               onChanged: (v) => setState(() => _query = v),
-              decoration: const InputDecoration(
-                hintText: 'Поиск препаратов...',
+              decoration: InputDecoration(
+                hintText: context.l10n.t('searchDrugs'),
                 prefixIcon: Icon(
                   Icons.search_rounded,
                   color: AppColors.hintText,
@@ -140,9 +141,9 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
                 : _filtered.isEmpty
-                ? const EmptyState(
+                ? EmptyState(
                     icon: Icons.search_off_rounded,
-                    title: 'Ничего не найдено',
+                    title: context.l10n.t('nothingFound'),
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -183,8 +184,8 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                                       const SizedBox(height: 4),
                                       Text(
                                         drug.manufacturer.isNotEmpty
-                                            ? '${drug.manufacturer} • Материалов: ${drug.documentsCount}'
-                                            : 'Материалов: ${drug.documentsCount}',
+                                            ? context.l10n.t('mfrMaterialsN', args: {'mfr': drug.manufacturer, 'count': '${drug.documentsCount}'})
+                                            : context.l10n.t('materialsCountN', args: {'count': '${drug.documentsCount}'}),
                                         style: GoogleFonts.manrope(
                                           fontSize: 12,
                                           color: AppColors.secondaryText,
@@ -247,7 +248,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                 ),
               ),
               child: Text(
-                'Завершить',
+                context.l10n.t('finish'),
                 style: GoogleFonts.manrope(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -275,8 +276,8 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
     if (!mounted) return;
     if (materials.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Материалы не найдены'),
+        SnackBar(
+          content: Text(context.l10n.t('materialsNotFound')),
           duration: Duration(seconds: 2),
         ),
       );
@@ -303,7 +304,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                       children: [
                         Expanded(
                           child: Text(
-                            'Материалы',
+                            context.l10n.t('materials'),
                             style: GoogleFonts.manrope(
                               fontSize: 20,
                               fontWeight: FontWeight.w700,
@@ -417,7 +418,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
   String _materialTitle(Map<String, dynamic> material) {
     return (material['title'] as String?)?.trim().isNotEmpty == true
         ? material['title'] as String
-        : 'Материал';
+        : context.l10n.t('material');
   }
 
   String _materialType(Map<String, dynamic> material) {
@@ -491,7 +492,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
         'organization_name': widget.pharmacyName,
         'visit_type': 1,
         'visit_format': 1,
-        'visit_format_name': 'Фармкружок',
+        'visit_format_name': context.l10n.t('pharmCircle'),
         'status': 'completed',
         'pharmacists_fio': payload.fio.trim(),
         'participants_count': payload.participantsCount,
@@ -605,7 +606,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Визит завершён',
+                  context.l10n.t('visitDone'),
                   style: GoogleFonts.manrope(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -614,26 +615,26 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                 const SizedBox(height: 10),
                 const Divider(height: 1, color: AppColors.divider),
                 const SizedBox(height: 10),
-                _summaryLine('Тип визита', 'Фарм кружок'),
-                _summaryLine('Организация', widget.pharmacyName.toUpperCase()),
-                _summaryLine('ФИО фармацевтов', payload.fio),
+                _summaryLine(context.l10n.t('visitType'), context.l10n.t('pharmCircle')),
+                _summaryLine(context.l10n.t('organization'), widget.pharmacyName.toUpperCase()),
+                _summaryLine(context.l10n.t('pharmacistsNames'), payload.fio),
                 _summaryLine(
-                  'Количество участников',
-                  '${payload.participantsCount} чел.',
+                  context.l10n.t('participantsCount'),
+                  context.l10n.t('participantsN', args: {'count': '${payload.participantsCount}'}),
                 ),
                 _summaryLine(
-                  'Обсуждено препаратов',
+                  context.l10n.t('discussedDrugs'),
                   _shownDrugNamesByDrug.isEmpty
-                      ? 'Препараты не обсуждались'
-                      : '${_shownDrugNamesByDrug.length} шт.',
+                      ? context.l10n.t('drugsNotDiscussed')
+                      : context.l10n.t('pcsN', args: {'n': '${_shownDrugNamesByDrug.length}'}),
                 ),
                 _summaryLine(
-                  'Показано материалов',
-                  '$_shownMaterialsCount шт.',
+                  context.l10n.t('shownMaterials'),
+                  context.l10n.t('pcsN', args: {'n': '$_shownMaterialsCount'}),
                 ),
                 _summaryLine(
-                  'Статус',
-                  'Завершён',
+                  context.l10n.t('status'),
+                  context.l10n.t('finished'),
                   valueColor: const Color(0xFF34A36A),
                 ),
                 const SizedBox(height: 10),
@@ -654,7 +655,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                           );
                         },
                         child: Text(
-                          'К организации',
+                          context.l10n.t('toOrganization'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.manrope(
@@ -674,7 +675,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                           );
                         },
                         child: Text(
-                          'На главную',
+                          context.l10n.t('toHome'),
                           maxLines: 1,
                           style: GoogleFonts.manrope(
                             fontSize: 13,
@@ -805,7 +806,7 @@ class _CircleFinishSheetState extends State<_CircleFinishSheet> {
             child: Row(
               children: [
                 Text(
-                  'Завершение',
+                  context.l10n.t('completion'),
                   style: GoogleFonts.manrope(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
@@ -838,7 +839,7 @@ class _CircleFinishSheetState extends State<_CircleFinishSheet> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'ФИО фармацевтов',
+                  context.l10n.t('pharmacistsNames'),
                   style: GoogleFonts.manrope(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -849,13 +850,13 @@ class _CircleFinishSheetState extends State<_CircleFinishSheet> {
                   controller: _fioCtrl,
                   onChanged: (_) => setState(() {}),
                   maxLines: 2,
-                  decoration: const InputDecoration(
-                    hintText: 'Иванов И.И., Петрова А.С.',
+                  decoration: InputDecoration(
+                    hintText: context.l10n.t('pharmacistsPlaceholder'),
                   ),
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'Количество участников',
+                  context.l10n.t('participantsCount'),
                   style: GoogleFonts.manrope(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -912,13 +913,13 @@ class _CircleFinishSheetState extends State<_CircleFinishSheet> {
                   ),
                   child: Column(
                     children: [
-                      _meta('Начало:', dateTime),
+                      _meta(context.l10n.t('startColon'), dateTime),
                       const Divider(height: 10),
-                      _meta('Окончание:', dateTime),
+                      _meta(context.l10n.t('endColon'), dateTime),
                       const Divider(height: 10),
-                      _meta('Обсуждено препаратов:', '${widget.drugsCount}'),
+                      _meta(context.l10n.t('discussedDrugsColon'), '${widget.drugsCount}'),
                       const Divider(height: 10),
-                      _meta('Показано материалов:', '${widget.materialsCount}'),
+                      _meta(context.l10n.t('shownMaterialsColon'), '${widget.materialsCount}'),
                     ],
                   ),
                 ),
@@ -946,7 +947,7 @@ class _CircleFinishSheetState extends State<_CircleFinishSheet> {
                 ),
               ),
               child: Text(
-                'Завершить',
+                context.l10n.t('finish'),
                 style: GoogleFonts.manrope(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,

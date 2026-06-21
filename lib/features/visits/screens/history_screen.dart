@@ -403,7 +403,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                 child: Column(
                                   children: [
                                     Text(
-                                      '${filtered.length} записей',
+                                      context.l10n.plural(filtered.length, 'records'),
                                       style: GoogleFonts.manrope(
                                         fontSize: 12,
                                         color: AppColors.hintText,
@@ -505,14 +505,14 @@ class _VisitItem extends StatelessWidget {
     final isLpu = visit.type == 'lpu';
     final isGroupPresentation = isLpu && visit.subType == 'group';
     final labelText = isCircle
-        ? 'Фармкружок'
+        ? context.l10n.t('pharmCircle')
         : isStock
-        ? 'Снятие остатков'
+        ? context.l10n.t('removeStockTitle')
         : isPharmacy
-        ? 'Бронь'
+        ? context.l10n.t('bron')
         : isGroupPresentation
-        ? 'Групповая презентация'
-        : 'Презентация';
+        ? context.l10n.t('groupPresentation')
+        : context.l10n.t('visit');
     final labelBg = isCircle
         ? const Color(0xFFDDF5E6)
         : isStock
@@ -694,7 +694,7 @@ class _VisitItem extends StatelessWidget {
                                     ),
                                   ),
                                   TextSpan(
-                                    text: ' (${visit.participantsCount} чел.)',
+                                    text: ' (${context.l10n.t('participantsN', args: {'count': '${visit.participantsCount}'})})',
                                     style: const TextStyle(
                                       color: Color(0xFF8390A3),
                                     ),

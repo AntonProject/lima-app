@@ -48,7 +48,8 @@ android {
     buildTypes {
         release {
             // Use release signing if key.properties exists, otherwise fall back
-            // to debug keys so `flutter run --release` still works locally.
+            // to debug keys so `flutter run --release` still works locally
+            // (guarded below: release artifacts refuse to build without it).
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {
@@ -67,4 +68,26 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// Guard: a release APK/AAB signed with debug keys is rejected by Google Play.
+// Without key.properties the fallback above would silently produce exactly
+// that, so fail loudly instead. Local debug-signed release runs are still
+// possible with an explicit opt-in: -PallowDebugSigning=true.
+tasks.configureEach {
+    if ((name == "assembleRelease" || name == "bundleRelease") &&
+        !keystorePropertiesFile.exists()
+    ) {
+        doFirst {
+            if (!project.hasProperty("allowDebugSigning")) {
+                throw GradleException(
+                    "android/key.properties not found: the release build would be " +
+                        "signed with DEBUG keys and rejected by Google Play. " +
+                        "Provide android/key.properties (keyAlias, keyPassword, " +
+                        "storeFile, storePassword), or pass -PallowDebugSigning=true " +
+                        "to build a debug-signed release locally on purpose."
+                )
+            }
+        }
+    }
 }

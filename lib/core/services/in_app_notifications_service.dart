@@ -117,6 +117,14 @@ class InAppNotificationsService {
     await _save(next);
   }
 
+  /// Marks every notification as read.
+  Future<void> markAllRead() async {
+    final list = await getAll();
+    if (list.every((e) => e.isRead)) return;
+    final next = list.map((e) => e.copyWith(isRead: true)).toList();
+    await _save(next);
+  }
+
   Future<void> _save(List<InAppNotificationItem> items) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(

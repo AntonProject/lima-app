@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/dialogs/payment_type_dialog.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
+import '../../../../core/i18n/app_i18n.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/app_widgets.dart';
 
@@ -63,7 +64,7 @@ class PharmacyTypeScreen extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Тип визита',
+                        context.l10n.t('visitType'),
                         style: GoogleFonts.manrope(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -91,7 +92,7 @@ class PharmacyTypeScreen extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
               children: [
                 Text(
-                  'Выберите тип визита для аптеки',
+                  context.l10n.t('selectVisitType'),
                   style: GoogleFonts.manrope(
                     fontSize: 13,
                     color: AppColors.secondaryText,
@@ -101,8 +102,8 @@ class PharmacyTypeScreen extends ConsumerWidget {
 
                 _VisitTypeCard(
                   icon: Icons.shopping_cart_rounded,
-                  label: 'Бронь',
-                  description: 'Оформить заказ препаратов',
+                  label: context.l10n.t('bron'),
+                  description: context.l10n.t('bronDesc'),
                   bgColor: AppColors.iconBgBlue,
                   iconColor: AppColors.primary,
                   onTap: () async {
@@ -137,8 +138,8 @@ class PharmacyTypeScreen extends ConsumerWidget {
 
                 _VisitTypeCard(
                   icon: Icons.inventory_2_rounded,
-                  label: 'Снятие остатков',
-                  description: 'Проверить и записать остатки',
+                  label: context.l10n.t('removeStockTitle'),
+                  description: context.l10n.t('stockCheckDesc'),
                   bgColor: AppColors.iconBgOrange,
                   iconColor: AppColors.accent,
                   onTap: () => context.push(
@@ -152,8 +153,8 @@ class PharmacyTypeScreen extends ConsumerWidget {
 
                 _VisitTypeCard(
                   icon: Icons.groups_rounded,
-                  label: 'Фарм кружок',
-                  description: 'Обучающая презентация для фармацевтов',
+                  label: context.l10n.t('pharmCircle'),
+                  description: context.l10n.t('pharmCircleDesc'),
                   bgColor: AppColors.iconBgGreen,
                   iconColor: AppColors.success,
                   onTap: () => context.push(
@@ -165,9 +166,8 @@ class PharmacyTypeScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 16),
 
-                const HintBox(
-                  text:
-                      'При бронировании вы можете просмотреть изображения препаратов и добавить их в корзину',
+                HintBox(
+                  text: context.l10n.t('bronNote'),
                 ),
               ],
             ),

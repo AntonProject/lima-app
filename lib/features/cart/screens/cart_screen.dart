@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -77,7 +78,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'Корзина',
+                  context.l10n.t('cart'),
                   style: GoogleFonts.manrope(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
@@ -91,7 +92,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
             child: state.cartItems.isEmpty
                 ? Center(
                     child: Text(
-                      'Корзина пуста',
+                      context.l10n.t('cartEmpty'),
                       style: GoogleFonts.manrope(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -120,12 +121,12 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                         ),
                         child: Column(
                           children: [
-                            _summaryRow('Всего заказов:', '${groups.length}'),
+                            _summaryRow(context.l10n.t('totalOrders'), '${groups.length}'),
                             const Divider(height: 10, color: AppColors.divider),
-                            _summaryRow('Товаров:', '${state.cartCount}'),
+                            _summaryRow(context.l10n.t('totalItems'), '${state.cartCount}'),
                             const Divider(height: 10, color: AppColors.divider),
                             _summaryRow(
-                              'Общая сумма:',
+                              context.l10n.t('totalAmount'),
                               formatUzs(state.cartTotal),
                               valueColor: AppColors.primary,
                               keyWeight: FontWeight.w700,
@@ -162,7 +163,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
           Row(
             children: [
               Text(
-                'Заказ #${_orderIdFromDate(group.addedAt)}',
+                context.l10n.t('orderN', args: {'n': _orderIdFromDate(group.addedAt)}),
                 style: GoogleFonts.manrope(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
@@ -180,7 +181,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  _remainingLabel(group.addedAt),
+                  _remainingLabel(context, group.addedAt),
                   style: GoogleFonts.manrope(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -200,7 +201,10 @@ class _CartScreenState extends ConsumerState<CartScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Предоплата ${group.prepaymentPercent}% • ${group.buyerLabel}',
+            context.l10n.t('prepaymentBullet', args: {
+            'percent': '${group.prepaymentPercent}',
+            'buyer': group.buyerType == 1 ? context.l10n.t('wholesale') : context.l10n.t('retail'),
+          }),
             style: GoogleFonts.manrope(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -213,7 +217,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
           ...group.items.map(
             (item) => Padding(
               padding: const EdgeInsets.only(bottom: 8),
-              child: _cartItemRow(notifier, item, group),
+              child: _cartItemRow(context, notifier, item, group),
             ),
           ),
           const Divider(height: 1, color: AppColors.divider),
@@ -225,7 +229,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Итого:',
+                      context.l10n.t('totalColon'),
                       style: GoogleFonts.manrope(
                         fontSize: 14,
                         color: AppColors.secondaryText,
@@ -267,7 +271,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                       ),
                     ),
                     child: Text(
-                      'Удалить',
+                      context.l10n.t('delete'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.manrope(
@@ -310,7 +314,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                             ),
                           )
                         : Text(
-                            'Оформить',
+                            context.l10n.t('checkout'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.manrope(
@@ -329,6 +333,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
   }
 
   Widget _cartItemRow(
+    BuildContext context,
     AppCollectionsNotifier notifier,
     CartItemSnapshot item,
     _CartGroup group,
@@ -368,7 +373,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
           ),
           const SizedBox(width: 8),
           Text(
-            '${item.quantity} шт.',
+            context.l10n.t('pcsN', args: {'n': '${item.quantity}'}),
             style: GoogleFonts.manrope(
               fontSize: 13,
               color: AppColors.secondaryText,
@@ -408,7 +413,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
     final pharmacyId = group.pharmacyId;
     if (pharmacyId == null || pharmacyId <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось определить аптеку заказа')),
+        SnackBar(content: Text(context.l10n.t('couldNotDeterminePharmacy'))),
       );
       return;
     }
@@ -450,7 +455,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
     } catch (e) {
       if (mounted) setState(() => _checkingOutKey = null);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось открыть оформление: $e')),
+        SnackBar(content: Text(context.l10n.t('couldNotOpenCheckout', args: {'error': '$e'}))),
       );
     }
   }
@@ -490,18 +495,18 @@ class _CartScreenState extends ConsumerState<CartScreen> {
     return '$id';
   }
 
-  static String _remainingLabel(String? iso) {
-    if (iso == null || iso.isEmpty) return '12 ч 00 мин';
+  String _remainingLabel(BuildContext context, String? iso) {
+    if (iso == null || iso.isEmpty) return context.l10n.t('hoursMinFormat', args: {'h': '12', 'm': '00'});
     final created = DateTime.tryParse(iso);
-    if (created == null) return '12 ч 00 мин';
+    if (created == null) return context.l10n.t('hoursMinFormat', args: {'h': '12', 'm': '00'});
     final endsAt = created.add(const Duration(hours: 12));
     final left = endsAt.difference(DateTime.now());
-    if (left.isNegative) return '00 ч 00 мин';
+    if (left.isNegative) return context.l10n.t('hoursMinFormat', args: {'h': '00', 'm': '00'});
     final h = left.inHours;
     final m = left.inMinutes % 60;
     final hh = h.toString().padLeft(2, '0');
     final mm = m.toString().padLeft(2, '0');
-    return '$hh ч $mm мин';
+    return context.l10n.t('hoursMinFormat', args: {'h': hh, 'm': mm});
   }
 
   static List<_CartGroup> _cartGroups(List<CartItemSnapshot> items) {
@@ -584,27 +589,27 @@ class _CartBottomNav extends StatelessWidget {
         children: [
           _NavItem(
             icon: Icons.home_rounded,
-            label: 'Главная',
+            label: context.l10n.t('navHome'),
             onTap: () => context.go('/home'),
           ),
           _NavItem(
             icon: Icons.calendar_month_rounded,
-            label: 'План',
+            label: context.l10n.t('navPlan'),
             onTap: () => context.go('/plan'),
           ),
           _NavItem(
             icon: Icons.place_rounded,
-            label: 'Визиты',
+            label: context.l10n.t('navVisits'),
             onTap: () => context.go('/visits'),
           ),
           _NavItem(
             icon: Icons.bookmark_rounded,
-            label: 'База',
+            label: context.l10n.t('navKnowledge'),
             onTap: () => context.go('/knowledge'),
           ),
           _NavItem(
             icon: Icons.person_rounded,
-            label: 'Профиль',
+            label: context.l10n.t('navProfile'),
             onTap: () => context.go('/profile'),
           ),
         ],

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/dialogs/notification_detail_dialog.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/services/in_app_notifications_service.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
@@ -34,15 +35,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     });
   }
 
-  String _formatTimeLabel(DateTime value) {
+  String _formatTimeLabel(BuildContext context, DateTime value) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final date = DateTime(value.year, value.month, value.day);
     final hh = value.hour.toString().padLeft(2, '0');
     final mm = value.minute.toString().padLeft(2, '0');
-    if (date == today) return 'Сегодня, $hh:$mm';
+    if (date == today) return context.l10n.t('todayAt', args: {'time': '$hh:$mm'});
     if (date == today.subtract(const Duration(days: 1))) {
-      return 'Вчера, $hh:$mm';
+      return context.l10n.t('yesterdayAt', args: {'time': '$hh:$mm'});
     }
     return '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${value.year}, $hh:$mm';
   }
@@ -58,6 +59,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       title: item.title,
       body: item.body,
     );
+  }
+
+  Future<void> _markAllRead() async {
+    await _notificationsService.markAllRead();
+    await _load();
   }
 
   @override
@@ -95,7 +101,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Уведомления',
+                    context.l10n.t('notifications'),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.manrope(
@@ -105,6 +111,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     ),
                   ),
                 ),
+                if (_notifications.any((n) => !n.isRead))
+                  AppTapScale(
+                    onTap: _markAllRead,
+                    pressedScale: 0.95,
+                    child: Text(
+                      context.l10n.t('readAll'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -112,10 +131,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
                 : _notifications.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
-                      'Нет уведомлений',
-                      style: TextStyle(color: AppColors.secondaryText),
+                      context.l10n.t('noNotifications'),
+                      style: const TextStyle(color: AppColors.secondaryText),
                     ),
                   )
                 : ListView.builder(
@@ -171,7 +190,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  _formatTimeLabel(n.createdAt),
+                                  _formatTimeLabel(context, n.createdAt),
                                   style: GoogleFonts.manrope(
                                     fontSize: 11,
                                     color: AppColors.hintText,

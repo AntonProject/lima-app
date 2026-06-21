@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/dialogs/medical_status_sheet.dart';
 import 'package:lima/core/models/local_visit.dart';
@@ -136,9 +137,14 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
     final selectedDrugs = _statuses.keys.toList();
     final now = DateTime.now().toIso8601String();
     final comment = selectedDrugs.isEmpty
-        ? 'Без выбора препаратов'
-        : 'Препаратов: ${selectedDrugs.length}';
+        ? context.l10n.t('noDrugsChosen')
+        : context.l10n.t('drugsSelectedN', args: {'count': '${selectedDrugs.length}'});
     final medRepName = ref.read(authProvider).user?.fullName ?? '—';
+    // Capture localized notification strings before async gaps.
+    final visitDoneTitle = context.l10n.t('visitDone');
+    final visitSentApiBody = context.l10n.t('visitSentApi');
+    final visitSavedLocalBody = context.l10n.t('visitSavedLocalSync');
+    final visitUnconfirmedBody = context.l10n.t('visitDoneUnconfirmed');
     int? localId;
     var apiOk = false;
     var localOk = false;
@@ -221,7 +227,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
           'visit_type': 2,
           if (isGroupVisit) 'visit_format': 3,
           if (isGroupVisit) 'visit_format_id': 3,
-          if (isGroupVisit) 'visit_format_name': 'Групповая презентация',
+          if (isGroupVisit) 'visit_format_name': context.l10n.t('groupPresentation'),
           'doctor_ids': _allDoctorIds,
           'doctor_name': widget.doctorName,
           'medical_representative_name': medRepName,
@@ -321,12 +327,10 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
       }
     }
     await _notificationsService.add(
-      title: 'Визит завершён',
+      title: visitDoneTitle,
       body: apiOk
-          ? 'Визит отправлен в API и сохранён локально.'
-          : (localOk
-                ? 'Визит сохранён локально и будет отправлен при синхронизации.'
-                : 'Визит завершён, но локальное сохранение не подтверждено.'),
+          ? visitSentApiBody
+          : (localOk ? visitSavedLocalBody : visitUnconfirmedBody),
       kind: 'visit',
     );
     final org = await ref
@@ -340,19 +344,19 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
       barrierDismissible: false,
       builder: (ctx) {
         final isGroup = _allDoctorIds.length > 1;
-        final doctorsLabel = isGroup ? 'Врачи' : 'Врач';
-        final subtitle = isGroup ? 'Групповая презентация' : 'Презентация 1:1';
+        final doctorsLabel = isGroup ? context.l10n.t('doctorsWord') : context.l10n.t('doctorWord');
+        final subtitle = isGroup ? context.l10n.t('groupPresentation') : context.l10n.t('presentation11');
         final firstDrug = selectedDrugs.isEmpty
-            ? 'Нет выбранных препаратов'
+            ? context.l10n.t('noDrugsSelected')
             : selectedDrugs.first;
         final firstStatus = selectedDrugs.isEmpty
             ? null
             : _statuses[selectedDrugs.first];
         final firstStatusText = switch (firstStatus) {
-          DrugStatus.familiarPrescribes => 'Ознакомлен, выписывает',
-          DrugStatus.familiarNotPrescribes => 'Ознакомлен, не выписывает',
-          DrugStatus.unfamiliar => 'Не знаком',
-          DrugStatus.other => 'Комментарий',
+          DrugStatus.familiarPrescribes => context.l10n.t('familiarPrescribes'),
+          DrugStatus.familiarNotPrescribes => context.l10n.t('familiarNotPrescribes'),
+          DrugStatus.unfamiliar => context.l10n.t('notFamiliar'),
+          DrugStatus.other => context.l10n.t('comment'),
           _ => null,
         };
         final firstStatusColor = switch (firstStatus) {
@@ -415,7 +419,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Визит завершён',
+                    context.l10n.t('visitDone'),
                     textAlign: TextAlign.center,
                     style: GoogleFonts.manrope(
                       fontSize: 16,
@@ -435,17 +439,17 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                   ),
                   const SizedBox(height: 14),
                   const Divider(height: 1, color: AppColors.divider),
-                  _dialogRow('Организация', widget.orgName),
+                  _dialogRow(context.l10n.t('organization'), widget.orgName),
                   if (orgAddress.isNotEmpty) ...[
                     const Divider(height: 1, color: AppColors.divider),
-                    _dialogRow('Адрес', orgAddress),
+                    _dialogRow(context.l10n.t('address'), orgAddress),
                   ],
                   const Divider(height: 1, color: AppColors.divider),
                   _dialogRow(doctorsLabel, widget.doctorName),
                   const Divider(height: 1, color: AppColors.divider),
                   const SizedBox(height: 10),
                   Text(
-                    'Препараты (${selectedDrugs.length})',
+                    context.l10n.t('drugsN', args: {'count': '${selectedDrugs.length}'}),
                     style: GoogleFonts.manrope(
                       fontSize: 13,
                       color: AppColors.secondaryText,
@@ -514,7 +518,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 44),
                     ),
-                    child: const Text('К организации'),
+                    child: Text(context.l10n.t('toOrganization')),
                   ),
                   const SizedBox(height: 10),
                   OutlinedButton(
@@ -527,7 +531,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 44),
                     ),
-                    child: const Text('На главную'),
+                    child: Text(context.l10n.t('toHome')),
                   ),
                 ],
               ),
@@ -590,7 +594,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
   Widget build(BuildContext context) {
     final canFinish = _statuses.isNotEmpty;
     final doctorCount = _allDoctorIds.length;
-    final countLabel = _pluralDoctors(doctorCount);
+    final countLabel = _pluralDoctors(context, doctorCount);
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
@@ -683,8 +687,8 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                   const SizedBox(height: 10),
                   TextFormField(
                     onChanged: (v) => setState(() => _query = v),
-                    decoration: const InputDecoration(
-                      hintText: 'Поиск препарата...',
+                    decoration: InputDecoration(
+                      hintText: context.l10n.t('searchDrug'),
                       prefixIcon: Icon(Icons.search_rounded),
                       filled: true,
                       fillColor: Colors.white,
@@ -695,9 +699,9 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
             ),
             Expanded(
               child: _filtered.isEmpty
-                  ? const EmptyState(
+                  ? EmptyState(
                       icon: Icons.search_off_rounded,
-                      title: 'Ничего не найдено',
+                      title: context.l10n.t('nothingFound'),
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
@@ -814,7 +818,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                     : AppColors.primary.withValues(alpha: 0.4),
                 disabledForegroundColor: Colors.white,
               ),
-              child: const Text('Завершить визит'),
+              child: Text(context.l10n.t('finishVisit')),
             ),
           ),
         ),
@@ -823,12 +827,8 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
   }
 }
 
-String _pluralDoctors(int n) {
-  if (n % 10 == 1 && n % 100 != 11) return '$n врач';
-  if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) {
-    return '$n врача';
-  }
-  return '$n врачей';
+String _pluralDoctors(BuildContext context, int n) {
+  return context.l10n.t('doctorsN', args: {'n': '$n'});
 }
 
 // ── Боттом-шит "Информация о враче" ────────────────────────────────────────
@@ -878,7 +878,7 @@ class _DoctorsInfoSheetState extends State<_DoctorsInfoSheet> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Информация о враче',
+                    context.l10n.t('doctorInfo'),
                     style: GoogleFonts.manrope(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
@@ -905,7 +905,7 @@ class _DoctorsInfoSheetState extends State<_DoctorsInfoSheet> {
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            'Назад к списку',
+                            context.l10n.t('backToList'),
                             style: GoogleFonts.manrope(
                               fontSize: 13,
                               color: AppColors.primary,
@@ -946,7 +946,7 @@ class _DoctorsInfoSheetState extends State<_DoctorsInfoSheet> {
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                child: const Text('Закрыть'),
+                child: Text(context.l10n.t('close')),
               ),
             ),
           ],
@@ -968,7 +968,7 @@ class _DoctorList extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
         child: Text(
-          'Нет данных о врачах',
+          context.l10n.t('noDoctorsData'),
           style: GoogleFonts.manrope(color: AppColors.hintText),
         ),
       );
@@ -984,7 +984,7 @@ class _DoctorList extends StatelessWidget {
         final d = doctors[i];
         final name = d['full_name'] as String? ?? '';
         final specialty = d['specialty'] as String? ?? '';
-        final category = _doctorCategoryLabel(d);
+        final category = _doctorCategoryLabel(context, d);
         return GestureDetector(
           onTap: () => onSelect(d),
           child: Padding(
@@ -1045,17 +1045,17 @@ class _DoctorDetail extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = doctor['full_name'] as String? ?? '';
     final specialty = doctor['specialty'] as String? ?? '';
-    final category = _doctorCategoryLabel(doctor);
+    final category = _doctorCategoryLabel(context, doctor);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _DetailRow(label: 'ФИО', value: name),
-          _DetailRow(label: 'Специализация', value: specialty),
+          _DetailRow(label: context.l10n.t('fullName'), value: name),
+          _DetailRow(label: context.l10n.t('specialization'), value: specialty),
           _DetailRow(
-            label: 'Категория',
+            label: context.l10n.t('category'),
             value: category,
             isLast: true,
             asChip: true,
@@ -1141,7 +1141,7 @@ class _DetailRow extends StatelessWidget {
   }
 }
 
-String _doctorCategoryLabel(Map<String, dynamic> d) {
+String _doctorCategoryLabel(BuildContext context, Map<String, dynamic> d) {
   String? category = (d['category'] as String?)?.trim();
   if (category == null || category.isEmpty) {
     final raw = d['raw_json'] as String?;
@@ -1159,7 +1159,7 @@ String _doctorCategoryLabel(Map<String, dynamic> d) {
   final normalized = (category == null || category.isEmpty)
       ? 'C'
       : category.toUpperCase();
-  return 'Категория $normalized';
+  return '${context.l10n.t('category')} $normalized';
 }
 
 class _ActionIconBox extends StatelessWidget {

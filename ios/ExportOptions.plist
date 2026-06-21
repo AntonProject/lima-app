@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Опции экспорта для App Store. Использование:
+  flutter build ipa с ключом export-options-plist=ios/ExportOptions.plist
+  (или Xcode Organizer / CI). Перед первым релизом:
+  1. teamID = 5N9G35WULY (аккаунт LIMA NEO TECHNO, MCHJ);
+     при смене аккаунта заменить здесь и в Runner.xcodeproj.
+  2. Установить Apple Distribution Certificate и App Store Provisioning Profile
+     для uz.lima.lima (signingStyle=automatic подтянет их сам).
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store</string>
+	<key>teamID</key>
+	<string>5N9G35WULY</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<key>destination</key>
+	<string>export</string>
+</dict>
+</plist>

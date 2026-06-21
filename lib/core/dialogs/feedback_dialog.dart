@@ -195,7 +195,7 @@ class _FeedbackDialogState extends ConsumerState<_FeedbackDialog> {
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: _images.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
                   itemBuilder: (_, i) {
                     final img = _images[i];
                     return Stack(
@@ -266,6 +266,9 @@ class _FeedbackDialogState extends ConsumerState<_FeedbackDialog> {
                       final photoPaths = _images.map((e) => e.path).toList();
                       final nav = Navigator.of(context);
                       final messenger = ScaffoldMessenger.of(context);
+                      final tSent = context.l10n.t('messageSent');
+                      final tOffline = context.l10n.t('offlineWillSend');
+                      final tFailed = context.l10n.t('sendFailed');
                       try {
                         final api = ref.read(remoteApiServiceProvider);
                         await api.sendFeedback(
@@ -275,7 +278,7 @@ class _FeedbackDialogState extends ConsumerState<_FeedbackDialog> {
                         if (!mounted) return;
                         nav.pop();
                         messenger.showSnackBar(
-                          const SnackBar(content: Text('Сообщение отправлено')),
+                          SnackBar(content: Text(tSent)),
                         );
                       } on DioException catch (e) {
                         final isOffline = e.response == null ||
@@ -288,22 +291,20 @@ class _FeedbackDialogState extends ConsumerState<_FeedbackDialog> {
                           if (!mounted) return;
                           nav.pop();
                           messenger.showSnackBar(
-                            const SnackBar(
-                              content: Text('Нет интернета — отправится автоматически при подключении'),
-                            ),
+                            SnackBar(content: Text(tOffline)),
                           );
                         } else {
                           if (!mounted) return;
                           setState(() => _sending = false);
                           messenger.showSnackBar(
-                            const SnackBar(content: Text('Не удалось отправить')),
+                            SnackBar(content: Text(tFailed)),
                           );
                         }
                       } catch (_) {
                         if (!mounted) return;
                         setState(() => _sending = false);
                         messenger.showSnackBar(
-                          const SnackBar(content: Text('Не удалось отправить')),
+                          SnackBar(content: Text(tFailed)),
                         );
                       }
                     },

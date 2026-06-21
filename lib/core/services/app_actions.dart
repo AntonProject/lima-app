@@ -15,6 +15,25 @@ Future<void> launchEmail(String email) async {
   if (await canLaunchUrl(uri)) await launchUrl(uri);
 }
 
+/// Opens the mail composer to [email] with a prefilled subject and body.
+/// Returns true if a mail app was launched.
+Future<bool> launchEmailRequest(
+  String email, {
+  required String subject,
+  required String body,
+}) async {
+  final uri = Uri(
+    scheme: 'mailto',
+    path: email,
+    query: 'subject=${Uri.encodeComponent(subject)}'
+        '&body=${Uri.encodeComponent(body)}',
+  );
+  if (await canLaunchUrl(uri)) {
+    return launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+  return false;
+}
+
 Future<void> launchTelegramUsername(String username) async {
   final uri = Uri.parse('https://t.me/$username');
   if (await canLaunchUrl(uri)) {
