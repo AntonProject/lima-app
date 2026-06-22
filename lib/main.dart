@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
 import 'core/network/api_client.dart';
 import 'core/services/background_sync_service.dart';
+import 'core/services/local_notifications_service.dart';
 
 void main() async {
   debugPrint('[MAIN] start');
@@ -19,6 +20,8 @@ void main() async {
   debugPrint('[MAIN] prefs done');
   await BackgroundSyncService.initialize();
   debugPrint('[MAIN] background sync initialized');
+  await LocalNotificationsService.instance.init();
+  debugPrint('[MAIN] local notifications initialized');
 
   runApp(
     ProviderScope(

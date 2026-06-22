@@ -163,10 +163,9 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
       return;
     }
 
-    final result = await showModalBottomSheet<Map<String, String>>(
-      context: context,
+    final result = await showAppSheet<Map<String, String>>(
+      context,
       useRootNavigator: true,
-      isScrollControlled: true,
       backgroundColor: AppColors.secondaryBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),

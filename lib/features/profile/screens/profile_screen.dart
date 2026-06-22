@@ -16,6 +16,7 @@ import 'package:lima/core/providers/dashboard_counts_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/network/api_client.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/core/services/local_notifications_service.dart';
 import 'package:lima/core/services/material_cache_service.dart';
 import 'package:lima/core/models/models.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
@@ -761,17 +762,17 @@ class _NotificationTileState extends State<_NotificationTile> {
 
   Future<void> _toggle(bool value) async {
     if (value) {
-      final currentStatus = await Permission.notification.status;
-      PermissionStatus status = currentStatus;
-      if (!currentStatus.isGranted &&
-          !currentStatus.isPermanentlyDenied &&
-          !currentStatus.isRestricted) {
-        status = await Permission.notification.request();
-      }
-      final granted = status.isGranted;
+      // Request OS authorization via the local-notifications plugin: this fires
+      // the iOS system prompt on first use and registers the app with
+      // UNUserNotificationCenter, so a "Notifications" row appears in Settings.
+      // (permission_handler alone failed to create that row when the app had no
+      // notification plugin configured, leaving the toggle at a dead-end.)
+      final granted = await LocalNotificationsService.instance
+          .requestPermission();
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('notifications_enabled', granted);
       if (mounted) setState(() => _enabled = granted);
+      final status = await Permission.notification.status;
       if (!granted &&
           (status.isPermanentlyDenied || status.isRestricted) &&
           mounted) {

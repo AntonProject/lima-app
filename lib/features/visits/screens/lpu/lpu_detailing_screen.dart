@@ -581,10 +581,9 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
   }
 
   void _showDoctorsDialog() {
-    showModalBottomSheet(
-      context: context,
+    showAppSheet(
+      context,
       useRootNavigator: true,
-      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _DoctorsInfoSheet(doctors: _doctors),
     );

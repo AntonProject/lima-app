@@ -10,8 +10,10 @@
 class EnvConfig {
   EnvConfig._();
 
-  /// Значение по умолчанию. Поменяй на `true` для прод-сборки.
-  static const bool _defaultIsProd = false;
+  /// Значение по умолчанию. Прод-домен (crm.lima.uz) включён по умолчанию
+  /// с релиза 1.0.1 — `flutter run` и сборки идут на прод без флага.
+  /// Для dev: `--dart-define=ENV=dev`.
+  static const bool _defaultIsProd = true;
 
   /// Переопределение через --dart-define=ENV=prod|dev (опционально).
   static const String _envOverride = String.fromEnvironment('ENV');

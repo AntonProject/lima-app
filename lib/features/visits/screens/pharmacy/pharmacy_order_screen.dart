@@ -101,10 +101,9 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
     final mainStock = drug.mainStock ?? drug.stock ?? 0;
     final remains = drug.remainsStock ?? drug.stock ?? 0;
     final available = remains;
-    final result = await showModalBottomSheet<int>(
-      context: context,
+    final result = await showAppSheet<int>(
+      context,
       useRootNavigator: true,
-      isScrollControlled: true,
       backgroundColor: AppColors.secondaryBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -117,14 +116,17 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
           final counterColor = isOverStock
               ? AppColors.error
               : const Color(0xFFE49351);
-          return Padding(
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(ctx).padding.bottom + 12,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
+          return SingleChildScrollView(
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom +
+                    MediaQuery.of(ctx).padding.bottom +
+                    12,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
                   child: Row(
@@ -324,6 +326,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                   ),
                 ),
               ],
+              ),
             ),
           );
         },

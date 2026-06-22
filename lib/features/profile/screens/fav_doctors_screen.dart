@@ -8,6 +8,7 @@ import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/theme/app_theme.dart';
+import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/features/profile/screens/profile_screen.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
@@ -149,10 +150,9 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
         : await db.getOrganisationById(orgId);
 
     if (!mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
+    await showAppSheet<void>(
+      context,
       useRootNavigator: true,
-      isScrollControlled: true,
       backgroundColor: AppColors.secondaryBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),

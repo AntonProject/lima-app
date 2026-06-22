@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import UserNotifications
 import workmanager_apple
 
 @main
@@ -11,6 +12,10 @@ import workmanager_apple
     WorkmanagerPlugin.registerBGProcessingTask(
       withIdentifier: "uz.lima.lima.backgroundSync"
     )
+    // Show local notifications while the app is in the foreground.
+    if #available(iOS 10.0, *) {
+      UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

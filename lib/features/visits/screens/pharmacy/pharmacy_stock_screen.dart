@@ -70,10 +70,9 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
     final initial = _qtyByDrugId[drug.id] ?? 0;
     var qtyStr = initial > 0 ? initial.toString() : '0';
     final available = _availableStock(drug);
-    final result = await showModalBottomSheet<int>(
-      context: context,
+    final result = await showAppSheet<int>(
+      context,
       useRootNavigator: true,
-      isScrollControlled: true,
       backgroundColor: AppColors.secondaryBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -102,14 +101,17 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
             });
           }
 
-          return Padding(
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(ctx).padding.bottom + 12,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
+          return SingleChildScrollView(
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom +
+                    MediaQuery.of(ctx).padding.bottom +
+                    12,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
                   child: Row(
@@ -264,6 +266,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                   ),
                 ),
               ],
+              ),
             ),
           );
         },

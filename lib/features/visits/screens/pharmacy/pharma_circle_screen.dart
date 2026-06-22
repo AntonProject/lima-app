@@ -87,11 +87,20 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
             child: Row(
               children: [
                 GestureDetector(
-                  onTap: () => context.pop(),
-                  child: const Icon(
-                    Icons.arrow_back_rounded,
-                    color: AppColors.primaryText,
-                    size: 24,
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    FocusScope.of(context).unfocus();
+                    context.canPop()
+                        ? context.pop()
+                        : context.go('/visits');
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.arrow_back_rounded,
+                      color: AppColors.primaryText,
+                      size: 24,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -457,10 +466,9 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
   }
 
   Future<void> _openFinishSheet() async {
-    final payload = await showModalBottomSheet<_CircleFinishPayload>(
-      context: context,
+    final payload = await showAppSheet<_CircleFinishPayload>(
+      context,
       useRootNavigator: true,
-      isScrollControlled: true,
       backgroundColor: AppColors.secondaryBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -791,16 +799,22 @@ class _CircleFinishSheetState extends State<_CircleFinishSheet> {
         '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}, ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     final participants = int.tryParse(_participantsStr) ?? 1;
     final canSubmit = _fioCtrl.text.trim().isNotEmpty;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        0,
-        12,
-        0,
-        MediaQuery.of(context).padding.bottom + 8,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.opaque,
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            0,
+            12,
+            0,
+            MediaQuery.of(context).viewInsets.bottom +
+                MediaQuery.of(context).padding.bottom +
+                8,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
@@ -955,7 +969,9 @@ class _CircleFinishSheetState extends State<_CircleFinishSheet> {
               ),
             ),
           ),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }

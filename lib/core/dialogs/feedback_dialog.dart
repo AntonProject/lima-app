@@ -121,10 +121,11 @@ class _FeedbackDialogState extends ConsumerState<_FeedbackDialog> {
           boxShadow: shadowMd,
         ),
         padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             Text(context.l10n.t('feedback'),
                 textAlign: TextAlign.center,
                 style: GoogleFonts.manrope(
@@ -323,6 +324,7 @@ class _FeedbackDialogState extends ConsumerState<_FeedbackDialog> {
               ],
             ),
           ],
+        ),
         ),
       ),
     );

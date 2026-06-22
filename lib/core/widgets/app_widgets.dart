@@ -11,6 +11,45 @@ class AppUi {
   static const double buttonHeight = 44;
 }
 
+/// Modal bottom sheet with consistent keyboard handling:
+/// - capped at 95% of screen height so it never shoots up under the keyboard,
+/// - scroll-controlled (content can scroll above the keyboard),
+/// - tapping outside a text field dismisses the keyboard,
+/// - keyboard/focus is released after the sheet closes so the next tap (e.g. a
+///   back button) isn't swallowed by keyboard dismissal.
+///
+/// The [builder] content should still scroll and pad its bottom by
+/// `MediaQuery.viewInsets.bottom` so the submit button stays reachable.
+Future<T?> showAppSheet<T>(
+  BuildContext context, {
+  required WidgetBuilder builder,
+  Color? backgroundColor,
+  ShapeBorder? shape,
+  bool useRootNavigator = false,
+  bool isDismissible = true,
+  bool enableDrag = true,
+}) async {
+  final result = await showModalBottomSheet<T>(
+    context: context,
+    isScrollControlled: true,
+    useRootNavigator: useRootNavigator,
+    isDismissible: isDismissible,
+    enableDrag: enableDrag,
+    backgroundColor: backgroundColor,
+    shape: shape,
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.of(context).size.height * 0.95,
+    ),
+    builder: (ctx) => GestureDetector(
+      onTap: () => FocusScope.of(ctx).unfocus(),
+      behavior: HitTestBehavior.opaque,
+      child: builder(ctx),
+    ),
+  );
+  FocusManager.instance.primaryFocus?.unfocus();
+  return result;
+}
+
 // ─── formatUzs ────────────────────────────────────────────────────────────────
 String formatUzs(double amount, {bool short = false}) {
   if (short) {

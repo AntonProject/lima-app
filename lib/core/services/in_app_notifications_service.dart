@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'local_notifications_service.dart';
+
 /// Number of unread in-app notifications. Refresh via
 /// `ref.invalidate(unreadNotificationsCountProvider)` after add/markRead.
 final unreadNotificationsCountProvider = FutureProvider<int>((ref) async {
@@ -107,6 +109,12 @@ class InAppNotificationsService {
       next.removeRange(_maxItems, next.length);
     }
     await _save(next);
+
+    // Mirror to a real OS banner when the user has notifications enabled.
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('notifications_enabled') ?? false) {
+      await LocalNotificationsService.instance.show(title: title, body: body);
+    }
   }
 
   Future<void> markRead(int id) async {

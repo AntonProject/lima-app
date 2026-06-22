@@ -157,10 +157,9 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
     final lat = (_org?['latitude'] as num?)?.toDouble();
     final lon = (_org?['longitude'] as num?)?.toDouble();
 
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
+    final saved = await showAppSheet<bool>(
+      context,
       useRootNavigator: true,
-      isScrollControlled: true,
       backgroundColor: AppColors.secondaryBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
