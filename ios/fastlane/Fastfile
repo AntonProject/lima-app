@@ -36,6 +36,20 @@ platform :ios do
     )
     profile_name = lane_context[SharedValues::SIGH_NAME]
 
+    # Force the Runner target onto manual signing with the downloaded profile.
+    # The project ships with CODE_SIGN_STYLE=Automatic, which makes the archive
+    # demand an interactive profile selection on CI; overriding it in the
+    # .pbxproj makes xcodebuild use our profile non-interactively.
+    update_code_signing_settings(
+      path: "Runner.xcodeproj",
+      use_automatic_signing: false,
+      team_id: TEAM_ID,
+      targets: ["Runner"],
+      code_sign_identity: "Apple Distribution",
+      bundle_identifier: APP_IDENTIFIER,
+      profile_name: profile_name,
+    )
+
     build_app(
       workspace: "Runner.xcworkspace",
       scheme: "Runner",
@@ -43,9 +57,9 @@ platform :ios do
       output_directory: "../build/ios/ipa",
       export_method: "app-store",
       export_options: {
+        signingStyle: "manual",
         provisioningProfiles: { APP_IDENTIFIER => profile_name },
       },
-      xcargs: "DEVELOPMENT_TEAM=#{TEAM_ID} CODE_SIGN_STYLE=Manual",
     )
 
     upload_to_testflight(
