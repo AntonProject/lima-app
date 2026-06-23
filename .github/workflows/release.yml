@@ -44,7 +44,11 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          # Sanity-check the decoded keystore so a corrupt secret fails loudly
+          # here instead of deep inside the Gradle signing task.
+          keytool -list -keystore android/app/upload-keystore.jks \
+            -storepass "$STORE_PASSWORD" >/dev/null
           cat > android/key.properties <<EOF
           keyAlias=$KEY_ALIAS
           keyPassword=$KEY_PASSWORD
@@ -81,45 +85,51 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Import signing certificate & provisioning profile
+      # Cloud signing: Xcode creates/downloads the distribution cert and
+      # provisioning profile itself via the App Store Connect API key — no
+      # manual .p12 / .mobileprovision needed. The key must live where Xcode
+      # looks for it: ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8
+      - name: Write ASC API key for Xcode automatic signing
         env:
-          DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
-          DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-          PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
         run: |
-          KEYCHAIN=build.keychain
-          KEYCHAIN_PASSWORD=$(uuidgen)
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security list-keychains -d user -s "$KEYCHAIN" login.keychain
-
-          echo "$DIST_CERT_BASE64" | base64 --decode > dist_cert.p12
-          security import dist_cert.p12 -k "$KEYCHAIN" -P "$DIST_CERT_PASSWORD" \
-            -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-
-          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILES_DIR"
-          echo "$PROVISION_PROFILE_BASE64" | base64 --decode > "$PROFILES_DIR/lima.mobileprovision"
-          rm -f dist_cert.p12
+          mkdir -p ~/.appstoreconnect/private_keys ~/private_keys
+          echo "$ASC_KEY_BASE64" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          cp "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          # Also keep a copy in the workspace for the fastlane upload step.
+          echo "$ASC_KEY_BASE64" | base64 --decode > ios/AuthKey.p8
 
       - run: flutter pub get
 
-      - name: Build IPA
-        run: flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+      - name: Build & sign IPA (automatic, via API key)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          flutter build ipa --release \
+            --export-options-plist=ios/ExportOptions.plist \
+            || true
+          # Flutter's archive succeeds; the export uses xcodebuild with
+          # -allowProvisioningUpdates so Xcode can register the profile via the
+          # API key. If the one-shot export above didn't produce an ipa, run the
+          # signed export explicitly.
+          if [ -z "$(ls build/ios/ipa/*.ipa 2>/dev/null)" ]; then
+            xcodebuild -exportArchive \
+              -archivePath build/ios/archive/Runner.xcarchive \
+              -exportOptionsPlist ios/ExportOptions.plist \
+              -exportPath build/ios/ipa \
+              -allowProvisioningUpdates \
+              -authenticationKeyID "$ASC_KEY_ID" \
+              -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+              -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          fi
 
       - name: Set up Ruby/Fastlane
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
           bundler-cache: true
-
-      - name: Write ASC API key
-        env:
-          ASC_KEY_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
-        run: |
-          echo "$ASC_KEY_BASE64" | base64 --decode > ios/AuthKey.p8
 
       - name: Upload to TestFlight
         working-directory: ios

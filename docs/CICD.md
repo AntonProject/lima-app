@@ -33,17 +33,20 @@ Play Console (Users and permissions).
 
 ### iOS (TestFlight)
 
+iOS uses **cloud signing** — Xcode creates/downloads the distribution
+certificate and provisioning profile itself via the App Store Connect API key
+(`xcodebuild -allowProvisioningUpdates`). No manual `.p12` or `.mobileprovision`
+is needed.
+
 | Secret | What it is |
 | --- | --- |
-| `IOS_DIST_CERT_P12_BASE64` | Apple **Distribution** certificate exported as `.p12`, base64-encoded |
-| `IOS_DIST_CERT_PASSWORD` | Password set when exporting the `.p12` |
-| `IOS_PROVISION_PROFILE_BASE64` | App Store provisioning profile for `uz.lima.lima` (`.mobileprovision`), base64-encoded |
 | `ASC_API_KEY_P8_BASE64` | App Store Connect API key (`AuthKey_XXXX.p8`), base64-encoded |
 | `ASC_KEY_ID` | The API key's Key ID |
 | `ASC_ISSUER_ID` | App Store Connect Issuer ID |
 
 Create the API key in **App Store Connect → Users and Access → Integrations →
-App Store Connect API** with the **App Manager** role.
+App Store Connect API** with the **Admin** (or **App Manager**) role — it must be
+allowed to manage certificates/profiles for automatic signing.
 
 To base64-encode a file on macOS:
 
