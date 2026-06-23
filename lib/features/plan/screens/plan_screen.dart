@@ -27,8 +27,20 @@ class PlannedVisitsNotifier extends StateNotifier<List<PlannedVisit>> {
     load();
   }
 
+  // Composite signature for matching a locally-created plan against its
+  // server-synced twin: same organisation + same calendar day. Used to drop
+  // un-stamped local duplicates once the server row for the same plan arrives
+  // (the push response sometimes omits the remote id, leaving the local row
+  // un-stamped — without this, a second "ghost" card appears after restart).
+  static String _planSignature(int? orgId, DateTime date) =>
+      '${orgId ?? 0}_${date.year}-${date.month}-${date.day}';
+
   Future<void> load() async {
     final merged = <String, PlannedVisit>{};
+    // Signatures of server-stamped planned rows (have a remote_id).
+    final serverSignatures = <String>{};
+    // Local-keyed entries we may need to drop if a server twin exists.
+    final localKeyToSignature = <String, String>{};
 
     // Load synced planned visits from local DB
     try {
@@ -40,6 +52,13 @@ class PlannedVisitsNotifier extends StateNotifier<List<PlannedVisit>> {
         final key = remoteId != null ? 'r_$remoteId' : 'l_$localId';
         final visitDate =
             DateTime.tryParse('${row['visit_date'] ?? ''}') ?? DateTime.now();
+        final orgId = (row['org_id'] as num?)?.toInt();
+        final signature = _planSignature(orgId, visitDate);
+        if (remoteId != null) {
+          serverSignatures.add(signature);
+        } else {
+          localKeyToSignature[key] = signature;
+        }
         merged[key] = PlannedVisit(
           id: remoteId ?? localId,
           organisationName: '${row['org_name'] ?? ''}',
@@ -99,6 +118,15 @@ class PlannedVisitsNotifier extends StateNotifier<List<PlannedVisit>> {
       }
     } catch (_) {}
 
+    // Drop un-stamped local planned rows whose server twin (same org + day)
+    // is already present, so a failed remote-id stamp doesn't surface a
+    // doctorless/wrong-type duplicate card after the next pull/restart.
+    localKeyToSignature.forEach((key, signature) {
+      if (serverSignatures.contains(signature)) {
+        merged.remove(key);
+      }
+    });
+
     final list = merged.values.toList()
       ..sort((a, b) => b.date.compareTo(a.date));
     state = list;
@@ -148,7 +176,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
         subType = 'circle';
       case 'double':
         type = 'lpu';
-        subType = 'lpu';
+        subType = 'double';
       case 'group':
       case 'group_double':
         type = 'lpu';

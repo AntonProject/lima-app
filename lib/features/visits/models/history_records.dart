@@ -313,7 +313,7 @@ class HistoryVisitRecord {
       return ('lpu', 'group');
     }
     if (fmtName.contains('двойн') || fmtName.contains('double')) {
-      return ('lpu', 'lpu');
+      return ('lpu', 'double');
     }
 
     // visit_pharm_circle object presence is a reliable circle signal.

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -31,11 +32,25 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   String? _visitIdToOpen;
   bool _autoOpenFirst = false;
   List<HistoryVisitRecord> _records = [];
+  StreamSubscription<Set<String>>? _dbChangesSub;
 
   @override
   void initState() {
     super.initState();
+    // Reload when the visits table changes (e.g. a visit is conducted or
+    // synced while this screen is already open) so history stays in sync with
+    // home's "recent visits" instead of showing a stale snapshot.
+    _dbChangesSub = ref.read(localDatabaseProvider).changes.listen((tables) {
+      if (!mounted) return;
+      if (tables.contains('visits')) _loadVisits();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadVisits());
+  }
+
+  @override
+  void dispose() {
+    _dbChangesSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadVisits() async {
@@ -504,6 +519,7 @@ class _VisitItem extends StatelessWidget {
     final isPharmacy = visit.type == 'pharmacy';
     final isLpu = visit.type == 'lpu';
     final isGroupPresentation = isLpu && visit.subType == 'group';
+    final isDoubleVisit = isLpu && visit.subType == 'double';
     final labelText = isCircle
         ? context.l10n.t('pharmCircle')
         : isStock
@@ -512,7 +528,9 @@ class _VisitItem extends StatelessWidget {
         ? context.l10n.t('bron')
         : isGroupPresentation
         ? context.l10n.t('groupPresentation')
-        : context.l10n.t('visit');
+        : isDoubleVisit
+        ? context.l10n.t('doubleVisit')
+        : context.l10n.t('presentation');
     final labelBg = isCircle
         ? const Color(0xFFDDF5E6)
         : isStock

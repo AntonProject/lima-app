@@ -356,7 +356,11 @@ class SpecificationExportService {
         : data.items;
     final extraRows = (items.length - 1).clamp(0, 999);
     const rowHeight = 79;
-    final canvasHeight = 565 + (extraRows * rowHeight);
+    // Base height must leave room below the signature-name row (drawn at
+    // signNameY = 546 + extraRows*rowHeight, ~26px tall at fontSize 24) plus a
+    // bottom margin — otherwise the buyer/seller names are clipped (PNG cut off
+    // at the bottom). 546 + 26 ≈ 572, +28px margin → 600.
+    final canvasHeight = 600 + (extraRows * rowHeight);
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const pageWidth = 1600.0;

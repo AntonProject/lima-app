@@ -224,11 +224,18 @@ final routerProvider = Provider<GoRouter>((ref) {
             return const _RouteNotFoundScreen(fallbackLocation: '/visits');
           }
           final orgName = state.uri.queryParameters['name'] ?? '';
+          final preselect = int.tryParse(
+            state.uri.queryParameters['preselect'] ?? '',
+          );
           return _SystemBackFallback(
             fallbackLocation: _routeLocation('/visits/lpu/detail/$orgId', {
               'name': orgName,
             }),
-            child: LpuDoctorSelectScreen(orgId: orgId, orgName: orgName),
+            child: LpuDoctorSelectScreen(
+              orgId: orgId,
+              orgName: orgName,
+              preselectedDoctorId: preselect,
+            ),
           );
         },
         routes: [

@@ -1120,9 +1120,39 @@ class LocalDatabase {
     if (rows.isEmpty) return;
     final batch = db.batch();
     for (final row in rows) {
+      final r = Map<String, dynamic>.from(row);
+      // Server plan rows often omit doctor/format fields. Because remote_id is
+      // UNIQUE, ConflictAlgorithm.replace would otherwise delete the local row
+      // (with its doctor_id/doctor_name/visit_format) and reinsert a stripped
+      // one — surfacing a doctorless / wrong-type plan card. Preserve those
+      // fields from the existing row when the incoming payload lacks them.
+      final remoteId = (r['remote_id'] as num?)?.toInt();
+      if (remoteId != null) {
+        final existing = await db.query(
+          'planned_visits',
+          columns: ['doctor_id', 'doctor_name', 'visit_format'],
+          where: 'remote_id = ?',
+          whereArgs: [remoteId],
+          limit: 1,
+        );
+        if (existing.isNotEmpty) {
+          final prev = existing.first;
+          if ((r['doctor_id'] == null) && prev['doctor_id'] != null) {
+            r['doctor_id'] = prev['doctor_id'];
+          }
+          if (('${r['doctor_name'] ?? ''}'.trim().isEmpty) &&
+              '${prev['doctor_name'] ?? ''}'.trim().isNotEmpty) {
+            r['doctor_name'] = prev['doctor_name'];
+          }
+          if (('${r['visit_format'] ?? ''}'.trim().isEmpty) &&
+              '${prev['visit_format'] ?? ''}'.trim().isNotEmpty) {
+            r['visit_format'] = prev['visit_format'];
+          }
+        }
+      }
       batch.insert(
         'planned_visits',
-        Map<String, dynamic>.from(row),
+        r,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
@@ -1795,6 +1825,52 @@ class LocalDatabase {
     return db.rawQuery(
       'SELECT * FROM doctors WHERE is_favorite = 1 ORDER BY full_name',
     );
+  }
+
+  Future<Map<String, dynamic>?> getDoctorById(int id) async {
+    final rows = await db.query(
+      'doctors',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// Resolves the organisation a doctor belongs to, even when the doctor row's
+  /// own `organisation_id` column is 0/NULL (common for globally-synced doctors).
+  /// Falls back to the `doctor_organisations` link table, then to the most
+  /// recent visit's org. Returns null when no association can be found.
+  Future<int?> getPrimaryOrgIdForDoctor(int doctorId) async {
+    final direct = await db.query(
+      'doctors',
+      columns: ['organisation_id'],
+      where: 'id = ?',
+      whereArgs: [doctorId],
+      limit: 1,
+    );
+    final directOrg = (direct.isEmpty ? null : direct.first['organisation_id'])
+        as num?;
+    if (directOrg != null && directOrg.toInt() > 0) return directOrg.toInt();
+
+    final linked = await db.rawQuery(
+      'SELECT organisation_id FROM doctor_organisations WHERE doctor_id = ? LIMIT 1',
+      [doctorId],
+    );
+    final linkedOrg = (linked.isEmpty ? null : linked.first['organisation_id'])
+        as num?;
+    if (linkedOrg != null && linkedOrg.toInt() > 0) return linkedOrg.toInt();
+
+    final fromVisit = await db.rawQuery(
+      'SELECT org_id FROM visits WHERE doctor_id = ? AND org_id IS NOT NULL '
+      'ORDER BY created_at DESC LIMIT 1',
+      [doctorId],
+    );
+    final visitOrg = (fromVisit.isEmpty ? null : fromVisit.first['org_id'])
+        as num?;
+    if (visitOrg != null && visitOrg.toInt() > 0) return visitOrg.toInt();
+
+    return null;
   }
 
   Future<int> getFavoriteDoctorsCount() async {

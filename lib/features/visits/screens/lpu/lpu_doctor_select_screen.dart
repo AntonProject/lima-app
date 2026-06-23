@@ -19,10 +19,16 @@ class LpuDoctorSelectScreen extends ConsumerStatefulWidget {
   final int orgId;
   final String orgName;
 
+  /// When set (e.g. coming from a favourite doctor), this doctor is checked on
+  /// open so the user lands on the doctor-select step with a pre-selected
+  /// doctor — matching the web flow.
+  final int? preselectedDoctorId;
+
   const LpuDoctorSelectScreen({
     super.key,
     required this.orgId,
     required this.orgName,
+    this.preselectedDoctorId,
   });
 
   @override
@@ -66,7 +72,19 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
   @override
   void initState() {
     super.initState();
+    final preselect = widget.preselectedDoctorId;
+    if (preselect != null) _selected.add('$preselect');
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadDoctors());
+  }
+
+  /// Ensures the preselected doctor (from a favourite) appears in the list even
+  /// when [getDoctors] filtered it out (e.g. global doctor not org-linked).
+  Future<void> _ensurePreselectedDoctorLoaded(LocalDatabase db) async {
+    final preselect = widget.preselectedDoctorId;
+    if (preselect == null || _query.isNotEmpty) return;
+    if (_doctors.any((d) => '${d['id']}' == '$preselect')) return;
+    final row = await db.getDoctorById(preselect);
+    if (row != null) _doctors.insert(0, Map<String, dynamic>.from(row));
   }
 
   Future<void> _loadDoctors() async {
@@ -110,19 +128,22 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
 
     if (!mounted) return;
     final list = results.map((e) => Map<String, dynamic>.from(e)).toList();
-    final ids = list
+    _doctors = list;
+    await _ensurePreselectedDoctorLoaded(db);
+    if (!mounted) return;
+    final ids = _doctors
         .map((e) => (e['id'] as num?)?.toInt())
         .whereType<int>()
         .toList();
     final visitCounts = await db.getVisitCountsByDoctorIds(ids);
-    for (final row in list) {
+    for (final row in _doctors) {
       final id = (row['id'] as num?)?.toInt();
       if (id != null) {
         row['visit_count'] = visitCounts[id] ?? 0;
       }
     }
     if (!mounted) return;
-    setState(() => _doctors = list);
+    setState(() {});
   }
 
   String _categoryLabel(Map<String, dynamic> d) {

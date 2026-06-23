@@ -117,24 +117,27 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
     }
   }
 
-  void _startVisitForDoctor(Map<String, dynamic> doctor, {String? orgName}) {
+  void _startVisitForDoctor(
+    Map<String, dynamic> doctor, {
+    int? orgId,
+    String? orgName,
+  }) {
     final doctorId = doctor['id'] as int?;
-    final orgId = (doctor['organisation_id'] is num)
-        ? (doctor['organisation_id'] as num).toInt()
-        : null;
     if (doctorId == null || orgId == null || orgId <= 0) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.t('noLpuForDoctor'))));
       return;
     }
-    final doctorName = (doctor['full_name'] as String?) ?? '';
+    // Match the web flow: land on the doctor-select step with the ЛПУ already
+    // resolved and this doctor pre-selected (instead of jumping straight into
+    // detailing).
     context.push(
       Uri(
-        path: '/visits/lpu/detail/$orgId/doctors/$doctorId/detailing',
+        path: '/visits/lpu/detail/$orgId/doctors',
         queryParameters: {
-          'doctorName': doctorName,
-          if (orgName != null && orgName.isNotEmpty) 'orgName': orgName,
+          if (orgName != null && orgName.isNotEmpty) 'name': orgName,
+          'preselect': '$doctorId',
         },
       ).toString(),
     );
@@ -142,12 +145,20 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
 
   Future<void> _openDoctorSheet(Map<String, dynamic> doctor) async {
     final db = ref.read(localDatabaseProvider);
-    final orgId = (doctor['organisation_id'] is num)
+    final doctorId = (doctor['id'] as num?)?.toInt();
+    // The doctor row's own organisation_id is often 0/NULL for globally-synced
+    // doctors. Resolve the real org via the link table / past visits so the
+    // workplace (region + ЛПУ name) and the "Визит" action both work.
+    var orgId = (doctor['organisation_id'] is num)
         ? (doctor['organisation_id'] as num).toInt()
         : null;
+    if ((orgId == null || orgId <= 0) && doctorId != null) {
+      orgId = await db.getPrimaryOrgIdForDoctor(doctorId);
+    }
     final org = (orgId == null || orgId <= 0)
         ? null
         : await db.getOrganisationById(orgId);
+    final resolvedOrgId = orgId;
 
     if (!mounted) return;
     await showAppSheet<void>(
@@ -327,7 +338,11 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                       child: ElevatedButton(
                         onPressed: () {
                           Navigator.pop(ctx);
-                          _startVisitForDoctor(doctor, orgName: orgName);
+                          _startVisitForDoctor(
+                            doctor,
+                            orgId: resolvedOrgId,
+                            orgName: orgName,
+                          );
                         },
                         style: ElevatedButton.styleFrom(
                           minimumSize: const Size(74, 34),

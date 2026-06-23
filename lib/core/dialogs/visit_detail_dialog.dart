@@ -47,6 +47,56 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
   String _visitTitle(String base) =>
       visit.hasServerId ? '$base №${visit.id}' : base;
 
+  /// Unified header for every visit/order dialog: only a centered drag handle
+  /// (no close button; the sheet is dismissed by swiping down), then the title
+  /// ("Заказ/Визит №NNN") on the left edge and the type/status chip on the
+  /// right edge.
+  Widget _dialogHeader(
+    BuildContext context, {
+    required String title,
+    required String chipText,
+    required Color chipBg,
+    required Color chipFg,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Center(
+          child: Container(
+            width: 42,
+            height: 4,
+            margin: const EdgeInsets.only(top: 8),
+            decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.manrope(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primaryText,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            _chip(text: chipText, bg: chipBg, fg: chipFg),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -107,62 +157,14 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Center(
-          child: Container(
-            width: 42,
-            height: 4,
-            margin: const EdgeInsets.only(bottom: 14),
-            decoration: BoxDecoration(
-              color: AppColors.border,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ),
+        _dialogHeader(
+          context,
+          title: _visitTitle(context.l10n.t('stockBalance')),
+          chipText: context.l10n.t('removeStockTitle'),
+          chipBg: const Color(0xFFFFF3DB),
+          chipFg: const Color(0xFFE3A335),
         ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  Text(
-                    _visitTitle(context.l10n.t('stockBalance')),
-                    style: GoogleFonts.manrope(
-                      fontSize: 18,
-                      height: 1,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.primaryText,
-                    ),
-                  ),
-                  _chip(
-                    text: context.l10n.t('removeStockTitle'),
-                    bg: const Color(0xFFFFF3DB),
-                    fg: const Color(0xFFE3A335),
-                  ),
-                ],
-              ),
-            ),
-            GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryBg,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.close_rounded,
-                  color: AppColors.secondaryText,
-                  size: 20,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Text(
           visit.org,
           style: GoogleFonts.manrope(
@@ -292,62 +294,14 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Center(
-          child: Container(
-            width: 42,
-            height: 4,
-            margin: const EdgeInsets.only(bottom: 14),
-            decoration: BoxDecoration(
-              color: AppColors.border,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ),
+        _dialogHeader(
+          context,
+          title: _visitTitle(context.l10n.t('visit')),
+          chipText: context.l10n.t('pharmCircle'),
+          chipBg: const Color(0xFFDDF5E6),
+          chipFg: const Color(0xFF2AA65A),
         ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  Text(
-                    _visitTitle(context.l10n.t('visit')),
-                    style: GoogleFonts.manrope(
-                      fontSize: 18,
-                      height: 1,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.primaryText,
-                    ),
-                  ),
-                  _chip(
-                    text: context.l10n.t('pharmCircle'),
-                    bg: const Color(0xFFDDF5E6),
-                    fg: const Color(0xFF2AA65A),
-                  ),
-                ],
-              ),
-            ),
-            GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryBg,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.close_rounded,
-                  color: AppColors.secondaryText,
-                  size: 20,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Text(
           visit.org,
           style: GoogleFonts.manrope(
@@ -446,62 +400,14 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Center(
-          child: Container(
-            width: 42,
-            height: 4,
-            margin: const EdgeInsets.only(bottom: 14),
-            decoration: BoxDecoration(
-              color: AppColors.border,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ),
+        _dialogHeader(
+          context,
+          title: _visitTitle(context.l10n.t('order')),
+          chipText: context.l10n.t('bron'),
+          chipBg: const Color(0xFFDDF5E6),
+          chipFg: const Color(0xFF2AA65A),
         ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  Text(
-                    _visitTitle(context.l10n.t('order')),
-                    style: GoogleFonts.manrope(
-                      fontSize: 18,
-                      height: 1,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.primaryText,
-                    ),
-                  ),
-                  _chip(
-                    text: context.l10n.t('bron'),
-                    bg: const Color(0xFFDDF5E6),
-                    fg: const Color(0xFF2AA65A),
-                  ),
-                ],
-              ),
-            ),
-            GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryBg,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.close_rounded,
-                  color: AppColors.secondaryText,
-                  size: 20,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Text(
           visit.org,
           style: GoogleFonts.manrope(
@@ -748,58 +654,35 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
   }
 
   Widget _buildDefault(BuildContext context) {
+    final (chipText, chipBg, chipFg) = switch (visit.subType) {
+      'group' => (
+        context.l10n.t('groupPresentation'),
+        const Color(0xFFEFE9FF),
+        const Color(0xFF7A63E8),
+      ),
+      'double' => (
+        context.l10n.t('doubleVisit'),
+        const Color(0xFFEAF0FF),
+        const Color(0xFF5B84F4),
+      ),
+      _ => (
+        context.l10n.t('presentation'),
+        const Color(0xFFEAF0FF),
+        const Color(0xFF5B84F4),
+      ),
+    };
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Center(
-          child: Container(
-            width: 42,
-            height: 4,
-            margin: const EdgeInsets.only(bottom: 14),
-            decoration: BoxDecoration(
-              color: AppColors.border,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ),
+        _dialogHeader(
+          context,
+          title: _visitTitle(context.l10n.t('visit')),
+          chipText: chipText,
+          chipBg: chipBg,
+          chipFg: chipFg,
         ),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                _visitTitle(context.l10n.t('visit')),
-                style: GoogleFonts.manrope(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primaryText,
-                ),
-              ),
-            ),
-            IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(
-                Icons.close_rounded,
-                color: AppColors.secondaryText,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        if (visit.subType == 'group') ...[
-          _chip(
-            text: context.l10n.t('groupPresentation'),
-            bg: const Color(0xFFEFE9FF),
-            fg: const Color(0xFF7A63E8),
-          ),
-          const SizedBox(height: 8),
-        ] else ...[
-          _chip(
-            text: context.l10n.t('presentation'),
-            bg: const Color(0xFFEAF0FF),
-            fg: const Color(0xFF5B84F4),
-          ),
-          const SizedBox(height: 8),
-        ],
+        const SizedBox(height: 8),
         Text(
           visit.org,
           style: GoogleFonts.manrope(

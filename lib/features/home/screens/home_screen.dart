@@ -966,7 +966,9 @@ String _localeCode(Locale locale) {
 
 /// Shared fixed height for the home activity / quick-action cards so both
 /// rows line up. Content is single-line (counts, short labels) and ellipsized.
-const double _homeCardHeight = 82;
+// 84 (not 82): the stacked title/value/subtitle text needs ~82px and font
+// ascent/descent rounding pushed it 1px over, causing a RenderFlex overflow.
+const double _homeCardHeight = 84;
 
 class _ActivityCard extends StatelessWidget {
   final String title;
