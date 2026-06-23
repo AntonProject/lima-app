@@ -23,14 +23,11 @@ platform :ios do
       in_house: false,
     )
 
-    # Ensure a distribution certificate exists in the runner keychain and an
-    # App Store provisioning profile exists for the app — both created via the
-    # API key if missing.
-    cert(
-      api_key: api_key,
-      development: false,
-      output_path: "fastlane/certs",
-    )
+    # The distribution certificate is imported into the runner keychain by the
+    # workflow (from the IOS_DIST_CERT_P12_BASE64 secret) — we do NOT call
+    # `cert`, which would try to create a new one and hit Apple's distribution
+    # certificate limit. We only fetch/refresh the App Store provisioning
+    # profile via the API key.
     sigh(
       api_key: api_key,
       app_identifier: APP_IDENTIFIER,

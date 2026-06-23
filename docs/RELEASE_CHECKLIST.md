@@ -134,6 +134,35 @@ GitHub → **Actions → Release → Run workflow** → выбрать `target`:
 - **TestFlight:** билд появляется после обработки; раздать тестерам / отправить
   на ревью — вручную в App Store Connect.
 
+### Ручной аплоад (fallback, если CI недоступен) ✅ проверено 2026-06-23
+
+Запускать **в своём терминале** (не из агента/фона — иначе codesign выбьет
+бесконечный keychain-popup; в GUI-сессии подпись проходит без окон).
+
+**iOS → TestFlight:**
+```sh
+cd /Users/a123/a123-dev/lima
+flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+# → build/ios/ipa/LIMA.ipa
+xcrun altool --upload-app --type ios -f build/ios/ipa/LIMA.ipa \
+  --apiKey 8KKGG6LX7K --apiIssuer 436c2549-a4f7-4dad-99af-59a2773629ea
+# ждём "UPLOAD SUCCEEDED with no errors"
+```
+Ключ `.p8` лежит в `~/.config/lima` / `~/Documents/lima-secrets/AuthKey_8KKGG6LX7K.p8`
+(altool ищет в `~/.appstoreconnect/private_keys/`). Альтернатива — перетащить
+ipa в **Transporter.app**.
+
+**Android → Google Play:**
+```sh
+flutter build appbundle --release   # нужен android/key.properties + keystore
+# → build/app/outputs/bundle/release/app-release.aab
+```
+Залить AAB в Play Console → Внутреннее тестирование (или через
+`android` fastlane lane с service-account JSON).
+
+После загрузки: TestFlight обработает билд (~5–15 мин) → выбрать его в версии
+App Store и **Submit for Review**; в Play — продвинуть в нужную дорожку.
+
 ### Git
 - Перед релизом: коммит с бампом версии, push в `main`.
 - ⚠️ Git-операции (commit / push / tag) выполнять **только по явному запросу**.
