@@ -1,0 +1,3 @@
+app_identifier("uz.lima.lima")
+team_id("5N9G35WULY")
+# App Store Connect auth uses the API key (ASC_* env vars), not Apple ID login.

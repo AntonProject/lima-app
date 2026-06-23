@@ -1,0 +1,32 @@
+# iOS release lane — uploads the IPA that the GitHub Actions workflow has
+# already built with `flutter build ipa --release`.
+#
+# Auth: App Store Connect API key (.p8), provided via env vars written from
+# GitHub secrets in the workflow:
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH (path to the AuthKey_*.p8 file).
+
+default_platform(:ios)
+
+platform :ios do
+  desc "Upload IPA to TestFlight"
+  lane :deploy do |options|
+    # `flutter build ipa` names the file after the app (lima.ipa); glob so a
+    # scheme rename doesn't break the upload.
+    ipa = options[:ipa] || Dir["../build/ios/ipa/*.ipa"].first
+    UI.user_error!("No .ipa found in build/ios/ipa") if ipa.nil?
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_filepath: ENV["ASC_KEY_PATH"],
+      in_house: false,
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: ipa,
+      skip_waiting_for_build_processing: true,
+      skip_submission: true,
+    )
+  end
+end

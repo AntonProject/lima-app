@@ -1,0 +1,27 @@
+# Android release lane — uploads the AAB that the GitHub Actions workflow has
+# already built with `flutter build appbundle --release`.
+#
+# Auth: Google Play service-account JSON. The workflow passes the raw JSON via
+# the SUPPLY_JSON_KEY_DATA env var (read automatically by upload_to_play_store).
+
+default_platform(:android)
+
+platform :android do
+  desc "Upload AAB to Google Play (internal track by default)"
+  lane :deploy do |options|
+    track = options[:track] || "internal"
+    aab = options[:aab] || "../build/app/outputs/bundle/release/app-release.aab"
+
+    upload_to_play_store(
+      track: track,
+      aab: aab,
+      # The build already carries versionCode from pubspec (+N); we only ship
+      # the binary, not store listing/images/changelogs.
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      release_status: "completed",
+    )
+  end
+end

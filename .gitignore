@@ -48,3 +48,17 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Signing / store credentials — NEVER commit these. In CI they come from
+# GitHub Secrets and are written to disk at build time (see docs/CICD.md).
+android/key.properties
+**/*.keystore
+**/*.jks
+**/*.p8
+**/*.p12
+**/*.mobileprovision
+ios/AuthKey_*.p8
+ios/fastlane/report.xml
+android/fastlane/report.xml
+fastlane/report.xml
+**/fastlane/README.md

@@ -1,0 +1,2 @@
+package_name("uz.lima.lima")
+# json_key_data comes from the SUPPLY_JSON_KEY_DATA env var in CI.
