@@ -115,21 +115,22 @@ jobs:
           #    tries automatic signing without a logged-in Xcode account).
           flutter build ios --release --no-codesign
 
-          # 2) Archive with -allowProvisioningUpdates + API key so Xcode itself
-          #    registers/downloads the distribution cert and App Store profile.
+          # 2) Archive WITHOUT signing. Signing during archive defaults to an
+          #    "iOS App Development" profile (needs registered devices) and
+          #    fails on CI. We sign only at export, where method=app-store
+          #    selects the distribution profile.
           xcodebuild archive \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
             -archivePath build/ios/archive/Runner.xcarchive \
-            -allowProvisioningUpdates \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            -authenticationKeyPath "$KEYPATH" \
-            CODE_SIGN_STYLE=Automatic \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
             DEVELOPMENT_TEAM=5N9G35WULY
 
-          # 3) Export a signed App Store IPA.
+          # 3) Export a signed App Store IPA. -allowProvisioningUpdates + the
+          #    API key let Xcode create/download the distribution cert and the
+          #    App Store provisioning profile automatically.
           xcodebuild -exportArchive \
             -archivePath build/ios/archive/Runner.xcarchive \
             -exportOptionsPlist ios/ExportOptions.plist \
