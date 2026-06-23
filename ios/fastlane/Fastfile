@@ -31,10 +31,9 @@ platform :ios do
       development: false,
       output_path: "fastlane/certs",
     )
-    profile_path = sigh(
+    sigh(
       api_key: api_key,
       app_identifier: APP_IDENTIFIER,
-      adhoc: false,
       development: false,
       platform: "ios",
     )
