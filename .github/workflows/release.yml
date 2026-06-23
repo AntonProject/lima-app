@@ -107,23 +107,37 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
-          flutter build ipa --release \
-            --export-options-plist=ios/ExportOptions.plist \
-            || true
-          # Flutter's archive succeeds; the export uses xcodebuild with
-          # -allowProvisioningUpdates so Xcode can register the profile via the
-          # API key. If the one-shot export above didn't produce an ipa, run the
-          # signed export explicitly.
-          if [ -z "$(ls build/ios/ipa/*.ipa 2>/dev/null)" ]; then
-            xcodebuild -exportArchive \
-              -archivePath build/ios/archive/Runner.xcarchive \
-              -exportOptionsPlist ios/ExportOptions.plist \
-              -exportPath build/ios/ipa \
-              -allowProvisioningUpdates \
-              -authenticationKeyID "$ASC_KEY_ID" \
-              -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-              -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
-          fi
+          set -euo pipefail
+          KEYPATH="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+          # 1) Compile the unsigned .app + install pods (no signing — avoids the
+          #    "No Accounts" archive failure that happens when flutter build ipa
+          #    tries automatic signing without a logged-in Xcode account).
+          flutter build ios --release --no-codesign
+
+          # 2) Archive with -allowProvisioningUpdates + API key so Xcode itself
+          #    registers/downloads the distribution cert and App Store profile.
+          xcodebuild archive \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -authenticationKeyPath "$KEYPATH" \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM=5N9G35WULY
+
+          # 3) Export a signed App Store IPA.
+          xcodebuild -exportArchive \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -exportPath build/ios/ipa \
+            -allowProvisioningUpdates \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -authenticationKeyPath "$KEYPATH"
 
       - name: Set up Ruby/Fastlane
         uses: ruby/setup-ruby@v1
