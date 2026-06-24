@@ -1,37 +1,26 @@
-/// Единая точка конфигурации окружения (dev ↔ prod).
+/// Единая точка конфигурации окружения (prod ↔ dev).
 ///
-/// Чтобы переключить приложение с DEV на PROD — поменяй ОДНУ строку:
-/// [isProd] на `true`. Это автоматически меняет и базовый URL API,
-/// и хост для проверки доступности сети.
+/// По умолчанию приложение работает на ПРОДЕ (`crm.lima.uz`): `flutter run`,
+/// релизные сборки и автодеплой идут на прод без каких-либо флагов запуска.
 ///
-/// При желании окружение можно переопределить при сборке без правки кода:
-///   flutter build appbundle --release --dart-define=ENV=prod
-/// (флаг `--dart-define` имеет приоритет над [isProd]).
+/// Когда нужен ТЕСТ на dev (`dev.lima.uz`) — переключается ОДНОЙ строкой в
+/// коде: [_useDev] → `true`. После теста вернуть в `false`. Флаги
+/// `--dart-define` намеренно не используются, чтобы «запустить» = просто
+/// `flutter run`, а окружение определялось только этим файлом.
 class EnvConfig {
   EnvConfig._();
 
-  /// Значение по умолчанию. Прод-домен (crm.lima.uz) включён по умолчанию
-  /// с релиза 1.0.1 — `flutter run` и сборки идут на прод без флага.
-  /// Для dev: `--dart-define=ENV=dev`.
-  static const bool _defaultIsProd = true;
+  /// Единственный переключатель окружения.
+  /// `false` = прод (по умолчанию), `true` = dev (только для теста).
+  static const bool _useDev = false;
 
-  /// Переопределение через --dart-define=ENV=prod|dev (опционально).
-  static const String _envOverride = String.fromEnvironment('ENV');
-
-  /// Итоговый флаг окружения. dart-define важнее дефолта.
-  static bool get isProd {
-    if (_envOverride == 'prod') return true;
-    if (_envOverride == 'dev') return false;
-    return _defaultIsProd;
-  }
-
+  static const String _prodHost = 'crm.lima.uz';
   static const String _devHost = 'dev.lima.uz';
 
-  // Продовый домен API (подтверждён заказчиком): https://crm.lima.uz/api
-  static const String _prodHost = 'crm.lima.uz';
+  static bool get isProd => !_useDev;
 
   /// Базовый хост текущего окружения (без схемы и пути).
-  static String get host => isProd ? _prodHost : _devHost;
+  static String get host => _useDev ? _devHost : _prodHost;
 
   /// Базовый URL REST API.
   static String get apiBaseUrl => 'https://$host/api';

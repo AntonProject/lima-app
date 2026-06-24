@@ -45,7 +45,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 16,
+      version: 18,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -268,7 +268,36 @@ class LocalDatabase {
         UNIQUE(local_plan_id)
       )
     ''');
+
+    await db.execute(_createPendingOrganizationsSql);
   }
+
+  // Offline-created organisations (pharmacies) awaiting push. temp_local_id is
+  // the negative id used in the `organisations` table until the server assigns
+  // a real one (mirrors the pending_doctors flow).
+  static const String _createPendingOrganizationsSql = '''
+      CREATE TABLE IF NOT EXISTS pending_organizations (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        temp_local_id   INTEGER NOT NULL,
+        name            TEXT NOT NULL,
+        inn             TEXT NOT NULL,
+        type_id         INTEGER NOT NULL,
+        region_id       INTEGER NOT NULL,
+        area_id         INTEGER,
+        phone           TEXT,
+        phone2          TEXT,
+        phone3          TEXT,
+        address         TEXT,
+        category_id     INTEGER,
+        hcf_type_id     INTEGER,
+        revision_status TEXT,
+        responsible     TEXT,
+        latitude        REAL,
+        longitude       REAL,
+        created_at      TEXT NOT NULL,
+        UNIQUE(temp_local_id)
+      )
+    ''';
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
@@ -439,6 +468,28 @@ class LocalDatabase {
     }
     if (oldVersion < 16) {
       await _ensureSyncFailureColumns(db);
+    }
+    if (oldVersion < 17) {
+      try {
+        await db.execute(_createPendingOrganizationsSql);
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
+    }
+    if (oldVersion < 18) {
+      // LPU fields on the offline-create queue (added with the LPU form).
+      for (final sql in const [
+        'ALTER TABLE pending_organizations ADD COLUMN phone2 TEXT',
+        'ALTER TABLE pending_organizations ADD COLUMN phone3 TEXT',
+        'ALTER TABLE pending_organizations ADD COLUMN hcf_type_id INTEGER',
+        'ALTER TABLE pending_organizations ADD COLUMN revision_status TEXT',
+      ]) {
+        try {
+          await db.execute(sql);
+        } catch (e) {
+          logSwallowed(e, 'LocalDatabase._onUpgrade');
+        }
+      }
     }
   }
 
@@ -920,6 +971,79 @@ class LocalDatabase {
       whereArgs: [tempId],
     );
     _notifyChanged(['doctors', 'visits']);
+  }
+
+  // ── Offline-created organisations (pharmacies) ────────────────────────────
+
+  /// Inserts a locally-created organisation row (negative temp id) so it shows
+  /// in the list immediately, before the server assigns a real id.
+  Future<void> insertLocalOrganisation(Map<String, dynamic> row) async {
+    await db.insert(
+      'organisations',
+      Map<String, dynamic>.from(row),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    _notifyChanged(['organisations']);
+  }
+
+  Future<void> enqueuePendingOrganization({
+    required int tempLocalId,
+    required String name,
+    required String inn,
+    required int typeId,
+    required int regionId,
+    int? areaId,
+    String? phone,
+    String? phone2,
+    String? phone3,
+    String? address,
+    int? categoryId,
+    int? healthCareFacilityTypeId,
+    String? revisionStatus,
+    String? responsible,
+    double? latitude,
+    double? longitude,
+  }) async {
+    await db.insert('pending_organizations', {
+      'temp_local_id': tempLocalId,
+      'name': name,
+      'inn': inn,
+      'type_id': typeId,
+      'region_id': regionId,
+      'area_id': areaId,
+      'phone': phone,
+      'phone2': phone2,
+      'phone3': phone3,
+      'address': address,
+      'category_id': categoryId,
+      'hcf_type_id': healthCareFacilityTypeId,
+      'revision_status': revisionStatus,
+      'responsible': responsible,
+      'latitude': latitude,
+      'longitude': longitude,
+      'created_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    _notifyChanged(['pending_organizations']);
+  }
+
+  Future<List<Map<String, dynamic>>> getPendingOrganizations() async {
+    return db.query('pending_organizations', orderBy: 'id ASC');
+  }
+
+  Future<void> deletePendingOrganization(int id) async {
+    await db.delete('pending_organizations', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['pending_organizations']);
+  }
+
+  /// Replaces the negative temp id with the server-assigned id once pushed.
+  Future<void> replaceOrganizationTempId(int tempId, int remoteId) async {
+    await db.update(
+      'organisations',
+      {'id': remoteId},
+      where: 'id = ?',
+      whereArgs: [tempId],
+    );
+    _notifyChanged(['organisations']);
   }
 
   // ── Pending org updates queue ─────────────────────────────────────────────

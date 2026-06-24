@@ -1587,6 +1587,165 @@ class RemoteApiService {
     return {'ok': false};
   }
 
+  /// Uzbekistan country code used by the regions endpoint.
+  static const int _uzCountryId = 24;
+
+  /// Regions (oblasts) from GET /dict/common/regions/{countryId}.
+  /// Returns flat rows {id, name}.
+  Future<List<Map<String, dynamic>>> getRegions() async {
+    final rows = await _getListAny([
+      '/api/dict/common/regions/$_uzCountryId',
+      '/dict/common/regions/$_uzCountryId',
+    ]);
+    final out = <Map<String, dynamic>>[];
+    for (final r in rows) {
+      if (r is! Map) continue;
+      final m = Map<String, dynamic>.from(r);
+      final id = _toInt(m['id'] ?? m['region_id']);
+      final name = _firstNonEmpty([m['name'], m['name_ru'], m['title']]);
+      if (id == null || name.isEmpty) continue;
+      out.add({'id': id, 'name': name});
+    }
+    return out;
+  }
+
+  /// Districts (areas) for a region from GET /dict/common/areas/{regionId}.
+  /// Returns rows {id, name, latitude, longitude}.
+  Future<List<Map<String, dynamic>>> getAreas(int regionId) async {
+    final rows = await _getListAny([
+      '/api/dict/common/areas/$regionId',
+      '/dict/common/areas/$regionId',
+    ]);
+    final out = <Map<String, dynamic>>[];
+    for (final r in rows) {
+      if (r is! Map) continue;
+      final m = Map<String, dynamic>.from(r);
+      final id = _toInt(m['id'] ?? m['area_id']);
+      final name = _firstNonEmpty([m['name'], m['name_ru'], m['title']]);
+      if (id == null || name.isEmpty) continue;
+      out.add({
+        'id': id,
+        'name': name,
+        'latitude': m['latitude'],
+        'longitude': m['longitude'],
+      });
+    }
+    return out;
+  }
+
+  /// Organisation categories (A/B/C) from GET /dict/categories.
+  Future<List<Map<String, dynamic>>> getOrgCategories() async {
+    final rows = await _getListAny([
+      '/api/dict/categories',
+      '/dict/categories',
+    ]);
+    final out = <Map<String, dynamic>>[];
+    for (final r in rows) {
+      if (r is! Map) continue;
+      final m = Map<String, dynamic>.from(r);
+      final id = _toInt(m['id'] ?? m['category_id']);
+      final name = _firstNonEmpty([m['name'], m['name_ru'], m['title']]);
+      if (id == null || name.isEmpty) continue;
+      out.add({'id': id, 'name': name});
+    }
+    return out;
+  }
+
+  /// Health-care facility types (Тип ЛПУ) for the LPU form. There is no
+  /// dedicated dictionary endpoint, so we derive the list by probing existing
+  /// LPU organisations per type id, falling back to the verified prod set.
+  Future<List<Map<String, dynamic>>> getHealthcareFacilityTypes() async {
+    const fallback = [
+      {'id': 1, 'name': 'Поликлиника'},
+      {'id': 2, 'name': 'Роддом'},
+      {'id': 3, 'name': 'Санаторий'},
+      {'id': 4, 'name': 'Стационар'},
+      {'id': 5, 'name': 'Стоматология'},
+    ];
+    final out = <Map<String, dynamic>>[];
+    try {
+      for (var id = 1; id <= 8; id++) {
+        final rows = await _getListAny([
+          '/api/dict/organizations?_limit=1&health_care_facility_type_id=$id',
+          '/dict/organizations?_limit=1&health_care_facility_type_id=$id',
+        ]);
+        final maps = rows.whereType<Map>().toList();
+        final first = maps.isEmpty ? null : maps.first;
+        final name = first == null
+            ? ''
+            : _firstNonEmpty([
+                first['health_care_facility_type_name'],
+                first['health_care_facility_type_name_ru'],
+              ]);
+        if (name.isNotEmpty) out.add({'id': id, 'name': name});
+      }
+    } catch (_) {}
+    return out.isNotEmpty ? out : fallback;
+  }
+
+  /// Creates an organisation via POST /dict/organizations/add.
+  /// [typeId]: 1 = pharmacy, 2 = LPU (per prod /dict/organizations/types).
+  Future<int?> createOrganization({
+    required String name,
+    required String inn,
+    required int typeId,
+    required int regionId,
+    int? areaId,
+    String? phone,
+    String? phone2,
+    String? phone3,
+    String? address,
+    int? categoryId,
+    int? healthCareFacilityTypeId,
+    String? revisionStatus,
+    String? responsiblePerson,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final body = <String, dynamic>{
+      'name': name,
+      'inn': inn,
+      'type_id': typeId,
+      'region_id': regionId,
+      'area_id': ?areaId,
+      if (phone != null && phone.isNotEmpty) 'phone': phone,
+      if (phone2 != null && phone2.isNotEmpty) 'phone2': phone2,
+      if (phone3 != null && phone3.isNotEmpty) 'phone3': phone3,
+      if (address != null && address.isNotEmpty) 'address': address,
+      'category_id': ?categoryId,
+      'health_care_facility_type_id': ?healthCareFacilityTypeId,
+      if (revisionStatus != null && revisionStatus.isNotEmpty)
+        'revision_status': revisionStatus,
+      if (responsiblePerson != null && responsiblePerson.isNotEmpty)
+        'responsible_person': responsiblePerson,
+      'latitude': ?latitude,
+      'longitude': ?longitude,
+    };
+    final paths = [
+      '/api/dict/organizations/add',
+      '/dict/organizations/add',
+      '/api/dict/Organizations/add',
+      '/dict/Organizations/add',
+    ];
+    Object? lastError;
+    for (final path in paths) {
+      try {
+        final response = await _api.dio.post(path, data: body);
+        final data = response.data;
+        if (data is Map) {
+          final m = Map<String, dynamic>.from(data);
+          return _toInt(m['id'] ?? m['organization_id'] ?? m['data']?['id']);
+        }
+        if (data is int) return data;
+        return null;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (lastError != null) throw lastError;
+    return null;
+  }
+
   Future<List<ManagerOption>> getManagers() async {
     final endpoints = [
       '/api/Users',
@@ -3585,6 +3744,15 @@ class RemoteApiService {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value.toString());
+  }
+
+  static String _firstNonEmpty(List<dynamic> values) {
+    for (final v in values) {
+      if (v == null) continue;
+      final s = v.toString().trim();
+      if (s.isNotEmpty && s != 'null') return s;
+    }
+    return '';
   }
 
   static int? _progressPercent(int current, int? total) {

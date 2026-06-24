@@ -5,16 +5,17 @@
 
 ---
 
-## 0. Переключение dev → prod (1 место)
+## 0. Окружение: ВСЕГДА прод по умолчанию
 
-Домен окружения вынесен в один файл — `lib/core/config/env_config.dart`.
+Домен вынесен в один файл — `lib/core/config/env_config.dart`. По умолчанию
+**прод** (`crm.lima.uz`): `flutter run`, релизные сборки и автодеплой идут на
+прод без каких-либо флагов. **`--dart-define=ENV=...` больше не используется.**
 
-- Для прод-сборки: поменять `_defaultIsProd` на `true` **либо** собрать с флагом
-  `--dart-define=ENV=prod` (флаг важнее дефолта).
-- Это автоматически меняет и базовый URL API (`https://<host>/api`), и хост
-  DNS-проверки сети. Больше нигде домен не захардкожен.
-- Домены: dev — `dev.lima.uz`, prod — `crm.lima.uz`
-  (prod API: `https://crm.lima.uz/api`).
+- Для теста на dev (`dev.lima.uz`): поменять одну строку
+  `static const bool _useDev = false;` → `true`, после теста вернуть в `false`.
+- Меняет и базовый URL API (`https://<host>/api`), и хост DNS-проверки сети.
+  Больше нигде домен не захардкожен.
+- prod API: `https://crm.lima.uz/api`, dev: `https://dev.lima.uz/api`.
 
 ---
 

@@ -8,6 +8,7 @@ import '../../features/auth/screens/login_screen.dart';
 import '../../features/home/screens/home_screen.dart';
 import '../../features/plan/screens/plan_screen.dart';
 import '../../features/visits/screens/visits_hub_screen.dart';
+import '../../features/visits/screens/add_pharmacy_screen.dart';
 import '../../features/visits/screens/lpu/lpu_detail_screen.dart';
 import '../../features/visits/screens/lpu/lpu_doctor_select_screen.dart';
 import '../../features/visits/screens/lpu/lpu_detailing_screen.dart';
@@ -212,6 +213,22 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _) => const _SystemBackFallback(
           fallbackLocation: '/home',
           child: NotificationsScreen(),
+        ),
+      ),
+
+      // ── Add organisation (pharmacy / LPU) — без shell/навбара ───────────
+      GoRoute(
+        path: '/visits/pharmacy/add',
+        builder: (_, _) => const _SystemBackFallback(
+          fallbackLocation: '/visits',
+          child: AddPharmacyScreen(kind: OrgKind.pharmacy),
+        ),
+      ),
+      GoRoute(
+        path: '/visits/lpu/add',
+        builder: (_, _) => const _SystemBackFallback(
+          fallbackLocation: '/visits',
+          child: AddPharmacyScreen(kind: OrgKind.lpu),
         ),
       ),
 

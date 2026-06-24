@@ -2025,6 +2025,45 @@ class SyncNotifier extends StateNotifier<SyncState> {
         logSwallowed(e, 'Sync.pushToRemote');
       }
 
+      // Flush pending new organizations queue (offline-created pharmacies).
+      try {
+        final pendingOrgs = await _db.getPendingOrganizations();
+        for (final row in pendingOrgs) {
+          final id = row['id'] as int;
+          final tempLocalId = row['temp_local_id'] as int;
+          try {
+            final remoteId = await _remoteApi.createOrganization(
+              name: row['name'] as String,
+              inn: row['inn'] as String,
+              typeId: row['type_id'] as int,
+              regionId: row['region_id'] as int,
+              areaId: (row['area_id'] as num?)?.toInt(),
+              phone: row['phone'] as String?,
+              phone2: row['phone2'] as String?,
+              phone3: row['phone3'] as String?,
+              address: row['address'] as String?,
+              categoryId: (row['category_id'] as num?)?.toInt(),
+              healthCareFacilityTypeId: (row['hcf_type_id'] as num?)?.toInt(),
+              revisionStatus: row['revision_status'] as String?,
+              responsiblePerson: row['responsible'] as String?,
+              latitude: (row['latitude'] as num?)?.toDouble(),
+              longitude: (row['longitude'] as num?)?.toDouble(),
+            );
+            if (remoteId != null) {
+              await _db.replaceOrganizationTempId(tempLocalId, remoteId);
+            }
+            // Drop the queue row on success even if the server didn't echo an
+            // id — the org was created; the next pull reconciles real data.
+            await _db.deletePendingOrganization(id);
+          } catch (e) {
+            // Keep in queue for next sync attempt.
+            logSwallowed(e, 'Sync.pushPendingOrganization#$id');
+          }
+        }
+      } catch (e) {
+        logSwallowed(e, 'Sync.pushToRemote');
+      }
+
       // Flush pending planned-visit submissions. Rows survive transient
       // failures (network, 5xx) and get retried on the next push/reconcile.
       // 4xx validation errors drop the row inside _pushPendingPlans().

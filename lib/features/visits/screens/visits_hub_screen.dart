@@ -402,36 +402,71 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                         onChanged: _onTabChange,
                       ),
                       const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _searchCtrl,
-                        onChanged: _onQueryChange,
-                        decoration: InputDecoration(
-                          hintText: _isLpu
-                              ? context.l10n.t('searchLpu')
-                              : context.l10n.t('searchPharmacy'),
-                          prefixIcon: const Icon(
-                            Icons.search_rounded,
-                            color: AppColors.hintText,
+                      IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _searchCtrl,
+                              onChanged: _onQueryChange,
+                              decoration: InputDecoration(
+                                hintText: _isLpu
+                                    ? context.l10n.t('searchLpu')
+                                    : context.l10n.t('searchPharmacy'),
+                                prefixIcon: const Icon(
+                                  Icons.search_rounded,
+                                  color: AppColors.hintText,
+                                ),
+                                suffixIcon: _query.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(
+                                          Icons.close_rounded,
+                                          color: AppColors.hintText,
+                                          size: 18,
+                                        ),
+                                        onPressed: () {
+                                          setState(() => _query = '');
+                                          _searchCtrl.clear();
+                                          final pos = _lastNearbyPosition;
+                                          if (_nearbyMode && pos != null) {
+                                            _loadNearbyForPosition(pos);
+                                          } else {
+                                            _load();
+                                          }
+                                        },
+                                      )
+                                    : null,
+                              ),
+                            ),
                           ),
-                          suffixIcon: _query.isNotEmpty
-                              ? IconButton(
-                                  icon: const Icon(
-                                    Icons.close_rounded,
-                                    color: AppColors.hintText,
-                                    size: 18,
-                                  ),
-                                  onPressed: () {
-                                    setState(() => _query = '');
-                                    _searchCtrl.clear();
-                                    final pos = _lastNearbyPosition;
-                                    if (_nearbyMode && pos != null) {
-                                      _loadNearbyForPosition(pos);
-                                    } else {
-                                      _load();
-                                    }
-                                  },
-                                )
-                              : null,
+                          // Org creation (web parity): "+" opens the add form
+                          // for the active tab — ЛПУ or Аптека.
+                          const SizedBox(width: 8),
+                          AppTapScale(
+                            pressedScale: 0.92,
+                            onTap: () async {
+                              final created = await context.push<bool>(
+                                _isLpu
+                                    ? '/visits/lpu/add'
+                                    : '/visits/pharmacy/add',
+                              );
+                              if (created == true && mounted) _load();
+                            },
+                            child: Container(
+                              width: 52,
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.add_rounded,
+                                color: Colors.white,
+                                size: 26,
+                              ),
+                            ),
+                          ),
+                          ],
                         ),
                       ),
                       const SizedBox(height: 8),
