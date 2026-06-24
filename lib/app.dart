@@ -78,7 +78,7 @@ class _LimaAppState extends ConsumerState<LimaApp> with WidgetsBindingObserver {
     });
 
     return MaterialApp.router(
-      title: 'LIMA',
+      title: 'LIMA CRM',
       theme: AppTheme.light,
       routerConfig: router,
       locale: locale,
