@@ -1309,12 +1309,14 @@ class SyncNotifier extends StateNotifier<SyncState> {
     // Planned visits — convert PlannedVisit model → DB row
     try {
       final planned = <Map<String, dynamic>>[];
+      var anyPlanFetchOk = false;
       for (final fn in [
         _remoteApi.getCurrentVisitPlans,
         _remoteApi.getVisitPlans,
       ]) {
         try {
           final items = await fn();
+          anyPlanFetchOk = true;
           for (final pv in items) {
             final row = _plannedVisitToRow(pv);
             final key = row['remote_id'];
@@ -1329,6 +1331,17 @@ class SyncNotifier extends StateNotifier<SyncState> {
       if (planned.isNotEmpty) {
         await _db.upsertPlannedVisits(planned);
         plannedVisitsCount = planned.length;
+      }
+      // Reconcile: drop server-origin local plans the API no longer returns
+      // (deleted/expired server-side). Only when a fetch actually succeeded —
+      // a network failure must not wipe the local cache. Locally-created
+      // (un-pushed) plans have no remote_id and are preserved.
+      if (anyPlanFetchOk) {
+        final serverIds = planned
+            .map((e) => (e['remote_id'] as num?)?.toInt())
+            .whereType<int>()
+            .toSet();
+        await _db.reconcileServerPlannedVisits(serverIds);
       }
     } catch (e) {
       logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');

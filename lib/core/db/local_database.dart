@@ -1284,6 +1284,32 @@ class LocalDatabase {
     _notifyChanged(['planned_visits']);
   }
 
+  /// Reconciles server-origin planned visits with the authoritative set from
+  /// the API: deletes local rows that HAVE a remote_id but are no longer
+  /// returned by the server (e.g. plan deleted/expired server-side). Rows
+  /// without a remote_id are locally-created and never deleted here.
+  /// Pass the full set of remote ids the server currently returns (may be
+  /// empty — then all stale server rows are removed).
+  Future<void> reconcileServerPlannedVisits(Set<int> serverRemoteIds) async {
+    final localServerRows = await db.query(
+      'planned_visits',
+      columns: ['remote_id'],
+      where: 'remote_id IS NOT NULL',
+    );
+    final toDelete = <int>[];
+    for (final row in localServerRows) {
+      final rid = (row['remote_id'] as num?)?.toInt();
+      if (rid != null && !serverRemoteIds.contains(rid)) toDelete.add(rid);
+    }
+    if (toDelete.isEmpty) return;
+    final batch = db.batch();
+    for (final rid in toDelete) {
+      batch.delete('planned_visits', where: 'remote_id = ?', whereArgs: [rid]);
+    }
+    await batch.commit(noResult: true);
+    _notifyChanged(['planned_visits']);
+  }
+
   Future<List<Map<String, dynamic>>> getPlannedVisits({
     bool? completedOnly,
   }) async {
