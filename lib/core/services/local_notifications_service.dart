@@ -18,9 +18,12 @@ class LocalNotificationsService {
       FlutterLocalNotificationsPlugin();
   bool _initialized = false;
 
+  // _channelId is the stable technical id — do NOT rename it (that would create
+  // a second channel on devices that already have the old one). Only the
+  // human-visible name/description change.
   static const String _channelId = 'lima_general';
-  static const String _channelName = 'LIMA';
-  static const String _channelDescription = 'LIMA notifications';
+  static const String _channelName = 'LIMA CRM';
+  static const String _channelDescription = 'LIMA CRM notifications';
 
   Future<void> init() async {
     if (_initialized) return;
