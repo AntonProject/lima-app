@@ -388,7 +388,12 @@ class RemoteApiService {
     doctorNamesCsv ??= _toString(m['doctor_name'] ?? m['doctor_full_name']);
 
     final assignedBy =
-        _toString(medRepObj['name'] ?? m['assigned_by'] ?? m['manager_name']) ??
+        _toString(
+          medRepObj['name'] ??
+              m['medrep_name'] ??
+              m['assigned_by'] ??
+              m['manager_name'],
+        ) ??
         '';
 
     final city = _toString(
@@ -1337,7 +1342,10 @@ class RemoteApiService {
     );
   }
 
-  Future<List<PlannedVisit>> getCurrentVisitPlans([DateTime? date]) async {
+  Future<List<PlannedVisit>> getCurrentVisitPlans([
+    DateTime? date,
+    int? ownerUserId,
+  ]) async {
     final d = date ?? DateTime.now();
     final dateStr =
         '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -1345,7 +1353,29 @@ class RemoteApiService {
       '/api/Visits/plans/current',
       queryParameters: {'date': dateStr},
     );
-    return rows.map(_mapPlannedVisit).whereType<PlannedVisit>().toList();
+    return _filterPlansByOwner(rows, ownerUserId)
+        .map(_mapPlannedVisit)
+        .whereType<PlannedVisit>()
+        .toList();
+  }
+
+  /// Keeps only plans belonging to [ownerUserId] (the logged-in medrep). The
+  /// `/visits/plans` endpoint returns other reps' plans too — the web filters
+  /// them out, so the app must as well. When [ownerUserId] is null, or a row
+  /// has no medrep id, the row is kept (fail-open).
+  static List<dynamic> _filterPlansByOwner(List<dynamic> rows, int? ownerUserId) {
+    if (ownerUserId == null) return rows;
+    return rows.where((raw) {
+      if (raw is! Map) return false;
+      final m = Map<String, dynamic>.from(raw);
+      final medrep = m['medrep'];
+      final repId = _toInt(
+        (medrep is Map ? medrep['id'] : null) ??
+            m['medrep_id'] ??
+            m['medical_rep_id'],
+      );
+      return repId == null || repId == ownerUserId;
+    }).toList();
   }
 
   /// Returns plans for [date] already mapped to local DB row format.
@@ -1363,9 +1393,12 @@ class RemoteApiService {
         .toList();
   }
 
-  Future<List<PlannedVisit>> getVisitPlans() async {
+  Future<List<PlannedVisit>> getVisitPlans([int? ownerUserId]) async {
     final rows = await _getListAny(['/visits/plans', '/api/Visits/plans']);
-    return rows.map(_mapPlannedVisit).whereType<PlannedVisit>().toList();
+    return _filterPlansByOwner(rows, ownerUserId)
+        .map(_mapPlannedVisit)
+        .whereType<PlannedVisit>()
+        .toList();
   }
 
   /// Returns per-day visit counts for the month calendar from GET /api/Visits/plans/month.

@@ -1306,16 +1306,21 @@ class SyncNotifier extends StateNotifier<SyncState> {
       logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
     }
 
-    // Planned visits — convert PlannedVisit model → DB row
+    // Planned visits — convert PlannedVisit model → DB row.
+    // Filter by the logged-in medrep: /visits/plans returns OTHER reps' plans
+    // too (the web hides them), so pass the owner id to drop foreign plans.
     try {
+      final owner = await _db.getCurrentUserOwner();
+      final ownerId = owner.userId;
       final planned = <Map<String, dynamic>>[];
       var anyPlanFetchOk = false;
-      for (final fn in [
-        _remoteApi.getCurrentVisitPlans,
-        _remoteApi.getVisitPlans,
-      ]) {
+      final fetches = <Future<List<PlannedVisit>>>[
+        _remoteApi.getCurrentVisitPlans(null, ownerId),
+        _remoteApi.getVisitPlans(ownerId),
+      ];
+      for (final f in fetches) {
         try {
-          final items = await fn();
+          final items = await f;
           anyPlanFetchOk = true;
           for (final pv in items) {
             final row = _plannedVisitToRow(pv);
