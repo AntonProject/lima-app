@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -13,6 +14,7 @@ import '../../../core/network/remote_api_service.dart';
 import '../../../core/providers/connectivity_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
+import '../../auth/providers/auth_provider.dart';
 
 /// Organisation kind for the create form. Pharmacy and LPU share the same
 /// screen; LPU adds revision status, facility type and multiple phones, and
@@ -99,9 +101,39 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
         if (_isLpu && results.length > 2) _facilityTypes = results[2];
         _loadingDicts = false;
       });
+      _prefillUserRegion();
     } catch (_) {
       if (!mounted) return;
       setState(() => _loadingDicts = false);
+    }
+  }
+
+  /// Pre-selects the user's own region (from profile) so the field starts
+  /// filled — matching the web form. Matches by region id, then by name.
+  void _prefillUserRegion() {
+    if (_regionId != null || _regions.isEmpty) return;
+    final user = ref.read(authProvider).user;
+    if (user == null) return;
+    Map<String, dynamic>? match;
+    if (user.regionId != null) {
+      for (final r in _regions) {
+        if ((r['id'] as num?)?.toInt() == user.regionId) {
+          match = r;
+          break;
+        }
+      }
+    }
+    if (match == null && (user.city ?? '').trim().isNotEmpty) {
+      final city = user.city!.trim().toLowerCase();
+      for (final r in _regions) {
+        if ('${r['name']}'.trim().toLowerCase() == city) {
+          match = r;
+          break;
+        }
+      }
+    }
+    if (match != null) {
+      _selectRegion(match['id'] as int, match['name'] as String);
     }
   }
 
@@ -126,9 +158,15 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
       selectedId: _regionId,
     );
     if (picked == null || !mounted) return;
+    await _selectRegion(picked['id'] as int, picked['name'] as String);
+  }
+
+  /// Sets the region and loads its districts. Shared by the picker and the
+  /// profile-based prefill.
+  Future<void> _selectRegion(int id, String name) async {
     setState(() {
-      _regionId = picked['id'] as int;
-      _regionName = picked['name'] as String;
+      _regionId = id;
+      _regionName = name;
       _areaId = null;
       _areaName = null;
       _areaCenter = null;
@@ -139,7 +177,7 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
     try {
       final areas = await ref
           .read(remoteApiServiceProvider)
-          .getAreas(_regionId!);
+          .getAreas(id);
       if (!mounted) return;
       setState(() {
         _areas = areas;
@@ -303,7 +341,9 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
                                   fontWeight: isSelected
                                       ? FontWeight.w700
                                       : FontWeight.w600,
-                                  color: AppColors.primaryText,
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : AppColors.primaryText,
                                 ),
                               ),
                             ),
@@ -340,6 +380,38 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
       _latitude = result.latitude;
       _longitude = result.longitude;
     });
+    // Overwrite the address from the chosen point (reverse geocoding).
+    final addr = await _reverseGeocode(result);
+    if (!mounted) return;
+    if (addr != null && addr.isNotEmpty) {
+      setState(() => _addressCtrl.text = addr);
+    }
+  }
+
+  /// Reverse-geocodes a point to a human address via OSM Nominatim (no key).
+  /// Returns null on any failure — the user can still type the address.
+  Future<String?> _reverseGeocode(LatLng p) async {
+    try {
+      final resp = await Dio().get(
+        'https://nominatim.openstreetmap.org/reverse',
+        queryParameters: {
+          'format': 'jsonv2',
+          'lat': p.latitude,
+          'lon': p.longitude,
+          'accept-language': 'ru',
+        },
+        options: Options(
+          headers: {'User-Agent': 'com.limapharma.limafield'},
+          sendTimeout: const Duration(seconds: 6),
+          receiveTimeout: const Duration(seconds: 6),
+        ),
+      );
+      final data = resp.data;
+      if (data is Map && data['display_name'] is String) {
+        return data['display_name'] as String;
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// Initial map centre, by priority:
@@ -549,16 +621,41 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
                       ),
                       const SizedBox(height: 14),
                       _label(context.l10n.t('addressRequired')),
-                      _textField(
-                        _addressCtrl,
-                        context.l10n.t('selectOnMap'),
-                        trailing: IconButton(
-                          icon: const Icon(
-                            Icons.location_on_outlined,
-                            color: AppColors.primary,
+                      // Manual text input + a separate map button (web parity):
+                      // typing edits the address freely; the map button picks a
+                      // point and overwrites the address from it.
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: _textField(
+                              _addressCtrl,
+                              context.l10n.t('enterAddress'),
+                            ),
                           ),
-                          onPressed: _pickOnMap,
-                        ),
+                          const SizedBox(width: 8),
+                          AppTapScale(
+                            pressedScale: 0.92,
+                            onTap: _pickOnMap,
+                            child: Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: const Color(0xFFD6DEE8),
+                                  width: 0.8,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.map_outlined,
+                                color: AppColors.primary,
+                                size: 22,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       // Facility type — LPU only (optional).
                       if (_isLpu) ...[
@@ -730,6 +827,7 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
     required VoidCallback? onTap,
   }) {
     final enabled = onTap != null;
+    final selected = value != null && value.isNotEmpty;
     return AppTapScale(
       pressedScale: 0.99,
       onTap: onTap,
@@ -739,23 +837,22 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
         decoration: BoxDecoration(
           color: enabled ? Colors.white : const Color(0xFFF6F8FB),
           borderRadius: BorderRadius.circular(12),
+          // Neutral border always — selection is shown by the blue text only.
           border: Border.all(color: const Color(0xFFD6DEE8), width: 0.8),
         ),
         child: Row(
           children: [
             Expanded(
               child: Text(
-                value == null || value.isEmpty ? hint : value,
+                selected ? value : hint,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.manrope(
                   fontSize: 13,
-                  fontWeight: value == null || value.isEmpty
-                      ? FontWeight.w500
-                      : FontWeight.w600,
-                  color: value == null || value.isEmpty
-                      ? AppColors.hintText
-                      : AppColors.primaryText,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  // Selected value uses the normal dark text (like the INN
+                  // field), not blue. Blue is only for the picker dialog.
+                  color: selected ? AppColors.primaryText : AppColors.hintText,
                 ),
               ),
             ),
@@ -846,13 +943,48 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
           const SizedBox(height: 8),
           Align(
             alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _canAddPhone ? _addPhoneField : null,
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: Text(context.l10n.t('addPhone')),
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: AppTapScale(
+              pressedScale: 0.97,
+              onTap: _canAddPhone ? _addPhoneField : null,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    // Blue border when active (text is blue), grey when not.
+                    color: _canAddPhone
+                        ? AppColors.primary
+                        : const Color(0xFFD6DEE8),
+                    width: _canAddPhone ? 1 : 0.8,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.add_rounded,
+                      size: 16,
+                      color: _canAddPhone
+                          ? AppColors.primary
+                          : AppColors.hintText,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      context.l10n.t('addPhone'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: _canAddPhone
+                            ? AppColors.primary
+                            : AppColors.hintText,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -974,13 +1106,17 @@ class _UzPhoneFormatter extends TextInputFormatter {
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    // Collect all digits from the raw input, drop a leading 998 country code.
-    var digits = newValue.text.replaceAll(RegExp(r'\D'), '');
-    if (digits.startsWith('998')) digits = digits.substring(3);
-    if (digits.length > _maxDigitsAfterPrefix) {
-      digits = digits.substring(0, _maxDigitsAfterPrefix);
+    // The "+998" prefix is fixed. All digits are kept as one stream; the first
+    // three (the 998 country code) belong to the prefix, the rest is the
+    // subscriber number. Backspacing inside the prefix yields fewer than 3
+    // digits → tail is empty → field stays "+998" (no "+99899" glitch, and the
+    // 99 never "comes back").
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    var tail = digits.length > 3 ? digits.substring(3) : '';
+    if (tail.length > _maxDigitsAfterPrefix) {
+      tail = tail.substring(0, _maxDigitsAfterPrefix);
     }
-    final text = '$_prefix$digits';
+    final text = '$_prefix$tail';
     return TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: text.length),
