@@ -1,7 +1,5 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
@@ -15,6 +13,7 @@ import '../../../core/providers/connectivity_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import '../../auth/providers/auth_provider.dart';
+import 'yandex_map_picker.dart';
 
 /// Organisation kind for the create form. Pharmacy and LPU share the same
 /// screen; LPU adds revision status, facility type and multiple phones, and
@@ -370,48 +369,19 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
   Future<void> _pickOnMap() async {
     final initial = await _initialMapPoint();
     if (!mounted) return;
-    final result = await Navigator.of(context).push<LatLng>(
+    // Yandex map (WebView): pin fixed at centre, map pans under it, address is
+    // geocoded from the point under the pin — returned together with coords.
+    final result = await Navigator.of(context).push<MapPickResult>(
       MaterialPageRoute(
-        builder: (_) => _MapPickerScreen(initial: initial),
+        builder: (_) => YandexMapPicker(initial: initial),
       ),
     );
     if (result == null || !mounted) return;
     setState(() {
-      _latitude = result.latitude;
-      _longitude = result.longitude;
+      _latitude = result.point.latitude;
+      _longitude = result.point.longitude;
+      if (result.address.isNotEmpty) _addressCtrl.text = result.address;
     });
-    // Overwrite the address from the chosen point (reverse geocoding).
-    final addr = await _reverseGeocode(result);
-    if (!mounted) return;
-    if (addr != null && addr.isNotEmpty) {
-      setState(() => _addressCtrl.text = addr);
-    }
-  }
-
-  /// Reverse-geocodes a point to a human address via OSM Nominatim (no key).
-  /// Returns null on any failure — the user can still type the address.
-  Future<String?> _reverseGeocode(LatLng p) async {
-    try {
-      final resp = await Dio().get(
-        'https://nominatim.openstreetmap.org/reverse',
-        queryParameters: {
-          'format': 'jsonv2',
-          'lat': p.latitude,
-          'lon': p.longitude,
-          'accept-language': 'ru',
-        },
-        options: Options(
-          headers: {'User-Agent': 'com.limapharma.limafield'},
-          sendTimeout: const Duration(seconds: 6),
-          receiveTimeout: const Duration(seconds: 6),
-        ),
-      );
-      final data = resp.data;
-      if (data is Map && data['display_name'] is String) {
-        return data['display_name'] as String;
-      }
-    } catch (_) {}
-    return null;
   }
 
   /// Initial map centre, by priority:
@@ -994,106 +964,6 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
   }
 }
 
-/// Full-screen map: tap to drop a pin, returns the picked [LatLng].
-class _MapPickerScreen extends StatefulWidget {
-  final LatLng initial;
-
-  const _MapPickerScreen({required this.initial});
-
-  @override
-  State<_MapPickerScreen> createState() => _MapPickerScreenState();
-}
-
-class _MapPickerScreenState extends State<_MapPickerScreen> {
-  late LatLng _picked = widget.initial;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          FlutterMap(
-            options: MapOptions(
-              initialCenter: widget.initial,
-              initialZoom: 14,
-              onTap: (_, latlng) => setState(() => _picked = latlng),
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.limapharma.limafield',
-              ),
-              MarkerLayer(
-                markers: [
-                  Marker(
-                    point: _picked,
-                    width: 40,
-                    height: 40,
-                    alignment: Alignment.topCenter,
-                    child: const Icon(
-                      Icons.location_on,
-                      color: Color(0xFFE3494B),
-                      size: 40,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 12,
-            left: 16,
-            right: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.65),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                context.l10n.t('tapMapToPick'),
-                textAlign: TextAlign.center,
-                style: GoogleFonts.manrope(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 48),
-                  ),
-                  child: Text(context.l10n.t('cancel')),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context, _picked),
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(0, 48),
-                  ),
-                  child: Text(context.l10n.t('save')),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 /// Keeps the phone in Uzbek format: a `+998` prefix followed by up to 9 digits
 /// (e.g. `+998901234567`). Strips anything else and caps the length.
