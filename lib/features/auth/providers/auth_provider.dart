@@ -98,6 +98,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         role: _normalizeRole(
           data['role'] ?? data['role_name'] ?? data['user_role'],
         ),
+        roleName: _extractRoleName(data),
         city: _extractCity(data),
         regionId: _extractRegionId(data),
         phone: _extractPhone(data),
@@ -324,6 +325,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
         .toString()
         .trim();
     return raw.isEmpty ? null : raw;
+  }
+
+  /// Human-readable role from the server (e.g. "Директор по маркетингу"),
+  /// shown as-is in the profile. Independent of the normalized [role] used
+  /// for permission checks.
+  static String? _extractRoleName(Map<String, dynamic> data) {
+    for (final key in const ['role_name', 'role_title', 'position', 'role']) {
+      final v = data[key];
+      if (v is String && v.trim().isNotEmpty) {
+        // Skip raw codes like "mp"/"rm"/"admin" — those aren't display names.
+        final low = v.trim().toLowerCase();
+        if (low == 'mp' || low == 'rm' || low == 'admin') continue;
+        return v.trim();
+      }
+    }
+    return null;
   }
 
   static String _normalizeRole(dynamic rawRole) {

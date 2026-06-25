@@ -3,7 +3,8 @@
 class UserModel {
   final int id;
   final String fullName;
-  final String role; // 'mp' | 'rm' | 'admin'
+  final String role; // normalized: 'mp' | 'rm' | 'admin' (for permission logic)
+  final String? roleName; // server's human-readable role (e.g. "Директор по маркетингу")
   final String? city;
   final int? regionId;
   final String? phone;
@@ -17,6 +18,7 @@ class UserModel {
     required this.id,
     required this.fullName,
     required this.role,
+    this.roleName,
     this.city,
     this.regionId,
     this.phone,
@@ -33,21 +35,18 @@ class UserModel {
     return fullName.isNotEmpty ? fullName[0].toUpperCase() : '?';
   }
 
+  /// The role exactly as the server reports it (e.g. "Директор по маркетингу").
+  /// Falls back to a generic label only when the server sent nothing.
   String get roleLabel {
-    switch (role) {
-      case 'admin':
-        return 'Администратор';
-      case 'rm':
-        return 'Региональный менеджер';
-      default:
-        return 'Медицинский представитель';
-    }
+    final name = roleName?.trim() ?? '';
+    return name.isNotEmpty ? name : 'Медицинский представитель';
   }
 
   factory UserModel.fromJson(Map<String, dynamic> json) => UserModel(
     id: json['id'] as int,
     fullName: json['full_name'] as String,
     role: json['role'] as String,
+    roleName: json['role_name'] as String?,
     city: json['city'] as String?,
     regionId: _toInt(json['region_id']),
     phone: json['phone'] as String?,
@@ -62,6 +61,7 @@ class UserModel {
     'id': id,
     'full_name': fullName,
     'role': role,
+    'role_name': roleName,
     'city': city,
     'region_id': regionId,
     'phone': phone,

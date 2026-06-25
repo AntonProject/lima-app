@@ -22,15 +22,11 @@ import 'package:lima/core/models/models.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
-String _roleKey(String? role) {
-  switch (role) {
-    case 'admin':
-      return 'roleAdmin';
-    case 'rm':
-      return 'roleRm';
-    default:
-      return 'roleMp';
-  }
+/// Role label for the profile — the server's exact role name, with a single
+/// localized fallback when the server sent nothing.
+String _roleDisplay(BuildContext context, UserModel? user) {
+  final name = user?.roleName?.trim() ?? '';
+  return name.isNotEmpty ? name : context.l10n.t('roleMp');
 }
 
 String _formatUzPhone(String raw) {
@@ -139,7 +135,7 @@ class ProfileScreen extends ConsumerWidget {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            context.l10n.t(_roleKey(user?.role)),
+                            _roleDisplay(context, user),
                             style: GoogleFonts.manrope(
                               fontSize: 13,
                               color: Colors.white.withValues(alpha: 0.85),
