@@ -26,7 +26,9 @@ class SplashScreen extends ConsumerStatefulWidget {
 class _SplashScreenState extends ConsumerState<SplashScreen> {
   // Cold-start with empty DB needs more time to fetch orgs + drugs + visits.
   static const Duration _firstRunBudget = Duration(seconds: 60);
-  static const Duration _warmBudget = Duration(seconds: 30);
+  // Warm start only awaits the home layer (visits/plans); the rest loads in the
+  // background, so the splash can clear in ~5–10s. This is the safety deadline.
+  static const Duration _warmBudget = Duration(seconds: 12);
 
   double _progress = 0.0;
   String _step = '';
@@ -35,6 +37,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   bool _navigated = false;
   int _dotCount = 0;
   Timer? _dotsTimer;
+  // After this long the "almost done, please wait" reassurance replaces the
+  // animated phase line for the remaining few seconds of a slow load.
+  static const Duration _almostDoneAfter = Duration(seconds: 10);
+  bool _almostDone = false;
+  Timer? _almostDoneTimer;
 
   @override
   void initState() {
@@ -46,6 +53,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         _dotCount = (_dotCount + 1) % 4;
       });
     });
+    _almostDoneTimer = Timer(_almostDoneAfter, () {
+      if (!mounted || _navigated) return;
+      setState(() => _almostDone = true);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       debugPrint('[SPLASH] postFrameCallback');
       _load();
@@ -55,6 +66,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   void dispose() {
     _dotsTimer?.cancel();
+    _almostDoneTimer?.cancel();
     super.dispose();
   }
 
@@ -219,13 +231,23 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             pushPendingFirst: true,
             skipDoctors: true,
             fullRefresh: isFirstRun,
+            // Warm start: only the home layer (visits/plans) is awaited here;
+            // the org directory + drug catalogue keep loading in the background
+            // so the splash clears fast. First run loads everything up front.
+            homeOnly: !isFirstRun,
           )
           .catchError((Object e) {
             debugPrint('[SPLASH] sync error: $e');
           });
       final deadline = Future<void>.delayed(budget);
-      final minDelay = Future<void>.delayed(const Duration(seconds: 5));
-      // Wait for (sync OR deadline) AND minimum 5s so data has time to load.
+      // Warm start clears quickly (home layer only); first run keeps a small
+      // floor so the user sees progress and essential data has time to land.
+      final minDelay = Future<void>.delayed(
+        isFirstRun
+            ? const Duration(seconds: 4)
+            : const Duration(milliseconds: 1200),
+      );
+      // Wait for (sync OR deadline) AND the minimum floor.
       await Future.wait<void>([
         Future.any<void>([syncFuture, deadline]),
         minDelay,
@@ -384,6 +406,18 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                           textAlign: TextAlign.center,
                         );
                       }
+                      // Slow load: after ~10s swap the animated phase line for a
+                      // reassuring "almost done, please wait" message.
+                      if (_almostDone && _loading) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 32),
+                          child: Text(
+                            context.l10n.t('splashAlmostDone'),
+                            style: baseStyle,
+                            textAlign: TextAlign.center,
+                          ),
+                        );
+                      }
                       // Rebuild on sync progress so the dots keep animating,
                       // but show the localized phase text (_step) rather than
                       // syncProvider.message: the latter is set inside the
@@ -443,6 +477,21 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                     ),
                   ],
                 ],
+              ),
+            ),
+            // Always-visible brand thank-you anchored to the bottom.
+            Positioned(
+              left: 24,
+              right: 24,
+              bottom: MediaQuery.of(context).padding.bottom + 24,
+              child: Text(
+                context.l10n.t('splashThankYou'),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
           ],

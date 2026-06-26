@@ -13,6 +13,7 @@ import 'package:lima/features/auth/providers/auth_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import '../../../core/db/local_database.dart';
+import '../../../core/network/remote_api_service.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
 class VisitsHubScreen extends ConsumerStatefulWidget {
@@ -62,6 +63,17 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
   StreamSubscription<Set<String>>? _dbChangesSub;
   final TextEditingController _searchCtrl = TextEditingController();
 
+  // Remote search (mirrors the web's /dict/organizations/find): when online we
+  // also query the server so freshly-created orgs and INN lookups work without
+  // waiting for a full directory resync. Debounced; offline falls back to the
+  // local cache only.
+  Timer? _remoteSearchDebounce;
+  int _remoteSearchGeneration = 0;
+  bool _isRemoteSearching = false;
+  // Server-found orgs not yet in the local cache, keyed by id, merged into the
+  // displayed list for the current query.
+  final Map<int, Map<String, dynamic>> _remoteSearchResults = {};
+
   @override
   void initState() {
     super.initState();
@@ -78,6 +90,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
   @override
   void dispose() {
     _dbChangesSub?.cancel();
+    _remoteSearchDebounce?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -166,12 +179,28 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
           o['name'],
           o['address'],
           o['city'],
+          o['inn'],
         ].whereType<Object>().join(' ').toLowerCase();
         return haystack.contains(query);
       }).toList();
     }
     if (!_allRegions) {
       orgs = orgs.where((o) => _belongsToUserRegion(o, user)).toList();
+    }
+    // Merge in server-found orgs (online search) that aren't in the local cache
+    // — e.g. freshly-created orgs or INN matches. They're already filtered by
+    // the server (query + type + global), so we add any not already present.
+    if (_remoteSearchResults.isNotEmpty && query.isNotEmpty) {
+      final presentIds = orgs
+          .map((o) => (o['id'] as num?)?.toInt())
+          .whereType<int>()
+          .toSet();
+      for (final entry in _remoteSearchResults.entries) {
+        if (presentIds.contains(entry.key)) continue;
+        final o = Map<String, dynamic>.from(entry.value);
+        if (!_allRegions && !_belongsToUserRegion(o, user)) continue;
+        orgs.add(o);
+      }
     }
     orgs.sort((a, b) {
       final aId = (a['id'] as num?)?.toInt() ?? 0;
@@ -224,11 +253,71 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
   void _onQueryChange(String q) {
     setState(() {
       _query = q;
+      // A new query invalidates previous server results.
+      _remoteSearchResults.clear();
       if (!_nearbyMode) _orgs = _buildOrgList();
     });
     final pos = _lastNearbyPosition;
     if (_nearbyMode && pos != null) {
       _loadNearbyForPosition(pos);
+    }
+    _scheduleRemoteSearch(q);
+  }
+
+  /// Debounced server-side search. Online only — offline keeps the local cache.
+  void _scheduleRemoteSearch(String q) {
+    _remoteSearchDebounce?.cancel();
+    final query = q.trim();
+    // Server search adds value for non-trivial queries (names, INN). Short
+    // fragments stay local to avoid hammering the API on every keystroke.
+    if (query.length < 3) {
+      if (_isRemoteSearching) setState(() => _isRemoteSearching = false);
+      return;
+    }
+    _remoteSearchDebounce = Timer(const Duration(milliseconds: 350), () {
+      _runRemoteSearch(query);
+    });
+  }
+
+  Future<void> _runRemoteSearch(String query) async {
+    final generation = ++_remoteSearchGeneration;
+    final wantLpu = _isLpu;
+    if (mounted) setState(() => _isRemoteSearching = true);
+    try {
+      final remote = ref.read(remoteApiServiceProvider);
+      final results = await remote.searchOrganizations(
+        query: query,
+        // type_id: 1 = pharmacy, 2 = LPU (matches the web's find call).
+        typeIds: wantLpu ? const [2] : const [1],
+        global: _allRegions,
+      );
+      // Ignore stale responses (query changed / tab switched mid-flight).
+      if (!mounted ||
+          generation != _remoteSearchGeneration ||
+          query != _query.trim() ||
+          wantLpu != _isLpu) {
+        return;
+      }
+      // Persist found orgs locally so freshly-created ones survive and the next
+      // search/visit can use them offline too.
+      if (results.isNotEmpty) {
+        await ref.read(localDatabaseProvider).upsertOrganisations(results);
+      }
+      if (!mounted || generation != _remoteSearchGeneration) return;
+      setState(() {
+        _isRemoteSearching = false;
+        _remoteSearchResults.clear();
+        for (final o in results) {
+          final id = (o['id'] as num?)?.toInt();
+          if (id != null) _remoteSearchResults[id] = o;
+        }
+        if (!_nearbyMode) _orgs = _buildOrgList();
+      });
+    } catch (_) {
+      // Offline / API error — local results already shown, nothing more to do.
+      if (mounted && generation == _remoteSearchGeneration) {
+        setState(() => _isRemoteSearching = false);
+      }
     }
   }
 
@@ -309,6 +398,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
           o['name'],
           o['address'],
           o['city'],
+          o['inn'],
         ].whereType<Object>().join(' ').toLowerCase();
         return haystack.contains(query);
       }).toList();

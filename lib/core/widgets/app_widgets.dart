@@ -9,6 +9,62 @@ class AppUi {
   static const double cardRadius = 16;
   static const double buttonRadius = 12;
   static const double buttonHeight = 44;
+  // Height of the bottom nav bar (mirrors LimaNavBarLayout.barHeight). Kept here
+  // so shared widgets can position CTAs without importing the shell layer.
+  static const double navBarHeight = 100;
+  // Gap between a floating CTA and the nav bar — standardised on the
+  // "Найти рядом" button the design is based on.
+  static const double ctaNavBarGap = -10;
+}
+
+/// A bottom action button pinned at a consistent height across the app.
+///
+/// The design standard is the "Найти рядом" button: it floats just above the
+/// bottom nav bar with a fixed gap. Use this everywhere a primary bottom action
+/// lives so every screen's button lands at the same height — whether the screen
+/// shows the nav bar ([aboveNavBar] = true) or not (e.g. pushed screens that
+/// have no nav bar, where the button hugs the safe-area with the same visual
+/// gap).
+class StickyBottomButton extends StatelessWidget {
+  final Widget child;
+
+  /// True on screens that display the bottom nav bar (the CTA floats above it).
+  /// False on pushed screens without a nav bar (the CTA hugs the safe area).
+  final bool aboveNavBar;
+
+  /// Horizontal page padding.
+  final double horizontal;
+
+  const StickyBottomButton({
+    super.key,
+    required this.child,
+    this.aboveNavBar = false,
+    this.horizontal = 16,
+  });
+
+  /// `bottom` offset to use when placing this CTA in a [Positioned] above the
+  /// nav bar (matches "Найти рядом").
+  static double positionedBottom(BuildContext context) {
+    return AppUi.navBarHeight +
+        MediaQuery.of(context).padding.bottom +
+        AppUi.ctaNavBarGap;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final safeBottom = MediaQuery.of(context).padding.bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        horizontal,
+        8,
+        horizontal,
+        // No nav bar: keep the same visual gap to the safe area as the
+        // floating variant has to the bar, so the button height is consistent.
+        aboveNavBar ? 8 : safeBottom + 16,
+      ),
+      child: child,
+    );
+  }
 }
 
 /// Modal bottom sheet with consistent keyboard handling:
@@ -720,9 +776,13 @@ class InfoRow extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 12),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                flex: 4,
+              // Label takes only the width it needs, then a small fixed gap, so
+              // the value starts right after it and can use the rest of the row
+              // (fits more text before wrapping).
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
                 child: Text(
                   label,
                   style: GoogleFonts.manrope(
@@ -731,9 +791,8 @@ class InfoRow extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 16),
               Expanded(
-                flex: 6,
                 child: isLink
                     ? GestureDetector(
                         onTap: onTap,
@@ -760,7 +819,7 @@ class InfoRow extends StatelessWidget {
                       )
                     : Text(
                         value,
-                        maxLines: 3,
+                        maxLines: 4,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.end,
                         style: valueTextStyle,

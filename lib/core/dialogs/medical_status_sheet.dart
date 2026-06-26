@@ -63,57 +63,73 @@ class _MedicalStatusSheetState extends State<_MedicalStatusSheet> {
     final bottomPad = MediaQuery.of(context).padding.bottom;
 
     return ConstrainedBox(
-      constraints: BoxConstraints(maxHeight: screenHeight * 0.6 + bottomInset),
+      // Cap at 70% so part of the next card peeks out — a visual hint that the
+      // sheet scrolls. The Save button stays pinned below the scroll area.
+      constraints: BoxConstraints(maxHeight: screenHeight * 0.7 + bottomInset),
       child: Container(
         decoration: const BoxDecoration(
           color: AppColors.secondaryBg,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        padding: EdgeInsets.fromLTRB(16, 16, 16, bottomInset + bottomPad + 16),
-        child: SingleChildScrollView(
-          child: Column(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Drag handle
-            Center(
-              child: Container(
-                width: 36, height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
+            // ── Fixed header ────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Drag handle
+                  Center(
+                    child: Container(
+                      width: 36, height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.drugName,
+                          style: GoogleFonts.manrope(
+                            fontSize: 17, fontWeight: FontWeight.w700,
+                            color: AppColors.primaryText,
+                          ),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: Container(
+                          width: 36, height: 36,
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryBg,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.close_rounded,
+                              color: AppColors.secondaryText, size: 20),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Divider(height: 1, thickness: 0.5, color: AppColors.divider),
+                ],
               ),
             ),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.drugName,
-                    style: GoogleFonts.manrope(
-                      fontSize: 17, fontWeight: FontWeight.w700,
-                      color: AppColors.primaryText,
-                    ),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () => Navigator.pop(context),
-                  child: Container(
-                    width: 36, height: 36,
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryBg,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.close_rounded,
-                        color: AppColors.secondaryText, size: 20),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Divider(height: 1, thickness: 0.5, color: AppColors.divider),
-            const SizedBox(height: 16),
+            // ── Scrollable content ──────────────────────────────────────────
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             ..._statusOptions().map((opt) => _StatusCard(
               icon: opt.$1, iconBg: opt.$2, iconColor: opt.$3,
               title: opt.$4, subtitle: opt.$5, status: opt.$6,
@@ -121,120 +137,168 @@ class _MedicalStatusSheetState extends State<_MedicalStatusSheet> {
               isSelected: _selected == opt.$6,
               onTap: () => setState(() => _selected = opt.$6),
             )),
-            // "Количество лимиков" — only for familiarPrescribes
-            if (_selected == DrugStatus.familiarPrescribes) ...[
-              const SizedBox(height: 4),
-              Text(
-                context.l10n.t('limicCount'),
-                style: GoogleFonts.manrope(
-                  fontSize: 13,
-                  color: AppColors.secondaryText,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: AppColors.primaryBg,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _qtyController,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        onChanged: (v) {
-                          final parsed = int.tryParse(v) ?? 0;
-                          setState(() => _qty = parsed);
-                        },
-                        decoration: const InputDecoration(
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            // "Количество лимиков" — always visible, but only editable for the
+            // first status (familiarPrescribes). Disabled (greyed out) for the
+            // other statuses. Limik count stays optional even when enabled.
+            const SizedBox(height: 4),
+            Builder(
+              builder: (context) {
+                final qtyEnabled =
+                    _selected == DrugStatus.familiarPrescribes;
+                return Opacity(
+                  opacity: qtyEnabled ? 1 : 0.5,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        context.l10n.t('limicCount'),
+                        style: GoogleFonts.manrope(
+                          fontSize: 13,
+                          color: AppColors.secondaryText,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _CounterBtn(
-                          icon: Icons.remove,
-                          onTap: () => _setQty(_qty - 1),
+                      const SizedBox(height: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryBg,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppColors.border),
                         ),
-                        Container(width: 1, height: 24, color: AppColors.border),
-                        _CounterBtn(
-                          icon: Icons.add,
-                          onTap: () => _setQty(_qty + 1),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _qtyController,
+                                enabled: qtyEnabled,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                onChanged: (v) {
+                                  final parsed = int.tryParse(v) ?? 0;
+                                  setState(() => _qty = parsed);
+                                },
+                                decoration: InputDecoration(
+                                  hintText: context.l10n.t('enterLimicCount'),
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 14,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _CounterBtn(
+                                  icon: Icons.remove,
+                                  onTap: qtyEnabled
+                                      ? () => _setQty(_qty - 1)
+                                      : null,
+                                ),
+                                Container(
+                                  width: 1,
+                                  height: 24,
+                                  color: AppColors.border,
+                                ),
+                                _CounterBtn(
+                                  icon: Icons.add,
+                                  onTap: qtyEnabled
+                                      ? () => _setQty(_qty + 1)
+                                      : null,
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            // Comment field — always available, regardless of status.
+            const SizedBox(height: 12),
+            Text(
+              context.l10n.t('comment'),
+              style: GoogleFonts.manrope(
+                fontSize: 13,
+                color: AppColors.secondaryText,
+                fontWeight: FontWeight.w600,
               ),
-            ],
-            // Comment field — always shown
-            if (_selected != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                context.l10n.t('comment'),
-                style: GoogleFonts.manrope(
-                  fontSize: 13,
-                  color: AppColors.secondaryText,
-                  fontWeight: FontWeight.w600,
-                ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.primaryBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
               ),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: AppColors.primaryBg,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: TextField(
-                  controller: _commentController,
-                  maxLines: 3,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: context.l10n.t('enterComment'),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: TextField(
+                controller: _commentController,
+                maxLines: 3,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: context.l10n.t('enterComment'),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
                   ),
                 ),
               ),
-            ],
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _canSave ? () => Navigator.pop(context, _selected) : null,
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 52),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                backgroundColor: AppColors.primary,
-                disabledBackgroundColor: AppColors.primary.withValues(alpha: 0.4),
-                disabledForegroundColor: Colors.white.withValues(alpha: 0.8),
+            ),
+                  ],
+                ),
               ),
-              child: Text(
-                context.l10n.t('saved'),
-                style: GoogleFonts.manrope(
-                  fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white,
+            ),
+            // ── Pinned Save button (always on top of the sheet) ─────────────
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, bottomInset + bottomPad + 16),
+              child: ElevatedButton(
+                onPressed:
+                    _canSave ? () => Navigator.pop(context, _selected) : null,
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 52),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  backgroundColor: AppColors.primary,
+                  disabledBackgroundColor: AppColors.primary.withValues(
+                    alpha: 0.4,
+                  ),
+                  disabledForegroundColor: Colors.white.withValues(alpha: 0.8),
+                ),
+                child: Text(
+                  context.l10n.t('saved'),
+                  style: GoogleFonts.manrope(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
           ],
-          ),
         ),
       ),
     );
   }
 
+  // Status labels + colours match the web detailing dialog 1:1:
+  //   1) green  — С препаратом ознакомлен / Рекомендует        (status_id 4)
+  //   2) yellow — С препаратом ознакомлен / Обдумывает         (status_id 5)
+  //   3) red    — С препаратом не знаком  / Не рекомендует     (status_id 6)
+  //   4) grey   — Ничего из вышеуказанного / Оставить комментарий
   List<(IconData, Color, Color, String, String, DrugStatus)> _statusOptions() => [
     (Icons.check_circle_rounded, const Color(0xFFE8F5E9), AppColors.success,
-        context.l10n.t('familiar'), context.l10n.t('prescribes'), DrugStatus.familiarPrescribes),
+        context.l10n.t('familiar'), context.l10n.t('recommends'), DrugStatus.familiarPrescribes),
     (Icons.remove_circle_rounded, const Color(0xFFFFF8E1), const Color(0xFFFFB300),
-        context.l10n.t('familiar'), context.l10n.t('notPrescribes'), DrugStatus.familiarNotPrescribes),
+        context.l10n.t('familiar'), context.l10n.t('considering'), DrugStatus.familiarNotPrescribes),
     (Icons.cancel_rounded, const Color(0xFFFFEBEE), AppColors.error,
-        context.l10n.t('unfamiliar'), context.l10n.t('notPrescribes'), DrugStatus.unfamiliar),
+        context.l10n.t('unfamiliar'), context.l10n.t('notRecommends'), DrugStatus.unfamiliar),
     (Icons.chat_bubble_rounded, const Color(0xFFF5F5F5), AppColors.secondaryText,
         context.l10n.t('noneAbove'), context.l10n.t('leaveComment'), DrugStatus.other),
   ];
@@ -242,7 +306,7 @@ class _MedicalStatusSheetState extends State<_MedicalStatusSheet> {
 
 class _CounterBtn extends StatelessWidget {
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   const _CounterBtn({required this.icon, required this.onTap});
 
   @override

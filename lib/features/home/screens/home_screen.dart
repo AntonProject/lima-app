@@ -1282,51 +1282,17 @@ class _VisitItem extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.manrope(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.primaryText,
-                          ),
-                        ),
-                      ),
-                      if (id.isNotEmpty) ...[
-                        const SizedBox(width: 8),
-                        Text(
-                          id,
-                          style: GoogleFonts.manrope(
-                            fontSize: 11,
-                            color: AppColors.secondaryText,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusBg,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          localizedStatus,
-                          style: GoogleFonts.manrope(
-                            fontSize: 10,
-                            color: statusFg,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    ],
+                  // Name gets the full first line; the id + status badge move
+                  // down to the date row so long names aren't truncated early.
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.manrope(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primaryText,
+                    ),
                   ),
                   if (!isLpu && !isCircle && firstDrugName.isNotEmpty) ...[
                     const SizedBox(height: 2),
@@ -1385,12 +1351,50 @@ class _VisitItem extends StatelessWidget {
                       ],
                     )
                   else
-                    Text(
-                      '$date  $time',
-                      style: GoogleFonts.manrope(
-                        fontSize: 12,
-                        color: AppColors.secondaryText,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '$date  $time',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.manrope(
+                              fontSize: 12,
+                              color: AppColors.secondaryText,
+                            ),
+                          ),
+                        ),
+                        if (id.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            id,
+                            style: GoogleFonts.manrope(
+                              fontSize: 11,
+                              color: AppColors.secondaryText,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusBg,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            localizedStatus,
+                            style: GoogleFonts.manrope(
+                              fontSize: 10,
+                              color: statusFg,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                 ],
               ),

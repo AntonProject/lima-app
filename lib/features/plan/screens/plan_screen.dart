@@ -530,7 +530,8 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
           Positioned(
             left: 12,
             right: 12,
-            bottom: LimaNavBarLayout.totalBarHeight(context) + 8,
+            // Standardised CTA height — same as the "Найти рядом" button.
+            bottom: LimaNavBarLayout.ctaBottomOffset(context),
             child: AppTapScale(
               pressedScale: 0.97,
               onTap: () => _openCreateVisitSheet(),

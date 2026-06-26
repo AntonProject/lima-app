@@ -2859,6 +2859,51 @@ class RemoteApiService {
     return result;
   }
 
+  /// Full drug catalogue from /api/dict/drugs/bindings.
+  /// This is what the web uses for ЛПУ-detailing and the pharmacy фармкружок —
+  /// it lists every drug binding regardless of stock, unlike the price-list
+  /// (which only returns drugs currently in a warehouse). Bindings carry no
+  /// price/stock, so callers must merge price-list data on top where needed.
+  Future<List<Drug>> getDrugsBindings() async {
+    final rows = await _getListAny([
+      '/api/dict/drugs/bindings',
+      '/dict/drugs/bindings',
+      '/api/dict/Drugs/bindings',
+    ]);
+
+    final seen = <int>{};
+    final result = <Drug>[];
+    for (final raw in rows) {
+      if (raw is! Map) continue;
+      final m = Map<String, dynamic>.from(raw);
+      final drugMap = m['drug'] is Map
+          ? Map<String, dynamic>.from(m['drug'] as Map)
+          : const <String, dynamic>{};
+      final producerMap = m['producer'] is Map
+          ? Map<String, dynamic>.from(m['producer'] as Map)
+          : const <String, dynamic>{};
+
+      // Top-level `id` is the binding id — the value the server expects in
+      // talked_about_drugs[].drug_id. `drug.id` is the dict drug_id.
+      final id = _toInt(m['id']) ?? _toInt(drugMap['id']);
+      final name = _toString(drugMap['name']) ?? _toString(m['name']);
+      if (id == null || name == null || name.isEmpty) continue;
+      if (seen.contains(id)) continue;
+      seen.add(id);
+
+      result.add(
+        Drug(
+          id: id,
+          name: name,
+          manufacturer: _toString(producerMap['name']) ?? '',
+          price: 0,
+          bindingDrugId: _toInt(drugMap['id']),
+        ),
+      );
+    }
+    return result;
+  }
+
   /// Fetches all drug documents from KBase API (paginated).
   /// Returns list of drug_materials rows ready to insert into DB.
   /// Also returns a map of drugId → documentsCount.
@@ -3377,11 +3422,33 @@ class RemoteApiService {
       ),
       'area_id': _toInt(m['area_id'] ?? m['areaId'] ?? _nestedId(m['area'])),
       'inn': _toString(m['inn'] ?? m['org_inn']),
+      'pinfl': _toString(m['pinfl']),
+      'brand': _toString(m['brand']),
       'category': _toString(m['category'] ?? m['category_name'] ?? m['class']),
+      'category_id': _toInt(m['category_id']),
       'responsible': _toString(m['responsible_person'] ?? m['responsible']),
       'phone': _toString(
         m['phone'] ?? m['phone_1'] ?? m['phone1'] ?? m['phone_number'],
       ),
+      'phone2': _toString(m['phone2']),
+      'phone3': _toString(m['phone3']),
+      'name_ru': _toString(m['name_ru']),
+      'type_id': _toInt(m['type_id']),
+      'type_name': _toString(m['type_name']),
+      'region_name': _toString(m['region_name'] ?? _nestedName(m['region'])),
+      'area_name': _toString(m['area_name'] ?? _nestedName(m['area'])),
+      'health_care_facility_type_id': _toInt(m['health_care_facility_type_id']),
+      'health_care_facility_type_name': _toString(
+        m['health_care_facility_type_name'],
+      ),
+      'classification_id': _toInt(m['classification_id']),
+      'classification_name': _toString(m['classification_name']),
+      'med_rep_id': _toInt(m['med_rep_id']),
+      'med_rep_name': _toString(m['med_rep_name']),
+      'visited': (_toBool(m['visited']) ?? false) ? 1 : 0,
+      'is_budget': (_toBool(m['is_budget']) ?? false) ? 1 : 0,
+      'date_create': _toString(m['date_create']),
+      'revision_status': _toString(m['revision_status']),
       'latitude': _toDouble(
         m['latitude'] ?? m['lat'] ?? m['geo_lat'] ?? m['y'],
       ),

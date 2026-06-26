@@ -13,4 +13,12 @@ class LimaNavBarLayout {
   static double scrollBottomPadding(BuildContext context) {
     return totalBarHeight(context) + 24;
   }
+
+  /// Canonical `bottom` offset for a floating CTA that sits just above the nav
+  /// bar (matches the "Найти рядом" button the design is standardised on).
+  /// Use this for any `Positioned` CTA on a screen that shows the nav bar so
+  /// every action button lands at the same height.
+  static double ctaBottomOffset(BuildContext context) {
+    return totalBarHeight(context) - 10;
+  }
 }

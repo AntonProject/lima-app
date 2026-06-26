@@ -28,6 +28,10 @@ enum SyncOperation { pull, fullRefresh, push }
 const _fullPullBootstrapKey = 'full_pull_bootstrap_v4_all_regions_done';
 const _organizationDirectoryBootstrapKey =
     'organization_directory_bootstrap_v1_all_regions_done';
+// Timestamp of the last full organisation dictionary pull, and how often to
+// force one so orgs with sync_id = null (which the delta sync skips) still land.
+const _organizationDirectoryFullPullAtKey = 'organization_directory_full_pull_at';
+const _organizationDirectoryFullPullInterval = Duration(hours: 24);
 const _doctorDirectoryBootstrapKey = 'doctor_directory_bootstrap_v1_done';
 const _doctorDirectoryExpectedTotalKey = 'doctor_directory_expected_total';
 const _doctorDirectoryCursorKey = 'doctor_directory_sync_id';
@@ -534,6 +538,12 @@ class SyncNotifier extends StateNotifier<SyncState> {
     bool fullRefresh = false,
     bool pushPendingFirst = true,
     bool skipDoctors = false,
+    // When true (used on the splash for a fast launch) only the live/home layer
+    // (visits + planned visits) is awaited; the heavier organisation directory
+    // and full drug catalogue continue loading in the background after the user
+    // is already on /home. Ignored on a first run (empty DB) where that data is
+    // needed up front to create visits.
+    bool homeOnly = false,
   }) async {
     if (state.activeOperation != null) return;
     if (_isOffline()) {
@@ -575,9 +585,21 @@ class SyncNotifier extends StateNotifier<SyncState> {
       // ── Parallel layers: live + orgs + drugs ───────────────────────────────
       final orgBootstrapped =
           await _db.getSyncMeta(_organizationDirectoryBootstrapKey) == '1';
+      // The delta sync only returns rows with a sync_id greater than the cursor;
+      // server-side orgs that have sync_id = null (e.g. freshly created) are
+      // never delivered by it. Periodically force a full dictionary pull so such
+      // organisations still land locally even without a first run.
+      final lastFullOrgPull = DateTime.tryParse(
+        await _db.getSyncMeta(_organizationDirectoryFullPullAtKey) ?? '',
+      );
+      final fullOrgPullStale =
+          lastFullOrgPull == null ||
+          DateTime.now().difference(lastFullOrgPull) >
+              _organizationDirectoryFullPullInterval;
       final forceFullOrganizations =
           fullRefresh ||
           !orgBootstrapped ||
+          fullOrgPullStale ||
           initialTotals.lpu < _minimumUsableLpuDirectorySize ||
           initialTotals.pharmacy < _minimumUsablePharmacyDirectorySize;
 
@@ -597,6 +619,68 @@ class SyncNotifier extends StateNotifier<SyncState> {
               });
       final drugsFuture = _syncDrugsAndMaterialsLayer(companyId: companyId);
 
+      // ── Fast home-only path (splash, warm start) ────────────────────────────
+      // Await only the live/home layer and let the heavy directory + catalogue
+      // layers finish in the background so the user reaches /home in ~5–10s.
+      // On a first run (empty DB) we skip this and load everything up front.
+      if (homeOnly && !isFirstRun) {
+        final live = await liveFuture;
+        // Don't drop the directory/catalogue work — keep it running and persist
+        // metadata once it lands, without blocking the splash.
+        unawaited(() async {
+          try {
+            final orgs = await orgsFuture;
+            final drugs = await drugsFuture;
+            if (forceFullOrganizations) {
+              final orgTotalsCheck = await _collectLocalTotals();
+              if (orgTotalsCheck.lpu > 0 && orgTotalsCheck.pharmacy > 0) {
+                await _db.setSyncMeta(_organizationDirectoryBootstrapKey, '1');
+                await _db.setSyncMeta(
+                  _organizationDirectoryFullPullAtKey,
+                  DateTime.now().toIso8601String(),
+                );
+              }
+            }
+            final maxSyncId = _maxSyncId(orgs, const [], const [], drugs.$3);
+            final nextSyncId = [
+              syncId,
+              maxSyncId,
+              await _db.getMaxLocalSyncId(),
+            ].fold<int>(0, (max, value) => value > max ? value : max);
+            if (nextSyncId > 0) {
+              await _db.setSyncMeta('last_sync_id', '$nextSyncId');
+            }
+            final now = DateTime.now();
+            await _db.setSyncMeta('last_pull_at', now.toIso8601String());
+            await _db.setSyncMeta('last_delta_pull_at', now.toIso8601String());
+            await refreshUnsyncedCount();
+          } catch (e) {
+            logSwallowed(e, 'Sync.syncLayeredFromRemote.homeOnlyBackground');
+          }
+        }());
+
+        final unsynced = await _db.unsyncedCount();
+        state = state.copyWith(
+          // skipDoctors is true on the splash → keep the loading label honest
+          // while doctors + directory finish in the background.
+          status: skipDoctors ? SyncStatus.loading : SyncStatus.success,
+          clearProgress: true,
+          clearActiveOperation: !skipDoctors,
+          unsyncedCount: unsynced,
+          message: skipDoctors
+              ? AppI18n.tr('syncLoadingDoctorsRef')
+              : AppI18n.tr('syncDone'),
+          lastGetDebug: {
+            'ok': true,
+            'mode': 'layered_home_only',
+            'live_visits_count': live.visitsCount,
+            'live_planned_visits_count': live.plannedVisitsCount,
+          },
+        );
+        _drainPendingReconcile();
+        return;
+      }
+
       final live = await liveFuture;
       final orgs = await orgsFuture;
       final drugs = await drugsFuture;
@@ -605,6 +689,10 @@ class SyncNotifier extends StateNotifier<SyncState> {
         final orgTotalsCheck = await _collectLocalTotals();
         if (orgTotalsCheck.lpu > 0 && orgTotalsCheck.pharmacy > 0) {
           await _db.setSyncMeta(_organizationDirectoryBootstrapKey, '1');
+          await _db.setSyncMeta(
+            _organizationDirectoryFullPullAtKey,
+            DateTime.now().toIso8601String(),
+          );
         }
       }
 
@@ -765,6 +853,37 @@ class SyncNotifier extends StateNotifier<SyncState> {
     var materialsCount = 0;
     final changedDrugRows = <Map>[];
 
+    // 1) Full catalogue from /dict/drugs/bindings — this is the complete drug
+    //    list the web uses for ЛПУ-detailing and the pharmacy фармкружок. It
+    //    has no price/stock, so it only seeds names/manufacturers. Stored first
+    //    so the price-list pass below can enrich the matching rows.
+    try {
+      final catalogueDrugs = await _remoteApi.getDrugsBindings();
+      if (catalogueDrugs.isNotEmpty) {
+        final now = DateTime.now().toIso8601String();
+        final rows = catalogueDrugs
+            .map(
+              (d) => <String, dynamic>{
+                'id': d.id,
+                'name': d.name,
+                'manufacturer': d.manufacturer,
+                'binding_drug_id': d.bindingDrugId,
+                'updated_at': now,
+              },
+            )
+            .toList();
+        changedDrugRows.addAll(rows);
+        await _db.upsertDrugs(rows);
+        drugsCount = rows.length;
+      }
+    } catch (e) {
+      logSwallowed(e, 'Sync._syncDrugsAndMaterialsLayer.bindings');
+    }
+
+    // 2) Price-list (warehouse stock) — enriches the catalogue rows with real
+    //    price/остатки/current_stock_id needed for брони/заказы. If the
+    //    bindings call above failed (offline/edge), this still populates the
+    //    list on its own, preserving the previous behaviour.
     try {
       final stockDrugs = await _remoteApi.getStockPriceListDrugs();
       if (stockDrugs.isNotEmpty) {
@@ -789,7 +908,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
             .toList();
         changedDrugRows.addAll(rows);
         await _db.upsertDrugs(rows);
-        drugsCount = rows.length;
+        drugsCount = drugsCount == 0 ? rows.length : drugsCount;
       }
     } catch (e) {
       logSwallowed(e, 'Sync._syncDrugsAndMaterialsLayer');
@@ -801,6 +920,11 @@ class SyncNotifier extends StateNotifier<SyncState> {
         await _db.upsertDrugMaterials(docs.materials);
         materialsCount = docs.materials.length;
       }
+      // The /api/Documents fetch above completed, so docs.counts is the full,
+      // authoritative set of drugs that have documents. Clear stale counts
+      // first so drugs that lost their documents drop out of the knowledge base
+      // (which lists drugs with documents_count > 0).
+      await _db.resetAllDrugDocumentsCount();
       for (final e in docs.counts.entries) {
         await _db.updateDrugDocumentsCount(e.key, e.value);
       }
@@ -1140,6 +1264,31 @@ class SyncNotifier extends StateNotifier<SyncState> {
     var materialsCount = 0;
     var cachedFilesCount = 0;
 
+    // Full catalogue (bindings) — keeps the detailing/фармкружок list complete,
+    // not just warehouse stock. Skipped in the lightweight quick refresh.
+    if (!quickOnly) {
+      try {
+        final catalogueDrugs = await _remoteApi.getDrugsBindings();
+        if (catalogueDrugs.isNotEmpty) {
+          final now = DateTime.now().toIso8601String();
+          final rows = catalogueDrugs
+              .map(
+                (d) => <String, dynamic>{
+                  'id': d.id,
+                  'name': d.name,
+                  'manufacturer': d.manufacturer,
+                  'binding_drug_id': d.bindingDrugId,
+                  'updated_at': now,
+                },
+              )
+              .toList();
+          await _db.upsertDrugs(rows);
+        }
+      } catch (e) {
+        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote.bindings');
+      }
+    }
+
     // Price-list drugs — refreshes current_stock_id / binding_drug_id needed for Бронь
     if (!quickOnly) {
       try {
@@ -1362,6 +1511,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
           await _db.upsertDrugMaterials(docs.materials);
           materialsCount = docs.materials.length;
         }
+        // Reset stale counts before re-applying the authoritative set so drugs
+        // without documents drop out of the knowledge base.
+        await _db.resetAllDrugDocumentsCount();
         for (final e in docs.counts.entries) {
           await _db.updateDrugDocumentsCount(e.key, e.value);
         }
@@ -1763,6 +1915,22 @@ class SyncNotifier extends StateNotifier<SyncState> {
     );
 
     try {
+      // Repair & re-queue visits saved by older builds in the legacy
+      // talked_about_drugs format (drug_name/status string) that the server
+      // rejected and parked. Must run before collecting the push queue so the
+      // recovered visits are included in this cycle.
+      try {
+        final repaired = await _db.repairLegacyVisitDrugPayloads();
+        if (repaired > 0) {
+          logSwallowed(
+            'repaired $repaired legacy visit(s)',
+            'Sync.pushToRemote.repair',
+          );
+        }
+      } catch (e) {
+        logSwallowed(e, 'Sync.pushToRemote.repair');
+      }
+
       // Skip visits whose backoff window has not elapsed yet so we don't hammer
       // the server on every reconcile after a transient failure.
       final unsyncedRows = await _db.getVisits(

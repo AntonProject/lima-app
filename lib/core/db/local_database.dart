@@ -45,7 +45,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 18,
+      version: 19,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -61,16 +61,36 @@ class LocalDatabase {
       CREATE TABLE organisations (
         id          INTEGER PRIMARY KEY,
         name        TEXT,
+        name_ru     TEXT,
         address     TEXT,
         type        TEXT,
+        type_id     INTEGER,
+        type_name   TEXT,
         city        TEXT,
         region_id   INTEGER,
+        region_name TEXT,
         district    TEXT,
         area_id     INTEGER,
+        area_name   TEXT,
         inn         TEXT,
+        pinfl       TEXT,
+        brand       TEXT,
         category    TEXT,
+        category_id INTEGER,
         responsible TEXT,
         phone       TEXT,
+        phone2      TEXT,
+        phone3      TEXT,
+        health_care_facility_type_id    INTEGER,
+        health_care_facility_type_name  TEXT,
+        classification_id    INTEGER,
+        classification_name  TEXT,
+        med_rep_id   INTEGER,
+        med_rep_name TEXT,
+        visited      INTEGER DEFAULT 0,
+        is_budget    INTEGER DEFAULT 0,
+        date_create  TEXT,
+        revision_status TEXT,
         latitude    REAL,
         longitude   REAL,
         distance_m  REAL,
@@ -483,6 +503,38 @@ class LocalDatabase {
         'ALTER TABLE pending_organizations ADD COLUMN phone3 TEXT',
         'ALTER TABLE pending_organizations ADD COLUMN hcf_type_id INTEGER',
         'ALTER TABLE pending_organizations ADD COLUMN revision_status TEXT',
+      ]) {
+        try {
+          await db.execute(sql);
+        } catch (e) {
+          logSwallowed(e, 'LocalDatabase._onUpgrade');
+        }
+      }
+    }
+    if (oldVersion < 19) {
+      // Mirror all server organisation fields as real columns (previously only
+      // a subset was promoted; the rest lived in raw_json only).
+      for (final sql in const [
+        'ALTER TABLE organisations ADD COLUMN name_ru TEXT',
+        'ALTER TABLE organisations ADD COLUMN type_id INTEGER',
+        'ALTER TABLE organisations ADD COLUMN type_name TEXT',
+        'ALTER TABLE organisations ADD COLUMN region_name TEXT',
+        'ALTER TABLE organisations ADD COLUMN area_name TEXT',
+        'ALTER TABLE organisations ADD COLUMN pinfl TEXT',
+        'ALTER TABLE organisations ADD COLUMN brand TEXT',
+        'ALTER TABLE organisations ADD COLUMN category_id INTEGER',
+        'ALTER TABLE organisations ADD COLUMN phone2 TEXT',
+        'ALTER TABLE organisations ADD COLUMN phone3 TEXT',
+        'ALTER TABLE organisations ADD COLUMN health_care_facility_type_id INTEGER',
+        'ALTER TABLE organisations ADD COLUMN health_care_facility_type_name TEXT',
+        'ALTER TABLE organisations ADD COLUMN classification_id INTEGER',
+        'ALTER TABLE organisations ADD COLUMN classification_name TEXT',
+        'ALTER TABLE organisations ADD COLUMN med_rep_id INTEGER',
+        'ALTER TABLE organisations ADD COLUMN med_rep_name TEXT',
+        'ALTER TABLE organisations ADD COLUMN visited INTEGER DEFAULT 0',
+        'ALTER TABLE organisations ADD COLUMN is_budget INTEGER DEFAULT 0',
+        'ALTER TABLE organisations ADD COLUMN date_create TEXT',
+        'ALTER TABLE organisations ADD COLUMN revision_status TEXT',
       ]) {
         try {
           await db.execute(sql);
@@ -2088,6 +2140,15 @@ class LocalDatabase {
             r.remove(stockKey);
           }
         }
+        // Catalogue (bindings) rows carry no price; never overwrite an existing
+        // price-list price with a missing/zero value.
+        final priceVal = r['price'];
+        final priceNum = priceVal is num
+            ? priceVal.toDouble()
+            : double.tryParse('${priceVal ?? ''}');
+        if (priceNum == null || priceNum <= 0) {
+          r.remove('price');
+        }
         final documentsCount = r['documents_count'];
         final documentsCountValue = documentsCount is num
             ? documentsCount.toInt()
@@ -2185,6 +2246,14 @@ class LocalDatabase {
       where: 'id = ?',
       whereArgs: [drugId],
     );
+    _notifyChanged(['drugs']);
+  }
+
+  /// Clears documents_count for every drug. Called before re-applying the fresh
+  /// counts from /api/Documents so drugs that no longer have any documents stop
+  /// appearing in the knowledge base (which filters on documents_count > 0).
+  Future<void> resetAllDrugDocumentsCount() async {
+    await db.update('drugs', {'documents_count': 0});
     _notifyChanged(['drugs']);
   }
 
@@ -2334,6 +2403,121 @@ class LocalDatabase {
       where: 'sync_failed = 1',
       orderBy: 'created_at DESC',
     );
+  }
+
+  /// One-off migration for visits created before the talked_about_drugs payload
+  /// format was fixed. Older builds stored drugs as `{drug_name, status:"..."}`,
+  /// which the server rejects (HTTP 400 "не указан статус"), so those visits got
+  /// parked and never reached the CRM. This rewrites their raw_json to the
+  /// server format `{drug_id, status_id, ...}` and re-queues them for push.
+  /// Returns the number of visits repaired.
+  Future<int> repairLegacyVisitDrugPayloads() async {
+    // Map known drug names → binding id, to recover drug_id for legacy rows.
+    final drugRows = await db.query('drugs', columns: ['id', 'name']);
+    final nameToId = <String, int>{};
+    for (final r in drugRows) {
+      final id = (r['id'] as num?)?.toInt();
+      final name = (r['name'] as String?)?.trim().toLowerCase();
+      if (id != null && name != null && name.isNotEmpty) {
+        nameToId[name] = id;
+      }
+    }
+
+    int statusIdFor(String? legacy) => switch (legacy) {
+      'familiar_prescribes' => 4,
+      'familiar_not_prescribes' => 5,
+      'not_familiar' => 6,
+      'other' => 2,
+      _ => 2,
+    };
+
+    List<dynamic>? convert(dynamic list) {
+      if (list is! List) return null;
+      var changed = false;
+      final out = <dynamic>[];
+      for (final e in list) {
+        if (e is! Map) {
+          out.add(e);
+          continue;
+        }
+        final m = Map<String, dynamic>.from(e);
+        // Already in the new format — leave it.
+        final hasStatusId = m['status_id'] != null;
+        final hasDrugId = m['drug_id'] != null;
+        if (hasStatusId && hasDrugId) {
+          out.add(m);
+          continue;
+        }
+        if (!hasStatusId && m['status'] is String) {
+          m['status_id'] = statusIdFor(m['status'] as String?);
+          changed = true;
+        }
+        if (!hasDrugId) {
+          final name = (m['drug_name'] as String?)?.trim().toLowerCase();
+          final id = name == null ? null : nameToId[name];
+          if (id != null) {
+            m['drug_id'] = id;
+            changed = true;
+          }
+        }
+        m.putIfAbsent('ball', () => null);
+        m.putIfAbsent('comment', () => '');
+        m.putIfAbsent('document_ids', () => const <int>[]);
+        out.add(m);
+      }
+      return changed ? out : null;
+    }
+
+    // Candidates: unsynced visits (parked or not) that have a raw_json.
+    final rows = await db.query(
+      'visits',
+      where: 'is_synced = 0 AND raw_json IS NOT NULL AND raw_json != ?',
+      whereArgs: [''],
+    );
+
+    var repaired = 0;
+    for (final row in rows) {
+      final id = (row['id'] as num?)?.toInt();
+      final rawJson = row['raw_json'] as String?;
+      if (id == null || rawJson == null || rawJson.isEmpty) continue;
+      Map<String, dynamic> parsed;
+      try {
+        final decoded = jsonDecode(rawJson);
+        if (decoded is! Map) continue;
+        parsed = Map<String, dynamic>.from(decoded);
+      } catch (_) {
+        continue;
+      }
+
+      var dirty = false;
+      final talked = convert(parsed['talked_about_drugs']);
+      if (talked != null) {
+        parsed['talked_about_drugs'] = talked;
+        dirty = true;
+      }
+      final presentations = convert(parsed['presentations']);
+      if (presentations != null) {
+        parsed['presentations'] = presentations;
+        dirty = true;
+      }
+      if (!dirty) continue;
+
+      await db.update(
+        'visits',
+        {
+          'raw_json': jsonEncode(parsed),
+          // Re-queue: clear the parked flag and backoff so the push loop retries.
+          'sync_failed': 0,
+          'push_attempts': 0,
+          'next_retry_at': null,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      repaired++;
+    }
+    if (repaired > 0) _notifyChanged(['visits']);
+    return repaired;
   }
 
   Future<int> failedVisitsCount() async {

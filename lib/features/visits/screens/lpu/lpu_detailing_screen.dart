@@ -17,40 +17,6 @@ import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/core/providers/dashboard_counts_provider.dart';
 
-final _detailingDrugs = [
-  {
-    'name': 'абелла суппозиториивагинальные №7',
-    'manufacturer': 'SHARQ DARMON OOO',
-    'mandatory': 'true',
-  },
-  {
-    'name': 'адамант, таб. покрытые пленочной оболочкой 100мг, №10',
-    'manufacturer': 'KWALITY PHARMACEUTICAL, INDIA',
-    'mandatory': 'false',
-  },
-  {
-    'name':
-        'адеус концентрат для приготовления р-ра для инфузий 5мг/мл 2 мл № 5',
-    'manufacturer': 'BAYAN MEDICAL OOO',
-    'mandatory': 'true',
-  },
-  {
-    'name': 'адэтта раствор для инфузий 100мл',
-    'manufacturer': 'TEMUR MED',
-    'mandatory': 'false',
-  },
-  {
-    'name': 'аккорд раствор для инфузий 50 мл',
-    'manufacturer': 'TEMUR MED',
-    'mandatory': 'false',
-  },
-  {
-    'name': 'аксона раствор для инфузий 0.3 мг/мл 100 мл',
-    'manufacturer': 'TEMUR MED',
-    'mandatory': 'false',
-  },
-];
-
 class LpuDetailingScreen extends ConsumerStatefulWidget {
   final int orgId;
   final int doctorId;
@@ -78,6 +44,9 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
   final Map<String, DrugStatus> _statuses = {};
   List<Map<String, dynamic>> _doctors = [];
   bool _actionLocked = false;
+  // Real drugs loaded from the local DB (was a hardcoded 6-item list before).
+  // Each: {name, manufacturer}.
+  List<Map<String, String>> _drugs = [];
   // drugName → {id, documents_count}
   final Map<String, Map<String, dynamic>> _drugDbData = {};
   final InAppNotificationsService _notificationsService =
@@ -94,7 +63,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
     return [widget.doctorId];
   }
 
-  List<Map<String, String>> get _filtered => _detailingDrugs
+  List<Map<String, String>> get _filtered => _drugs
       .where((d) => d['name']!.toLowerCase().contains(_query.toLowerCase()))
       .toList();
 
@@ -115,16 +84,24 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
         .map((e) => Map<String, dynamic>.from(e))
         .where((d) => ids.contains((d['id'] as num?)?.toInt()))
         .toList();
-    // Load drug documents_count from DB
+    // Real drugs (the whole catalogue), plus a name→meta map for docs/id.
     final dbDrugs = await db.getDrugs(onlyWithPositivePrice: false);
     final drugMap = <String, Map<String, dynamic>>{};
+    final drugList = <Map<String, String>>[];
     for (final row in dbDrugs) {
-      final n = (row['name'] as String? ?? '').toLowerCase();
-      if (n.isNotEmpty) drugMap[n] = row;
+      final name = (row['name'] as String? ?? '').trim();
+      if (name.isEmpty) continue;
+      drugMap[name.toLowerCase()] = row;
+      drugList.add({
+        'name': name,
+        'manufacturer': (row['manufacturer'] as String? ?? '').trim(),
+      });
     }
+    drugList.sort((a, b) => a['name']!.compareTo(b['name']!));
     if (!mounted) return;
     setState(() {
       _doctors = list;
+      _drugs = drugList;
       _drugDbData
         ..clear()
         ..addAll(drugMap);
@@ -200,11 +177,22 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
       // appears in offline history/home and can be synced later.
       try {
         final presentations = selectedDrugs.map((name) {
-          final meta = _detailingDrugs.firstWhere(
+          final meta = _drugs.firstWhere(
             (e) => e['name'] == name,
             orElse: () => const <String, String>{},
           );
+          final dbRow = _drugDbData[name.toLowerCase()];
+          final drugId = (dbRow?['id'] as num?)?.toInt();
           final status = _statuses[name];
+          // status_id (server-confirmed): 4=ознакомлен/выписывает,
+          // 5=ознакомлен/не выписывает, 6=не знаком, 2=просто ознакомлен.
+          final statusId = switch (status) {
+            DrugStatus.familiarPrescribes => 4,
+            DrugStatus.familiarNotPrescribes => 5,
+            DrugStatus.unfamiliar => 6,
+            DrugStatus.other => 2,
+            _ => 2,
+          };
           final statusCode = switch (status) {
             DrugStatus.familiarPrescribes => 'familiar_prescribes',
             DrugStatus.familiarNotPrescribes => 'familiar_not_prescribes',
@@ -213,6 +201,14 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
             _ => '',
           };
           return <String, dynamic>{
+            // Server format (matches web): drug_id + status_id + ball/comment/
+            // document_ids. drug_name/manufacturer/status are kept for the
+            // local history UI only.
+            'drug_id': ?drugId,
+            'status_id': statusId,
+            'ball': null,
+            'comment': '',
+            'document_ids': const <int>[],
             'drug_name': name,
             'manufacturer': meta['manufacturer'] ?? '',
             'status': statusCode,

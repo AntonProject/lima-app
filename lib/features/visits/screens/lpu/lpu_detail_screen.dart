@@ -502,7 +502,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     final worksWithUs = _worksWithUs();
     final displayAddress = ((_org?['address'] as String?) ?? widget.orgAddress)
         .trim();
-    final ctaBottom = LimaNavBarLayout.totalBarHeight(context) + 12;
+    final ctaBottom = LimaNavBarLayout.ctaBottomOffset(context);
 
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
@@ -526,6 +526,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                       ),
                       padding: const EdgeInsets.all(16),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Container(
                             width: 48,
@@ -553,58 +554,73 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                                     color: AppColors.primaryText,
                                   ),
                                 ),
-                                if (category != null &&
-                                    category.isNotEmpty) ...[
-                                  const SizedBox(height: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 3,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.iconBgLight,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Text(
-                                      category,
-                                      style: GoogleFonts.manrope(
-                                        fontSize: 11,
-                                        color: AppColors.secondaryText,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
+                                if ((category != null && category.isNotEmpty) ||
+                                    worksWithUs != null) ...[
+                                  const SizedBox(height: 8),
+                                  // Category + status sit below the name and wrap
+                                  // so a long org name never pushes the status
+                                  // badge to float beside the middle of the text.
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: [
+                                      if (category != null &&
+                                          category.isNotEmpty)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 3,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.iconBgLight,
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            category,
+                                            style: GoogleFonts.manrope(
+                                              fontSize: 11,
+                                              color: AppColors.secondaryText,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      if (worksWithUs != null)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: worksWithUs == true
+                                                ? const Color(0xFFDDF5E6)
+                                                : const Color(0xFFFFEEF0),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            worksWithUs == true
+                                                ? context.l10n.t('worksWithUs')
+                                                : context.l10n.t(
+                                                    'notWorksWithUs',
+                                                  ),
+                                            style: GoogleFonts.manrope(
+                                              fontSize: 12,
+                                              color: worksWithUs == true
+                                                  ? const Color(0xFF2AA65A)
+                                                  : AppColors.error,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ],
                               ],
                             ),
                           ),
-                          if (worksWithUs != null) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: worksWithUs == true
-                                    ? const Color(0xFFDDF5E6)
-                                    : const Color(0xFFFFEEF0),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                worksWithUs == true
-                                    ? context.l10n.t('worksWithUs')
-                                    : context.l10n.t('notWorksWithUs'),
-                                style: GoogleFonts.manrope(
-                                  fontSize: 12,
-                                  color: worksWithUs == true
-                                      ? const Color(0xFF2AA65A)
-                                      : AppColors.error,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
                     ),
