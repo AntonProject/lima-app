@@ -1938,46 +1938,61 @@ class RemoteApiService {
     if (lastError != null) throw lastError;
   }
 
+  /// GET /api/dict/doctors/specialization → `[{id, name}]` for the add-doctor
+  /// specialization picker.
+  Future<List<Map<String, dynamic>>> getSpecializations() async {
+    final rows = await _getList('/api/dict/doctors/specialization');
+    return rows
+        .map(
+          (e) => <String, dynamic>{
+            'id': _toInt(e['id']),
+            'name': (e['name'] ?? '').toString(),
+          },
+        )
+        .where((e) => e['id'] != null && (e['name'] as String).isNotEmpty)
+        .toList();
+  }
+
+  /// POST /api/dict/doctors/add — matches the web payload:
+  /// {full_name, phone, specialization_id, organization_id:[id], hobby,
+  ///  interests, birthday}.
   Future<int?> addDoctor({
     required int organizationId,
     required String fullName,
-    required String specialty,
+    required int specializationId,
     String? phone,
+    String? hobby,
+    String? interests,
+    String? birthday,
   }) async {
-    final payloads = <Map<String, dynamic>>[
-      {
-        'organization_id': organizationId,
-        'full_name': fullName,
-        'specialty': specialty,
-        if (phone != null && phone.isNotEmpty) 'phone': phone,
-      },
-      {
-        'org_id': organizationId,
-        'name': fullName,
-        'position': specialty,
-        if (phone != null && phone.isNotEmpty) 'phone': phone,
-      },
-    ];
+    final payload = <String, dynamic>{
+      'full_name': fullName,
+      if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
+      'specialization_id': specializationId,
+      'organization_id': [organizationId],
+      if (hobby != null && hobby.trim().isNotEmpty) 'hobby': hobby.trim(),
+      if (interests != null && interests.trim().isNotEmpty)
+        'interests': interests.trim(),
+      if (birthday != null && birthday.trim().isNotEmpty)
+        'birthday': birthday.trim(),
+    };
     final paths = [
+      '/api/dict/doctors/add',
       '/api/dict/Doctors/add',
-      '/dict/Doctors/add',
-      '/Doctors/add',
-      '/api/Doctors/add',
+      '/dict/doctors/add',
     ];
     Object? lastError;
     for (final path in paths) {
-      for (final payload in payloads) {
-        try {
-          final response = await _api.dio.post(path, data: payload);
-          final map = _extractMap(response.data);
-          return _toInt(
-            map['id'] ??
-                map['doctor_id'] ??
-                (map['doctor'] is Map ? (map['doctor'] as Map)['id'] : null),
-          );
-        } catch (e) {
-          lastError = e;
-        }
+      try {
+        final response = await _api.dio.post(path, data: payload);
+        final map = _extractMap(response.data);
+        return _toInt(
+          map['id'] ??
+              map['doctor_id'] ??
+              (map['doctor'] is Map ? (map['doctor'] as Map)['id'] : null),
+        );
+      } catch (e) {
+        lastError = e;
       }
     }
     if (lastError != null) throw lastError;

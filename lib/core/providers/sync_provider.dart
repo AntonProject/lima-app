@@ -2159,14 +2159,23 @@ class SyncNotifier extends StateNotifier<SyncState> {
           final tempLocalId = row['temp_local_id'] as int;
           final orgId = row['org_id'] as int;
           final fullName = row['full_name'] as String;
-          final specialty = row['specialty'] as String;
+          final specializationId = (row['specialization_id'] as num?)?.toInt();
           final phone = row['phone'] as String?;
+          if (specializationId == null) {
+            // Older queued rows without a specialization can't satisfy the API;
+            // drop them so they don't block the queue forever.
+            await _db.deletePendingDoctor(id);
+            continue;
+          }
           try {
             final remoteId = await _remoteApi.addDoctor(
               organizationId: orgId,
               fullName: fullName,
-              specialty: specialty,
+              specializationId: specializationId,
               phone: phone,
+              hobby: row['hobby'] as String?,
+              interests: row['interests'] as String?,
+              birthday: row['birthday'] as String?,
             );
             if (remoteId != null) {
               await _db.replaceDoctorTempId(tempLocalId, remoteId);

@@ -244,13 +244,17 @@ class LocalDatabase {
 
     await db.execute('''
       CREATE TABLE IF NOT EXISTS pending_doctors (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        temp_local_id INTEGER NOT NULL,
-        org_id        INTEGER NOT NULL,
-        full_name     TEXT NOT NULL,
-        specialty     TEXT NOT NULL,
-        phone         TEXT,
-        created_at    TEXT NOT NULL
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        temp_local_id     INTEGER NOT NULL,
+        org_id            INTEGER NOT NULL,
+        full_name         TEXT NOT NULL,
+        specialty         TEXT NOT NULL,
+        specialization_id INTEGER,
+        phone             TEXT,
+        hobby             TEXT,
+        interests         TEXT,
+        birthday          TEXT,
+        created_at        TEXT NOT NULL
       )
     ''');
 
@@ -622,6 +626,19 @@ class LocalDatabase {
     } catch (e) {
       logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
     }
+    // Full add-doctor payload for the offline queue (matches the web API).
+    for (final col in const [
+      'ALTER TABLE pending_doctors ADD COLUMN specialization_id INTEGER',
+      'ALTER TABLE pending_doctors ADD COLUMN hobby TEXT',
+      'ALTER TABLE pending_doctors ADD COLUMN interests TEXT',
+      'ALTER TABLE pending_doctors ADD COLUMN birthday TEXT',
+    ]) {
+      try {
+        await db.execute(col);
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+      }
+    }
     await _ensureRawAndSyncColumns(db);
     await _ensureDoctorOrganisationTable(db);
     await _ensureVisitRetryColumns(db);
@@ -986,14 +1003,22 @@ class LocalDatabase {
     required int orgId,
     required String fullName,
     required String specialty,
+    int? specializationId,
     String? phone,
+    String? hobby,
+    String? interests,
+    String? birthday,
   }) async {
     await db.insert('pending_doctors', {
       'temp_local_id': tempLocalId,
       'org_id': orgId,
       'full_name': fullName,
       'specialty': specialty,
+      'specialization_id': specializationId,
       'phone': phone,
+      'hobby': hobby,
+      'interests': interests,
+      'birthday': birthday,
       'created_at': DateTime.now().toIso8601String(),
     });
     _notifyChanged(['pending_doctors']);

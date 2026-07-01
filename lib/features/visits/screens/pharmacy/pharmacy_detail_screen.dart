@@ -10,7 +10,6 @@ import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/services/app_actions.dart';
-import 'package:lima/features/auth/providers/auth_provider.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/app_widgets.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
@@ -33,7 +32,6 @@ class PharmacyDetailScreen extends ConsumerStatefulWidget {
 
 class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
   Map<String, dynamic>? _org;
-  bool get _canEditDirectory => ref.read(authProvider).user?.role == 'admin';
 
   Map<String, dynamic> _rawOrg() {
     final raw = _org?['raw_json'] as String?;
@@ -128,15 +126,6 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
   }
 
   Future<void> _openEditOrganizationSheet() async {
-    if (!_canEditDirectory) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.t('editAdminOnly')),
-        ),
-      );
-      return;
-    }
 
     final nameCtrl = TextEditingController(
       text: (_org?['name'] as String?) ?? widget.pharmacyName,
@@ -345,7 +334,6 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canEditDirectory = ref.watch(authProvider).user?.role == 'admin';
     final collections = ref.watch(appCollectionsProvider);
     final isFavorite = collections.favoritePharmacyIds.contains(
       widget.pharmacyId,
@@ -562,9 +550,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
                           child: _ActionBtn(
                             icon: Icons.edit_rounded,
                             label: context.l10n.t('edit'),
-                            onTap: canEditDirectory
-                                ? _openEditOrganizationSheet
-                                : null,
+                            onTap: _openEditOrganizationSheet,
                           ),
                         ),
                       ],

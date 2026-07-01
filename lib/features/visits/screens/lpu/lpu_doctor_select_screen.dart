@@ -11,7 +11,9 @@ import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
-import 'package:lima/features/auth/providers/auth_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+const _specializationsCacheKey = 'cached_specializations_v1';
 
 enum _VisitMode { single, manager }
 
@@ -43,7 +45,6 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
   final Set<String> _selected = {};
   List<Map<String, dynamic>> _doctors = [];
   bool _remoteDoctorsLoaded = false;
-  bool get _canEditDirectory => ref.read(authProvider).user?.role == 'admin';
 
   List<Map<String, dynamic>> get _filtered => _doctors.where((d) {
     final name = (d['full_name'] as String? ?? '').toLowerCase();
@@ -173,95 +174,180 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     return context.l10n.plural(count, 'visits');
   }
 
-  Future<void> _openAddDoctorSheet() async {
-    if (!_canEditDirectory) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.t('addDoctorAdminOnly')),
-        ),
-      );
-      return;
+  /// Cache-first specialization list: returns the cached list immediately and,
+  /// when online, refreshes it from the API and updates the cache so the picker
+  /// keeps working offline after the first successful fetch.
+  Future<List<Map<String, dynamic>>> _loadSpecializations() async {
+    final prefs = await SharedPreferences.getInstance();
+    var list = <Map<String, dynamic>>[];
+    final raw = prefs.getString(_specializationsCacheKey);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        list = (jsonDecode(raw) as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      } catch (_) {}
     }
+    if (!ref.read(isOfflineProvider)) {
+      try {
+        final fresh = await ref
+            .read(remoteApiServiceProvider)
+            .getSpecializations();
+        if (fresh.isNotEmpty) {
+          list = fresh;
+          await prefs.setString(_specializationsCacheKey, jsonEncode(fresh));
+        }
+      } catch (_) {}
+    }
+    return list;
+  }
 
-    final result = await showAppSheet<Map<String, String>>(
+  Future<void> _openAddDoctorSheet() async {
+    final specializations = await _loadSpecializations();
+    if (!mounted) return;
+
+    final nameCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController(text: '+998 ');
+    final hobbyCtrl = TextEditingController();
+    final interestsCtrl = TextEditingController();
+    int? selectedSpecId;
+    String? selectedSpecName;
+    DateTime? birthday;
+
+    final result = await showAppSheet<Map<String, dynamic>>(
       context,
       useRootNavigator: true,
       backgroundColor: AppColors.secondaryBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) {
-        final nameCtrl = TextEditingController();
-        final phoneCtrl = TextEditingController(text: '+998 ');
-        final specialtyCtrl = TextEditingController();
-        final hobbyCtrl = TextEditingController();
-        final interestsCtrl = TextEditingController();
-        final birthdayCtrl = TextEditingController();
-
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            16,
-            16,
-            16,
-            MediaQuery.of(ctx).viewInsets.bottom +
-                MediaQuery.of(ctx).padding.bottom +
-                16,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Text(
-                    context.l10n.t('addDoctor'),
-                    style: GoogleFonts.manrope(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primaryText,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModal) {
+          final canSubmit =
+              nameCtrl.text.trim().isNotEmpty && selectedSpecId != null;
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              MediaQuery.of(ctx).viewInsets.bottom +
+                  MediaQuery.of(ctx).padding.bottom +
+                  16,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      context.l10n.t('addDoctor'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primaryText,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                _field(
+                  context.l10n.t('fullNameField'),
+                  nameCtrl,
+                  onChanged: (_) => setModal(() {}),
+                ),
+                _field(context.l10n.t('phoneNumber'), phoneCtrl),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: DropdownButtonFormField<int>(
+                    initialValue: selectedSpecId,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: context.l10n.t('specialization'),
+                    ),
+                    items: specializations
+                        .map(
+                          (s) => DropdownMenuItem<int>(
+                            value: s['id'] as int,
+                            child: Text(
+                              s['name'] as String,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setModal(() {
+                      selectedSpecId = v;
+                      selectedSpecName = specializations.firstWhere(
+                        (s) => s['id'] == v,
+                        orElse: () => const {'name': ''},
+                      )['name'] as String;
+                    }),
+                  ),
+                ),
+                _field(context.l10n.t('hobby'), hobbyCtrl),
+                _field(context.l10n.t('interests'), interestsCtrl),
+                InkWell(
+                  onTap: () async {
+                    FocusScope.of(ctx).unfocus();
+                    final now = DateTime.now();
+                    final picked = await showDatePicker(
+                      context: ctx,
+                      initialDate: birthday ?? DateTime(now.year - 30),
+                      firstDate: DateTime(1930),
+                      lastDate: now,
+                    );
+                    if (picked != null) setModal(() => birthday = picked);
+                  },
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: context.l10n.t('birthDate'),
+                    ),
+                    child: Text(
+                      birthday == null
+                          ? '—'
+                          : '${birthday!.day.toString().padLeft(2, '0')}.${birthday!.month.toString().padLeft(2, '0')}.${birthday!.year}',
+                      style: GoogleFonts.manrope(
+                        color: birthday == null
+                            ? AppColors.hintText
+                            : AppColors.primaryText,
+                      ),
                     ),
                   ),
-                  const Spacer(),
-                  IconButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
-              _field(context.l10n.t('phoneNumber'), phoneCtrl),
-              _field(context.l10n.t('fullNameField'), nameCtrl),
-              _field(context.l10n.t('position'), specialtyCtrl),
-              _field(context.l10n.t('hobby'), hobbyCtrl),
-              _field(context.l10n.t('interests'), interestsCtrl),
-              _field(context.l10n.t('birthDate'), birthdayCtrl),
-              const SizedBox(height: 12),
-              AppTapScale(
-                pressedScale: 0.97,
-                onTap: () {
-                  if (nameCtrl.text.trim().isEmpty ||
-                      specialtyCtrl.text.trim().isEmpty) {
-                    return;
-                  }
-                  Navigator.pop(ctx, {
-                    'name': nameCtrl.text.trim(),
-                    'phone': phoneCtrl.text.trim(),
-                    'specialty': specialtyCtrl.text.trim(),
-                  });
-                },
-                child: ElevatedButton(
-                  onPressed: null,
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: canSubmit
+                      ? () => Navigator.pop(ctx, {
+                          'name': nameCtrl.text.trim(),
+                          'phone': phoneCtrl.text.trim(),
+                          'specialization_id': selectedSpecId,
+                          'specialization_name': selectedSpecName ?? '',
+                          'hobby': hobbyCtrl.text.trim(),
+                          'interests': interestsCtrl.text.trim(),
+                          'birthday': birthday == null
+                              ? ''
+                              : '${birthday!.year.toString().padLeft(4, '0')}-${birthday!.month.toString().padLeft(2, '0')}-${birthday!.day.toString().padLeft(2, '0')}',
+                        })
+                      : null,
                   style: ElevatedButton.styleFrom(
                     minimumSize: const Size(double.infinity, 44),
-                    disabledBackgroundColor: AppColors.primary,
-                    disabledForegroundColor: Colors.white,
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: AppColors.border,
+                    disabledForegroundColor: AppColors.hintText,
                   ),
                   child: Text(context.l10n.t('addDoctor')),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
+              ],
+            ),
+          );
+        },
+      ),
     );
 
     if (result == null) return;
@@ -270,15 +356,16 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     final db = ref.read(localDatabaseProvider);
     final api = ref.read(remoteApiServiceProvider);
     final now = DateTime.now().toIso8601String();
+    final specId = result['specialization_id'] as int;
 
-    // Генерируем отрицательный temp id (не пересекается с положительными серверными id)
+    // Отрицательный temp id (не пересекается с положительными серверными id).
     final tempId = -(DateTime.now().millisecondsSinceEpoch ~/ 1000);
 
-    // Сначала сохраняем локально, чтобы врач был доступен сразу
+    // Сначала сохраняем локально, чтобы врач был доступен сразу.
     await db.insertDoctor({
       'id': tempId,
       'full_name': result['name'],
-      'specialty': result['specialty'],
+      'specialty': result['specialization_name'],
       'organisation_id': widget.orgId,
       'is_favorite': 0,
       'category': 'C',
@@ -286,38 +373,42 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
       'updated_at': now,
     });
 
-    // Пробуем отправить в API немедленно
+    // Пробуем отправить в API немедленно.
     int? remoteDoctorId;
     try {
       remoteDoctorId = await api.addDoctor(
         organizationId: widget.orgId,
         fullName: result['name'] ?? '',
-        specialty: result['specialty'] ?? '',
+        specializationId: specId,
         phone: result['phone'],
+        hobby: result['hobby'],
+        interests: result['interests'],
+        birthday: result['birthday'],
       );
     } catch (_) {
       remoteDoctorId = null;
     }
 
     if (remoteDoctorId != null) {
-      // Успех — заменяем temp id на реальный
       await db.replaceDoctorTempId(tempId, remoteDoctorId);
     } else {
-      // Оффлайн — кладём в очередь, temp id останется до следующей синхронизации
+      // Оффлайн — в очередь с полным payload; temp id живёт до синхронизации.
       await db.enqueuePendingDoctor(
         tempLocalId: tempId,
         orgId: widget.orgId,
         fullName: result['name'] ?? '',
-        specialty: result['specialty'] ?? '',
+        specialty: result['specialization_name'] ?? '',
+        specializationId: specId,
         phone: result['phone'],
+        hobby: result['hobby'],
+        interests: result['interests'],
+        birthday: result['birthday'],
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              context.l10n.t('doctorSavedLocally'),
-            ),
-            duration: Duration(seconds: 3),
+            content: Text(context.l10n.t('doctorSavedLocally')),
+            duration: const Duration(seconds: 3),
           ),
         );
       }
@@ -326,11 +417,16 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     await _loadDoctors();
   }
 
-  Widget _field(String label, TextEditingController controller) {
+  Widget _field(
+    String label,
+    TextEditingController controller, {
+    ValueChanged<String>? onChanged,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextField(
         controller: controller,
+        onChanged: onChanged,
         decoration: InputDecoration(labelText: label),
       ),
     );
@@ -348,7 +444,8 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canEditDirectory = ref.watch(authProvider).user?.role == 'admin';
+    // Directory editing (add doctor) is no longer gated by role — the server
+    // enforces permissions on the add endpoint.
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
       body: Column(
@@ -371,14 +468,12 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
               }
             },
             trailing: GestureDetector(
-              onTap: canEditDirectory ? _openAddDoctorSheet : null,
+              onTap: _openAddDoctorSheet,
               child: Container(
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: canEditDirectory
-                      ? AppColors.primary
-                      : AppColors.hintText,
+                  color: AppColors.primary,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Icon(Icons.add, color: Colors.white, size: 18),
@@ -537,9 +632,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
         child: Row(
           children: [
             OutlinedButton(
-              onPressed: !canEditDirectory
-                  ? null
-                  : () async {
+              onPressed: () async {
                       final manager = await showManagerSelectDialog(context);
                       if (!mounted) return;
                       if (manager != null) {

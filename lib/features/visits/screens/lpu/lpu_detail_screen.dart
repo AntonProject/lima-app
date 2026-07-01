@@ -10,7 +10,6 @@ import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
-import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
@@ -37,7 +36,6 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
   Map<String, dynamic>? _org;
   final Set<int> _expandedDoctorIds = {};
   bool _remoteDoctorsLoaded = false;
-  bool get _canEditDirectory => ref.read(authProvider).user?.role == 'admin';
 
   Map<String, dynamic> _rawOrg() {
     final raw = _org?['raw_json'] as String?;
@@ -296,15 +294,6 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
   }
 
   Future<void> _openEditOrganizationSheet() async {
-    if (!_canEditDirectory) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.t('editAdminOnly')),
-        ),
-      );
-      return;
-    }
 
     final nameCtrl = TextEditingController(
       text: (_org?['name'] as String?) ?? widget.orgName,
@@ -493,7 +482,6 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canEditDirectory = ref.watch(authProvider).user?.role == 'admin';
     final hasPhone = (_orgPhone() ?? '').trim().isNotEmpty;
     final phone = _orgPhone();
     final inn = _orgInn();
@@ -688,9 +676,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
                           child: _ActionBtn(
                             icon: Icons.edit_rounded,
                             label: context.l10n.t('edit'),
-                            onTap: canEditDirectory
-                                ? _openEditOrganizationSheet
-                                : null,
+                            onTap: _openEditOrganizationSheet,
                           ),
                         ),
                       ],
