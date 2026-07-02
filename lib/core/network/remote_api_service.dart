@@ -1684,9 +1684,8 @@ class RemoteApiService {
     return out;
   }
 
-  /// Health-care facility types (Тип ЛПУ) for the LPU form. There is no
-  /// dedicated dictionary endpoint, so we derive the list by probing existing
-  /// LPU organisations per type id, falling back to the verified prod set.
+  /// Health-care facility types (Тип ЛПУ) for the LPU form, from
+  /// GET /dict/organizations/health-care-facility/types.
   Future<List<Map<String, dynamic>>> getHealthcareFacilityTypes() async {
     const fallback = [
       {'id': 1, 'name': 'Поликлиника'},
@@ -1694,26 +1693,26 @@ class RemoteApiService {
       {'id': 3, 'name': 'Санаторий'},
       {'id': 4, 'name': 'Стационар'},
       {'id': 5, 'name': 'Стоматология'},
+      {'id': 6, 'name': 'Салон красоты'},
     ];
-    final out = <Map<String, dynamic>>[];
     try {
-      for (var id = 1; id <= 8; id++) {
-        final rows = await _getListAny([
-          '/api/dict/organizations?_limit=1&health_care_facility_type_id=$id',
-          '/dict/organizations?_limit=1&health_care_facility_type_id=$id',
-        ]);
-        final maps = rows.whereType<Map>().toList();
-        final first = maps.isEmpty ? null : maps.first;
-        final name = first == null
-            ? ''
-            : _firstNonEmpty([
-                first['health_care_facility_type_name'],
-                first['health_care_facility_type_name_ru'],
-              ]);
-        if (name.isNotEmpty) out.add({'id': id, 'name': name});
+      final rows = await _getListAny([
+        '/api/dict/organizations/health-care-facility/types',
+        '/dict/organizations/health-care-facility/types',
+      ]);
+      final out = <Map<String, dynamic>>[];
+      for (final r in rows) {
+        if (r is! Map) continue;
+        final m = Map<String, dynamic>.from(r);
+        final id = _toInt(m['id']);
+        final name = _firstNonEmpty([m['name'], m['name_ru']]);
+        if (id == null || name.isEmpty) continue;
+        out.add({'id': id, 'name': name});
       }
-    } catch (_) {}
-    return out.isNotEmpty ? out : fallback;
+      return out.isNotEmpty ? out : fallback;
+    } catch (_) {
+      return fallback;
+    }
   }
 
   /// Creates an organisation via POST /dict/organizations/add.

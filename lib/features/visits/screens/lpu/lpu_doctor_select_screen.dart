@@ -9,11 +9,9 @@ import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/dialogs/manager_select_dialog.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
+import 'package:lima/core/providers/form_dictionaries_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
-const _specializationsCacheKey = 'cached_specializations_v1';
 
 enum _VisitMode { single, manager }
 
@@ -174,34 +172,9 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     return context.l10n.plural(count, 'visits');
   }
 
-  /// Cache-first specialization list: returns the cached list immediately and,
-  /// when online, refreshes it from the API and updates the cache so the picker
-  /// keeps working offline after the first successful fetch.
-  Future<List<Map<String, dynamic>>> _loadSpecializations() async {
-    final prefs = await SharedPreferences.getInstance();
-    var list = <Map<String, dynamic>>[];
-    final raw = prefs.getString(_specializationsCacheKey);
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        list = (jsonDecode(raw) as List)
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      } catch (_) {}
-    }
-    if (!ref.read(isOfflineProvider)) {
-      try {
-        final fresh = await ref
-            .read(remoteApiServiceProvider)
-            .getSpecializations();
-        if (fresh.isNotEmpty) {
-          list = fresh;
-          await prefs.setString(_specializationsCacheKey, jsonEncode(fresh));
-        }
-      } catch (_) {}
-    }
-    return list;
-  }
+  /// Cache-first specialization list — see [FormDictionariesNotifier].
+  Future<List<Map<String, dynamic>>> _loadSpecializations() =>
+      ref.read(formDictionariesProvider).specializations();
 
   Future<void> _openAddDoctorSheet() async {
     final specializations = await _loadSpecializations();

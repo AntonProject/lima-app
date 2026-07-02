@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'features/auth/providers/auth_provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/providers/connectivity_provider.dart';
+import 'core/providers/form_dictionaries_provider.dart';
 import 'core/providers/locale_provider.dart';
 import 'core/providers/sync_provider.dart';
 import 'core/router/app_router.dart';
@@ -56,6 +57,7 @@ class _LimaAppState extends ConsumerState<LimaApp> with WidgetsBindingObserver {
     final auth = ref.read(authProvider);
     if (auth.status != AuthStatus.authenticated) return;
     unawaited(ref.read(syncProvider.notifier).reconcileInBackground());
+    unawaited(ref.read(formDictionariesProvider).prefetchAll());
   }
 
   @override

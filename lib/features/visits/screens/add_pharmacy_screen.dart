@@ -10,6 +10,7 @@ import '../../../core/db/local_database.dart';
 import '../../../core/i18n/app_i18n.dart';
 import '../../../core/network/remote_api_service.dart';
 import '../../../core/providers/connectivity_provider.dart';
+import '../../../core/providers/form_dictionaries_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -86,12 +87,12 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
   }
 
   Future<void> _loadDictionaries() async {
-    final api = ref.read(remoteApiServiceProvider);
+    final dicts = ref.read(formDictionariesProvider);
     try {
       final results = await Future.wait([
-        api.getRegions(),
-        api.getOrgCategories(),
-        if (_isLpu) api.getHealthcareFacilityTypes(),
+        dicts.regions(),
+        dicts.orgCategories(),
+        if (_isLpu) dicts.healthcareFacilityTypes(),
       ]);
       if (!mounted) return;
       setState(() {
