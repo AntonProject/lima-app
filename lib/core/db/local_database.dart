@@ -45,7 +45,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 19,
+      version: 20,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -254,7 +254,8 @@ class LocalDatabase {
         hobby             TEXT,
         interests         TEXT,
         birthday          TEXT,
-        created_at        TEXT NOT NULL
+        created_at        TEXT NOT NULL,
+        failed            INTEGER DEFAULT 0
       )
     ''');
 
@@ -545,6 +546,17 @@ class LocalDatabase {
         } catch (e) {
           logSwallowed(e, 'LocalDatabase._onUpgrade');
         }
+      }
+    }
+    if (oldVersion < 20) {
+      // Park pending_doctors rows that can never be pushed (see
+      // markPendingDoctorFailed) instead of deleting them silently.
+      try {
+        await db.execute(
+          'ALTER TABLE pending_doctors ADD COLUMN failed INTEGER DEFAULT 0',
+        );
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
       }
     }
   }
@@ -1024,12 +1036,36 @@ class LocalDatabase {
     _notifyChanged(['pending_doctors']);
   }
 
+  /// Rows still eligible for push (excludes parked/[failed] ones).
   Future<List<Map<String, dynamic>>> getPendingDoctors() async {
-    return db.query('pending_doctors', orderBy: 'id ASC');
+    return db.query(
+      'pending_doctors',
+      where: 'failed IS NULL OR failed = 0',
+      orderBy: 'id ASC',
+    );
+  }
+
+  /// Rows the push loop gave up on — see [markPendingDoctorFailed]. Surfaced
+  /// on the sync screen so the offline-entered doctor isn't silently lost.
+  Future<List<Map<String, dynamic>>> getFailedPendingDoctors() async {
+    return db.query('pending_doctors', where: 'failed = 1', orderBy: 'id ASC');
   }
 
   Future<void> deletePendingDoctor(int id) async {
     await db.delete('pending_doctors', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['pending_doctors']);
+  }
+
+  /// Parks a pending_doctors row that can never satisfy the API (e.g. queued
+  /// before specialization became required) instead of deleting it — keeps
+  /// the offline-entered doctor visible until the user deletes it themselves.
+  Future<void> markPendingDoctorFailed(int id) async {
+    await db.update(
+      'pending_doctors',
+      {'failed': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
     _notifyChanged(['pending_doctors']);
   }
 
@@ -1626,6 +1662,17 @@ class LocalDatabase {
     Map<String, dynamic>? dailyStats,
   }) async {
     final unsynced = await getVisits(unsyncedOnly: true);
+    // Offline-created orgs/doctors (negative id, awaiting push in
+    // pending_organizations/pending_doctors) live only as mirror rows in
+    // these tables — capture them before the wipe so they don't vanish from
+    // the UI until they're actually pushed.
+    final unsyncedOrgs = await db.query(
+      'organisations',
+      where: 'id < 0',
+    );
+    final unsyncedDoctors = replaceDoctors
+        ? await db.query('doctors', where: 'id < 0')
+        : const <Map<String, dynamic>>[];
 
     await db.transaction((txn) async {
       await txn.delete('organisations');
@@ -1649,6 +1696,14 @@ class LocalDatabase {
       }
       await _applyPendingOrgEdits(txn);
 
+      for (final org in unsyncedOrgs) {
+        await txn.insert(
+          'organisations',
+          Map<String, dynamic>.from(org),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
       final favIds = favOrgIds.map((e) => e['id']).whereType<int>().toSet();
       for (final id in favIds) {
         await txn.rawUpdate(
@@ -1663,6 +1718,16 @@ class LocalDatabase {
           Map<String, dynamic>.from(doctor),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+      }
+
+      if (replaceDoctors) {
+        for (final doctor in unsyncedDoctors) {
+          await txn.insert(
+            'doctors',
+            Map<String, dynamic>.from(doctor),
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
       }
 
       for (final link in doctorOrgLinks) {

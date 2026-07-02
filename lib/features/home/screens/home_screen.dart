@@ -207,6 +207,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final syncState = ref.watch(syncProvider);
     final collections = ref.watch(appCollectionsProvider);
     final dashboardCounts = ref.watch(dashboardCountsProvider).valueOrNull;
+    // A local-DB read failure means these counts are a fallback zero, not a
+    // genuinely empty day — show "—" instead of a misleading "0".
+    final dashboardCountsReliable = dashboardCounts?.isReliable ?? true;
     final locale = ref.watch(appLocaleProvider);
     final unreadNotifications =
         ref.watch(unreadNotificationsCountProvider).valueOrNull ?? 0;
@@ -411,17 +414,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           Expanded(
                             child: _ActivityCard(
                               title: context.l10n.t('visitsToday'),
-                              value:
-                                  '${dashboardCounts?.visitsTodayCount ?? 0}',
-                              subtitle: context.l10n.t(
-                                'lpuStats',
-                                args: {
-                                  'lpu':
-                                      '${dashboardCounts?.lpuTodayCount ?? 0}',
-                                  'pharmacy':
-                                      '${dashboardCounts?.pharmacyTodayCount ?? 0}',
-                                },
-                              ),
+                              value: dashboardCountsReliable
+                                  ? '${dashboardCounts?.visitsTodayCount ?? 0}'
+                                  : '—',
+                              subtitle: dashboardCountsReliable
+                                  ? context.l10n.t(
+                                      'lpuStats',
+                                      args: {
+                                        'lpu':
+                                            '${dashboardCounts?.lpuTodayCount ?? 0}',
+                                        'pharmacy':
+                                            '${dashboardCounts?.pharmacyTodayCount ?? 0}',
+                                      },
+                                    )
+                                  : context.l10n.t('dataUnavailable'),
                               iconBg: AppColors.iconBgBlue,
                               icon: LucideIcons.calendarDays,
                               iconColor: AppColors.primary,
@@ -1290,7 +1296,7 @@ class _VisitItem extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.manrope(
                       fontSize: 14,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                       color: AppColors.primaryText,
                     ),
                   ),

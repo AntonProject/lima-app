@@ -572,12 +572,16 @@ class RemoteApiService {
       'comment': comment ?? '',
     };
     const path = '/api/visits/plans';
-    debugPrint('[PLAN PUSH] POST $path body=${jsonEncode(body)}');
+    if (kDebugMode) {
+      debugPrint('[PLAN PUSH] POST $path body=${jsonEncode(body)}');
+    }
     try {
       final response = await _api.dio.post(path, data: body);
-      debugPrint(
-        '[PLAN PUSH] ← ${response.statusCode} ${jsonEncode(response.data)}',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[PLAN PUSH] ← ${response.statusCode} ${jsonEncode(response.data)}',
+        );
+      }
       return {
         'ok': true,
         'path': path,
@@ -594,12 +598,16 @@ class RemoteApiService {
           'data': e.response?.data,
           'message': e.message,
         };
-        debugPrint(
-          '[PLAN PUSH] ← ${e.response?.statusCode} ${jsonEncode(e.response?.data)}',
-        );
+        if (kDebugMode) {
+          debugPrint(
+            '[PLAN PUSH] ← ${e.response?.statusCode} ${jsonEncode(e.response?.data)}',
+          );
+        }
       } else {
         errResponse = {'path': path, 'error': '$e'};
-        debugPrint('[PLAN PUSH] ← ERROR $e');
+        if (kDebugMode) {
+          debugPrint('[PLAN PUSH] ← ERROR $e');
+        }
       }
       throw RemotePushException(
         message: 'Plan push failed',
@@ -1236,8 +1244,20 @@ class RemoteApiService {
       m['income_detailing_id'] ?? m['current_stock_id'],
     );
     final drugId = _toInt(m['drug_id'] ?? m['binding_drug_id']);
-    final qty = _toInt(m['package'] ?? m['quantity'] ?? m['amount']) ?? 1;
-    if (incomeDetailingId == null || drugId == null || qty <= 0) return null;
+    // No silent default here: a missing quantity means malformed cart data,
+    // not "assume 1" — that could submit an order for the wrong amount
+    // without the user ever seeing it. Drop the line and log it so it's
+    // visible on the sync diagnostics screen instead of disappearing.
+    final qty = _toInt(m['package'] ?? m['quantity'] ?? m['amount']);
+    if (incomeDetailingId == null || drugId == null || qty == null || qty <= 0) {
+      if (incomeDetailingId != null && drugId != null && qty == null) {
+        logSwallowed(
+          'drug_id=$drugId missing package/quantity/amount',
+          'RemoteApiService._sanitizeOrderDrug',
+        );
+      }
+      return null;
+    }
 
     final salePrice = _toDouble(m['sale_price'] ?? m['price']);
     final withoutNds =
@@ -2810,7 +2830,7 @@ class RemoteApiService {
       '/api/Stock/price-list',
     ]);
 
-    if (rows.isNotEmpty) {
+    if (rows.isNotEmpty && kDebugMode) {
       debugPrint(
         '[PriceList] first row keys: ${(rows.first as Map?)?.keys.toList()}',
       );
@@ -2858,11 +2878,18 @@ class RemoteApiService {
           ),
           expiryDate: _toString(m['expire_date'] ?? m['expiry_date']),
           price: price,
-          mainStock: _toInt(m['actual_balance'] ?? m['main_stock']),
+          // "На основном складе" (balance_on_main_storage) and "Остаток"
+          // (remains_amount/actual_balance) are distinct counters on the web
+          // — e.g. balance_on_main_storage=0, remains_amount=546 is normal
+          // for stock sitting outside the main warehouse. Don't fall back
+          // one into the other or both fields collapse to the same number.
+          mainStock: _toInt(m['balance_on_main_storage'] ?? m['main_stock']),
           stock: _toInt(
-            m['remains_amount'] ?? m['stock'] ?? m['actual_balance'],
+            m['remains_amount'] ?? m['actual_balance'] ?? m['stock'],
           ),
-          remainsStock: _toInt(m['remains_amount'] ?? m['stock']),
+          remainsStock: _toInt(
+            m['remains_amount'] ?? m['actual_balance'] ?? m['stock'],
+          ),
           documentsCount: 0,
           // income_detailing_id is needed when creating a Бронь order.
           currentStockId: _toInt(m['income_detailing_id']),

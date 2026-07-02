@@ -18,6 +18,9 @@ void main() async {
 
   final prefs = await SharedPreferences.getInstance();
   debugPrint('[MAIN] prefs done');
+  final apiClient = ApiClient(prefs);
+  await apiClient.init();
+  debugPrint('[MAIN] api client ready');
   await BackgroundSyncService.initialize();
   debugPrint('[MAIN] background sync initialized');
   await LocalNotificationsService.instance.init();
@@ -25,7 +28,10 @@ void main() async {
 
   runApp(
     ProviderScope(
-      overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+      overrides: [
+        sharedPreferencesProvider.overrideWithValue(prefs),
+        apiClientProvider.overrideWithValue(apiClient),
+      ],
       child: const LimaApp(),
     ),
   );

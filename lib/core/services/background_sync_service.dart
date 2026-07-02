@@ -139,6 +139,7 @@ class BackgroundSyncService {
       await db.init();
 
       final api = ApiClient(prefs);
+      await api.init();
       final remoteApi = RemoteApiService(api);
       final creds = CredentialsStorage();
       final user = await _loadCachedUser(prefs, creds);

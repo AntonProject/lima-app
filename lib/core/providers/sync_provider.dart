@@ -1411,39 +1411,44 @@ class SyncNotifier extends StateNotifier<SyncState> {
           'last_push_response_json',
           'medical_rep_name',
         };
-        await _db.db.delete('visits', where: 'is_synced = ?', whereArgs: [1]);
-        final batch = _db.db.batch();
-        for (final v in deduped) {
-          final remoteId = (v['remote_id'] as num?)?.toInt();
-          final row = Map<String, dynamic>.from(v)
-            ..['is_synced'] = 1
-            ..removeWhere((k, _) => !visitColumns.contains(k));
-          final localRow = remoteId == null
-              ? null
-              : locallyPushedByRemoteId[remoteId];
-          if (localRow != null) {
-            _mergeLocalOrderPushState(row, localRow);
+        // Wrapped in a transaction so a kill/crash between the delete and the
+        // re-insert can't leave the local visit history half-erased (the
+        // delete and every insert either all land or none do).
+        await _db.db.transaction((txn) async {
+          await txn.delete('visits', where: 'is_synced = ?', whereArgs: [1]);
+          final batch = txn.batch();
+          for (final v in deduped) {
+            final remoteId = (v['remote_id'] as num?)?.toInt();
+            final row = Map<String, dynamic>.from(v)
+              ..['is_synced'] = 1
+              ..removeWhere((k, _) => !visitColumns.contains(k));
+            final localRow = remoteId == null
+                ? null
+                : locallyPushedByRemoteId[remoteId];
+            if (localRow != null) {
+              _mergeLocalOrderPushState(row, localRow);
+            }
+            batch.insert(
+              'visits',
+              row,
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
           }
-          batch.insert(
-            'visits',
-            row,
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        }
-        for (final localRow in locallyPushedRows) {
-          final remoteId = (localRow['remote_id'] as num?)?.toInt();
-          if (remoteId == null || fetchedRemoteIds.contains(remoteId)) {
-            continue;
+          for (final localRow in locallyPushedRows) {
+            final remoteId = (localRow['remote_id'] as num?)?.toInt();
+            if (remoteId == null || fetchedRemoteIds.contains(remoteId)) {
+              continue;
+            }
+            final row = Map<String, dynamic>.from(localRow)
+              ..removeWhere((k, _) => !visitColumns.contains(k));
+            batch.insert(
+              'visits',
+              row,
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
           }
-          final row = Map<String, dynamic>.from(localRow)
-            ..removeWhere((k, _) => !visitColumns.contains(k));
-          batch.insert(
-            'visits',
-            row,
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        }
-        await batch.commit(noResult: true);
+          await batch.commit(noResult: true);
+        });
         visitsCount =
             deduped.length +
             locallyPushedRows.where((row) {
@@ -2162,9 +2167,11 @@ class SyncNotifier extends StateNotifier<SyncState> {
           final specializationId = (row['specialization_id'] as num?)?.toInt();
           final phone = row['phone'] as String?;
           if (specializationId == null) {
-            // Older queued rows without a specialization can't satisfy the API;
-            // drop them so they don't block the queue forever.
-            await _db.deletePendingDoctor(id);
+            // Older queued rows without a specialization can't satisfy the
+            // API. Park them (don't delete) so the offline-entered doctor
+            // isn't silently lost — surfaced in the sync screen for the user
+            // to review/delete manually.
+            await _db.markPendingDoctorFailed(id);
             continue;
           }
           try {

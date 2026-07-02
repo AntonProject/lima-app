@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -68,7 +69,6 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
 
   Future<void> _openQtyDialog(Drug drug) async {
     final initial = _qtyByDrugId[drug.id] ?? 0;
-    var qtyStr = initial > 0 ? initial.toString() : '0';
     final available = _availableStock(drug);
     final result = await showAppSheet<int>(
       context,
@@ -77,199 +77,10 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (_, setModal) {
-          final qty = int.tryParse(qtyStr) ?? 0;
-          final isOverStock = qty > available;
-          final canIncrease = qty < available;
-          final counterColor = isOverStock
-              ? AppColors.error
-              : const Color(0xFFE49351);
-          void onKey(String key) {
-            setModal(() {
-              if (key == 'C') {
-                qtyStr = '0';
-              } else if (key == '←') {
-                if (qtyStr.length <= 1) {
-                  qtyStr = '0';
-                } else {
-                  qtyStr = qtyStr.substring(0, qtyStr.length - 1);
-                }
-              } else {
-                qtyStr = qtyStr == '0' ? key : qtyStr + key;
-              }
-            });
-          }
-
-          return SingleChildScrollView(
-            child: Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom +
-                    MediaQuery.of(ctx).padding.bottom +
-                    12,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          context.l10n.t('selectQuantity'),
-                          style: GoogleFonts.manrope(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primaryText,
-                          ),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => Navigator.pop(ctx),
-                        child: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryBg,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Icon(
-                            Icons.close_rounded,
-                            size: 20,
-                            color: AppColors.secondaryText,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1, color: AppColors.divider),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-                  child: Column(
-                    children: [
-                      _line(context.l10n.t('drug'), drug.name),
-                      _line(
-                        context.l10n.t('manufacturer'),
-                        drug.manufacturer.isNotEmpty ? drug.manufacturer : '—',
-                      ),
-                      _line(
-                        context.l10n.t('expiryDate'),
-                        drug.expiryDate?.isNotEmpty == true
-                            ? drug.expiryDate!
-                            : '—',
-                      ),
-                      _line(
-                        context.l10n.t('serialNumber'),
-                        drug.serialNumber?.isNotEmpty == true
-                            ? drug.serialNumber!
-                            : '—',
-                      ),
-                      _line(
-                        context.l10n.t('mainStock'),
-                        context.l10n.t('pcsN', args: {'n': '${drug.mainStock ?? drug.stock ?? 0}'}),
-                      ),
-                      _line(
-                        context.l10n.t('remains'),
-                        context.l10n.t('pcsN', args: {'n': '${drug.remainsStock ?? drug.stock ?? 0}'}),
-                      ),
-                      _line(context.l10n.t('price'), formatUzs(drug.price)),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      _QtyBtn(
-                        icon: Icons.remove_rounded,
-                        onTap: () => setModal(() {
-                          final cur = int.tryParse(qtyStr) ?? 0;
-                          qtyStr = (cur > 1 ? cur - 1 : 0).toString();
-                        }),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Container(
-                          height: 52,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: counterColor, width: 2),
-                          ),
-                          child: Center(
-                            child: Text(
-                              qtyStr,
-                              style: GoogleFonts.manrope(
-                                fontSize: 22,
-                                fontWeight: FontWeight.w700,
-                                color: counterColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      _QtyBtn(
-                        icon: Icons.add_rounded,
-                        onTap: canIncrease
-                            ? () => setModal(() {
-                                final cur = int.tryParse(qtyStr) ?? 0;
-                                qtyStr = (cur + 1).toString();
-                              })
-                            : null,
-                      ),
-                    ],
-                  ),
-                ),
-                if (isOverStock) ...[
-                  const SizedBox(height: 6),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      context.l10n.t('availableN', args: {'n': '$available'}),
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.manrope(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.error,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _NumKeypad(onKey: onKey),
-                ),
-                const SizedBox(height: 12),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: ElevatedButton(
-                    onPressed: qty <= 0 || isOverStock
-                        ? null
-                        : () => Navigator.pop(ctx, qty),
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 52),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: Text(
-                      context.l10n.t('confirm'),
-                      style: GoogleFonts.manrope(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-              ),
-            ),
-          );
-        },
+      builder: (ctx) => _StockQtyDialog(
+        drug: drug,
+        initialQty: initial,
+        available: available,
       ),
     );
     if (result == null || !mounted) return;
@@ -279,40 +90,6 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
   int _availableStock(Drug drug) => drug.remainsStock ?? drug.stock ?? 0;
 
   bool _isOverStock(Drug drug, int qty) => qty > _availableStock(drug);
-
-  Widget _line(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Text(
-              '$label:',
-              style: GoogleFonts.manrope(
-                fontSize: 13,
-                color: AppColors.secondaryText,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              style: GoogleFonts.manrope(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: AppColors.primaryText,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Future<void> _openConfirmScreen() async {
     if (_actionLocked) return;
@@ -756,7 +533,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                                       Text(
                                         context.l10n.t('priceColon', args: {'value': formatUzs(drug.price)}),
                                         style: GoogleFonts.manrope(
-                                          fontSize: 18,
+                                          fontSize: 16,
                                           fontWeight: FontWeight.w700,
                                           color: AppColors.primary,
                                         ),
@@ -1111,134 +888,16 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
     final drug = widget.drugsById[id]!;
     final available = _availableStock(drug);
     final initial = _qtyByDrugId[id] ?? 1;
-    var qtyStr = initial.toString();
     final result = await showModalBottomSheet<int>(
       context: context,
       backgroundColor: AppColors.secondaryBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setModal) {
-            final qty = int.tryParse(qtyStr) ?? 0;
-            final isOverStock = qty > available;
-            final canIncrease = qty < available;
-            final counterColor = isOverStock
-                ? AppColors.error
-                : const Color(0xFFE9A165);
-            void onKey(String key) {
-              setModal(() {
-                if (key == 'C') {
-                  qtyStr = '0';
-                } else if (key == '←') {
-                  if (qtyStr.length <= 1) {
-                    qtyStr = '0';
-                  } else {
-                    qtyStr = qtyStr.substring(0, qtyStr.length - 1);
-                  }
-                } else {
-                  qtyStr = qtyStr == '0' ? key : qtyStr + key;
-                }
-              });
-            }
-
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                12,
-                16,
-                MediaQuery.of(ctx).padding.bottom + 12,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    context.l10n.t('quantity'),
-                    style: GoogleFonts.manrope(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      _QtyBtn(
-                        icon: Icons.remove_rounded,
-                        onTap: () => setModal(() {
-                          final cur = int.tryParse(qtyStr) ?? 0;
-                          qtyStr = (cur > 1 ? cur - 1 : 0).toString();
-                        }),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Container(
-                          height: 46,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: counterColor, width: 1.5),
-                          ),
-                          child: Text(
-                            qtyStr,
-                            style: GoogleFonts.manrope(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                              color: counterColor,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      _QtyBtn(
-                        icon: Icons.add_rounded,
-                        onTap: canIncrease
-                            ? () => setModal(() {
-                                final cur = int.tryParse(qtyStr) ?? 0;
-                                qtyStr = (cur + 1).toString();
-                              })
-                            : null,
-                      ),
-                    ],
-                  ),
-                  if (isOverStock) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      context.l10n.t('availableN', args: {'n': '$available'}),
-                      style: GoogleFonts.manrope(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.error,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  _NumKeypad(onKey: onKey),
-                  const SizedBox(height: 12),
-                  ElevatedButton(
-                    onPressed: qty <= 0 || isOverStock
-                        ? null
-                        : () => Navigator.pop(ctx, qty),
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 48),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: Text(
-                      context.l10n.t('saved'),
-                      style: GoogleFonts.manrope(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+      builder: (ctx) => _StockEditQtyDialog(
+        initialQty: initial,
+        available: available,
+      ),
     );
     if (result == null) return;
     setState(() {
@@ -1253,6 +912,455 @@ class _StockConfirmScreenState extends State<_StockConfirmScreen> {
   int _availableStock(Drug drug) => drug.remainsStock ?? drug.stock ?? 0;
 
   bool _isOverStock(Drug drug, int qty) => qty > _availableStock(drug);
+}
+
+Widget _stockQtyLine(String label, String value) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Text(
+            '$label:',
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              color: AppColors.secondaryText,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.primaryText,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Quantity sheet for "Снятие остатков". Own [StatefulWidget] so the qty
+/// [TextEditingController] follows State.dispose() instead of a manual
+/// dispose right after Navigator.pop() — see _QtyDialog in
+/// pharmacy_order_screen.dart for why that crashed the app. Keeps the
+/// existing on-screen [_NumKeypad] alongside a real TextField so both the
+/// device keyboard and the tap-keypad work.
+class _StockQtyDialog extends StatefulWidget {
+  final Drug drug;
+  final int initialQty;
+  final int available;
+
+  const _StockQtyDialog({
+    required this.drug,
+    required this.initialQty,
+    required this.available,
+  });
+
+  @override
+  State<_StockQtyDialog> createState() => _StockQtyDialogState();
+}
+
+class _StockQtyDialogState extends State<_StockQtyDialog> {
+  late final TextEditingController _qtyCtrl;
+  late int _qty;
+
+  @override
+  void initState() {
+    super.initState();
+    _qty = widget.initialQty > 0 ? widget.initialQty : 0;
+    _qtyCtrl = TextEditingController(text: '$_qty');
+  }
+
+  @override
+  void dispose() {
+    _qtyCtrl.dispose();
+    super.dispose();
+  }
+
+  void _setQty(int next) {
+    setState(() {
+      _qty = next < 0 ? 0 : next;
+      _qtyCtrl.text = '$_qty';
+    });
+  }
+
+  void _onKey(String key) {
+    setState(() {
+      var qtyStr = '$_qty';
+      if (key == 'C') {
+        qtyStr = '0';
+      } else if (key == '←') {
+        qtyStr = qtyStr.length <= 1
+            ? '0'
+            : qtyStr.substring(0, qtyStr.length - 1);
+      } else {
+        qtyStr = qtyStr == '0' ? key : qtyStr + key;
+      }
+      _qty = int.tryParse(qtyStr) ?? 0;
+      _qtyCtrl.text = '$_qty';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final drug = widget.drug;
+    final available = widget.available;
+    final isOverStock = _qty > available;
+    final canIncrease = _qty < available;
+    final counterColor = isOverStock
+        ? AppColors.error
+        : const Color(0xFFE49351);
+
+    return SingleChildScrollView(
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom +
+              MediaQuery.of(context).padding.bottom +
+              12,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      context.l10n.t('selectQuantity'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primaryText,
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryBg,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.close_rounded,
+                        size: 20,
+                        color: AppColors.secondaryText,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AppColors.divider),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+              child: Column(
+                children: [
+                  _stockQtyLine(context.l10n.t('drug'), drug.name),
+                  _stockQtyLine(
+                    context.l10n.t('manufacturer'),
+                    drug.manufacturer.isNotEmpty ? drug.manufacturer : '—',
+                  ),
+                  _stockQtyLine(
+                    context.l10n.t('expiryDate'),
+                    drug.expiryDate?.isNotEmpty == true
+                        ? drug.expiryDate!
+                        : '—',
+                  ),
+                  _stockQtyLine(
+                    context.l10n.t('serialNumber'),
+                    drug.serialNumber?.isNotEmpty == true
+                        ? drug.serialNumber!
+                        : '—',
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  _QtyBtn(
+                    icon: Icons.remove_rounded,
+                    onTap: () => _setQty(_qty > 1 ? _qty - 1 : 0),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Container(
+                      height: 52,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: counterColor, width: 2),
+                      ),
+                      child: Center(
+                        child: TextField(
+                          controller: _qtyCtrl,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(5),
+                          ],
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.manrope(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                            color: counterColor,
+                          ),
+                          decoration: const InputDecoration(
+                            isCollapsed: true,
+                            filled: false,
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                          ),
+                          onTap: () {
+                            _qtyCtrl.selection = TextSelection(
+                              baseOffset: 0,
+                              extentOffset: _qtyCtrl.text.length,
+                            );
+                          },
+                          onChanged: (v) => setState(() {
+                            _qty = v.isEmpty ? 0 : (int.tryParse(v) ?? 0);
+                          }),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  _QtyBtn(
+                    icon: Icons.add_rounded,
+                    onTap: canIncrease ? () => _setQty(_qty + 1) : null,
+                  ),
+                ],
+              ),
+            ),
+            if (isOverStock) ...[
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  context.l10n.t('availableN', args: {'n': '$available'}),
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.error,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _NumKeypad(onKey: _onKey),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: ElevatedButton(
+                onPressed: _qty <= 0 || isOverStock
+                    ? null
+                    : () => Navigator.pop(context, _qty),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 52),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: Text(
+                  context.l10n.t('confirm'),
+                  style: GoogleFonts.manrope(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact quantity-edit sheet used by _StockConfirmScreen. Own
+/// [StatefulWidget] for the same reason as [_StockQtyDialog] — see its
+/// doc comment.
+class _StockEditQtyDialog extends StatefulWidget {
+  final int initialQty;
+  final int available;
+
+  const _StockEditQtyDialog({required this.initialQty, required this.available});
+
+  @override
+  State<_StockEditQtyDialog> createState() => _StockEditQtyDialogState();
+}
+
+class _StockEditQtyDialogState extends State<_StockEditQtyDialog> {
+  late final TextEditingController _qtyCtrl;
+  late int _qty;
+
+  @override
+  void initState() {
+    super.initState();
+    _qty = widget.initialQty;
+    _qtyCtrl = TextEditingController(text: '$_qty');
+  }
+
+  @override
+  void dispose() {
+    _qtyCtrl.dispose();
+    super.dispose();
+  }
+
+  void _setQty(int next) {
+    setState(() {
+      _qty = next < 0 ? 0 : next;
+      _qtyCtrl.text = '$_qty';
+    });
+  }
+
+  void _onKey(String key) {
+    setState(() {
+      var qtyStr = '$_qty';
+      if (key == 'C') {
+        qtyStr = '0';
+      } else if (key == '←') {
+        qtyStr = qtyStr.length <= 1
+            ? '0'
+            : qtyStr.substring(0, qtyStr.length - 1);
+      } else {
+        qtyStr = qtyStr == '0' ? key : qtyStr + key;
+      }
+      _qty = int.tryParse(qtyStr) ?? 0;
+      _qtyCtrl.text = '$_qty';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final available = widget.available;
+    final isOverStock = _qty > available;
+    final canIncrease = _qty < available;
+    final counterColor = isOverStock
+        ? AppColors.error
+        : const Color(0xFFE9A165);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        12,
+        16,
+        MediaQuery.of(context).padding.bottom + 12,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            context.l10n.t('quantity'),
+            style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _QtyBtn(
+                icon: Icons.remove_rounded,
+                onTap: () => _setQty(_qty > 1 ? _qty - 1 : 0),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Container(
+                  height: 46,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: counterColor, width: 1.5),
+                  ),
+                  child: TextField(
+                    controller: _qtyCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(5),
+                    ],
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.manrope(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: counterColor,
+                    ),
+                    decoration: const InputDecoration(
+                      isCollapsed: true,
+                      filled: false,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                    ),
+                    onTap: () {
+                      _qtyCtrl.selection = TextSelection(
+                        baseOffset: 0,
+                        extentOffset: _qtyCtrl.text.length,
+                      );
+                    },
+                    onChanged: (v) => setState(() {
+                      _qty = v.isEmpty ? 0 : (int.tryParse(v) ?? 0);
+                    }),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              _QtyBtn(
+                icon: Icons.add_rounded,
+                onTap: canIncrease ? () => _setQty(_qty + 1) : null,
+              ),
+            ],
+          ),
+          if (isOverStock) ...[
+            const SizedBox(height: 6),
+            Text(
+              context.l10n.t('availableN', args: {'n': '$available'}),
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.error,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          _NumKeypad(onKey: _onKey),
+          const SizedBox(height: 12),
+          ElevatedButton(
+            onPressed: _qty <= 0 || isOverStock
+                ? null
+                : () => Navigator.pop(context, _qty),
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              context.l10n.t('saved'),
+              style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _NumKeypad extends StatelessWidget {

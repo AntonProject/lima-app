@@ -27,6 +27,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   List<Map<String, dynamic>> _unsyncedVisits = [];
   List<Map<String, dynamic>> _failedVisits = [];
   List<Map<String, dynamic>> _pendingDoctors = [];
+  List<Map<String, dynamic>> _failedPendingDoctors = [];
   List<Map<String, dynamic>> _pendingOrgUpdates = [];
   Map<String, int> _localTotals = const {};
   bool _loadingVisits = true;
@@ -75,6 +76,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       final unsynced = await db.getVisits(unsyncedOnly: true);
       final failedVisits = await db.getFailedVisits();
       final pendingDoctors = await db.getPendingDoctors();
+      final failedPendingDoctors = await db.getFailedPendingDoctors();
       final pendingOrgUpdates = await db.getPendingOrgUpdates();
       final localTotals = await _loadLocalTotals(db);
       if (!mounted) return;
@@ -86,6 +88,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         _unsyncedVisits = unsynced;
         _failedVisits = failedVisits;
         _pendingDoctors = pendingDoctors;
+        _failedPendingDoctors = failedPendingDoctors;
         _pendingOrgUpdates = pendingOrgUpdates;
         _localTotals = localTotals;
         _clampUnsyncedPage();
@@ -640,6 +643,118 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                     ),
                   ),
                 ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteFailedPendingDoctor(int id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(context.l10n.t('deleteDoctorTitle')),
+        content: Text(context.l10n.t('deleteDoctorConfirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(context.l10n.t('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: Text(context.l10n.t('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final db = ref.read(localDatabaseProvider);
+    await db.deletePendingDoctor(id);
+  }
+
+  Widget _buildFailedPendingDoctorCard(Map<String, dynamic> doctor) {
+    final id = (doctor['id'] as num?)?.toInt();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    doctor['full_name'] as String? ?? '—',
+                    style: GoogleFonts.manrope(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    context.l10n.t('notSent'),
+                    style: GoogleFonts.manrope(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.red[700],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              context.l10n.t('doctorMissingSpecialization'),
+              style: GoogleFonts.manrope(fontSize: 12, color: Colors.red[700]),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _formatDateTime(doctor['created_at']?.toString()),
+              style: GoogleFonts.manrope(fontSize: 11, color: Colors.grey[500]),
+            ),
+            if (id != null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => _deleteFailedPendingDoctor(id),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red[700],
+                  minimumSize: const Size(double.infinity, 36),
+                ),
+                icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                label: Text(
+                  context.l10n.t('delete'),
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ],
           ],
@@ -1204,6 +1319,16 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   ),
                   const SizedBox(height: 8),
                   ...(_failedVisits.map((v) => _buildFailedVisitCard(v))),
+                  const SizedBox(height: 16),
+                ],
+                if (_failedPendingDoctors.isNotEmpty) ...[
+                  SectionLabel(
+                    text: '${context.l10n.t('notSentDoctors').toUpperCase()} (${_failedPendingDoctors.length})',
+                  ),
+                  const SizedBox(height: 8),
+                  ...(_failedPendingDoctors.map(
+                    (d) => _buildFailedPendingDoctorCard(d),
+                  )),
                   const SizedBox(height: 16),
                 ],
                 Row(

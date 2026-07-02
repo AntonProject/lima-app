@@ -9,12 +9,18 @@ class DashboardCounts {
   final int visitsTotalCount;
   final int uniqueVisitedDoctorsCount;
 
+  /// False when the local visits read itself failed (e.g. DB error), so the
+  /// counts below are a fallback zero rather than a genuinely empty day —
+  /// the UI should show that distinction instead of a plain "0".
+  final bool isReliable;
+
   const DashboardCounts({
     required this.visitsTodayCount,
     required this.lpuTodayCount,
     required this.pharmacyTodayCount,
     required this.visitsTotalCount,
     required this.uniqueVisitedDoctorsCount,
+    this.isReliable = true,
   });
 }
 
@@ -50,6 +56,7 @@ final dashboardCountsProvider = FutureProvider.autoDispose<DashboardCounts>((ref
   } catch (_) {}
 
   final localRows = <Map<String, dynamic>>[];
+  var isReliable = true;
   try {
     final rows = await db.getVisits();
     localRows.addAll(rows.map((e) => Map<String, dynamic>.from(e)));
@@ -76,7 +83,12 @@ final dashboardCountsProvider = FutureProvider.autoDispose<DashboardCounts>((ref
         .whereType<int>()
         .toSet();
     uniqueDoctors = doctorIds.length;
-  } catch (_) {}
+  } catch (_) {
+    // The local visits read itself failed — the zero counts below aren't a
+    // genuinely empty day, they're a fallback. Surfaced via [isReliable] so
+    // the UI can show "—" instead of a misleading "0".
+    isReliable = false;
+  }
 
   // Count unique doctors from local rows only
   try {
@@ -102,6 +114,7 @@ final dashboardCountsProvider = FutureProvider.autoDispose<DashboardCounts>((ref
     pharmacyTodayCount: useLocal ? localPharmacy : cachedPharmacy,
     visitsTotalCount: totalVisits,
     uniqueVisitedDoctorsCount: uniqueDoctors,
+    isReliable: isReliable,
   );
 });
 
