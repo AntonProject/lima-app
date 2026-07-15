@@ -6,7 +6,7 @@ import 'package:lima/core/i18n/app_i18n.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import 'package:lima/core/services/app_actions.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/knowledge/data/drugs_repository.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
 class KnowledgeScreen extends ConsumerStatefulWidget {
@@ -29,7 +29,7 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(drugsRepositoryProvider);
 
     // Show local data immediately
     final localResults = await db.getDrugs(

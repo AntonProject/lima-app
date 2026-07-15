@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/dialogs/visit_detail_dialog.dart';
+import 'package:lima/features/visits/data/visits_repository.dart';
+import 'package:lima/features/visits/dialogs/visit_detail_dialog.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
@@ -40,7 +40,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     // Reload when the visits table changes (e.g. a visit is conducted or
     // synced while this screen is already open) so history stays in sync with
     // home's "recent visits" instead of showing a stale snapshot.
-    _dbChangesSub = ref.read(localDatabaseProvider).changes.listen((tables) {
+    _dbChangesSub = ref.read(visitsRepositoryProvider).changes.listen((tables) {
       if (!mounted) return;
       if (tables.contains('visits')) _loadVisits();
     });
@@ -54,7 +54,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   }
 
   Future<void> _loadVisits() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(visitsRepositoryProvider);
     final rows = (await db.getVisits())
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
@@ -418,7 +418,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                 child: Column(
                                   children: [
                                     Text(
-                                      context.l10n.plural(filtered.length, 'records'),
+                                      context.l10n.plural(
+                                        filtered.length,
+                                        'records',
+                                      ),
                                       style: GoogleFonts.manrope(
                                         fontSize: 12,
                                         color: AppColors.hintText,
@@ -712,7 +715,8 @@ class _VisitItem extends StatelessWidget {
                                     ),
                                   ),
                                   TextSpan(
-                                    text: ' (${context.l10n.t('participantsN', args: {'count': '${visit.participantsCount}'})})',
+                                    text:
+                                        ' (${context.l10n.t('participantsN', args: {'count': '${visit.participantsCount}'})})',
                                     style: const TextStyle(
                                       color: Color(0xFF8390A3),
                                     ),

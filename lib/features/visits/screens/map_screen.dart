@@ -7,7 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/visits/data/organisations_repository.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/services/app_actions.dart';
@@ -84,8 +84,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   Future<void> _loadNearbyOrgs(Position pos) async {
-    final db = ref.read(localDatabaseProvider);
-    final rows = await db.getOrganisations(type: widget.isPharmacy ? 'pharmacy' : 'lpu');
+    final repo = ref.read(organisationsRepositoryProvider);
+    final rows = await repo.getLocal(type: widget.isPharmacy ? 'pharmacy' : 'lpu');
     const distance = Distance();
     final mapped = rows.map((row) {
       final id = row['id'] as int? ?? 0;

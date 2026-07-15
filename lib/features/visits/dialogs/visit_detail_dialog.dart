@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lima/core/dialogs/payment_type_dialog.dart';
+import 'package:lima/features/visits/dialogs/payment_type_dialog.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/services/specification_export_service.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -316,7 +316,10 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
           value: visit.pharmacistsFio == '—' ? '—' : visit.pharmacistsFio,
           icon: Icons.groups_2_rounded,
           trailing: visit.participantsCount > 0
-              ? context.l10n.t('participantsN', args: {'count': '${visit.participantsCount}'})
+              ? context.l10n.t(
+                  'participantsN',
+                  args: {'count': '${visit.participantsCount}'},
+                )
               : null,
         ),
         const SizedBox(height: 8),
@@ -334,7 +337,9 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _sectionLabel(context.l10n.t('presentationsList').toUpperCase()),
+                _sectionLabel(
+                  context.l10n.t('presentationsList').toUpperCase(),
+                ),
                 const SizedBox(height: 20),
                 Center(
                   child: Text(
@@ -489,14 +494,18 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
                                 color: AppColors.secondaryText,
                               ),
                               children: [
-                                TextSpan(text: '${context.l10n.t('qtyColon')} '),
+                                TextSpan(
+                                  text: '${context.l10n.t('qtyColon')} ',
+                                ),
                                 TextSpan(
                                   text: '${item.qty}',
                                   style: GoogleFonts.manrope(
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                                TextSpan(text: ' ${context.l10n.t('pcsShort')}'),
+                                TextSpan(
+                                  text: ' ${context.l10n.t('pcsShort')}',
+                                ),
                               ],
                             ),
                           ),
@@ -565,7 +574,9 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
                 const SizedBox(height: 8),
                 _kvCard(
                   title: context.l10n.t('clientType'),
-                  value: _buyerType == 1 ? context.l10n.t('wholesale') : context.l10n.t('retail'),
+                  value: _buyerType == 1
+                      ? context.l10n.t('wholesale')
+                      : context.l10n.t('retail'),
                 ),
                 const SizedBox(height: 8),
                 Row(
@@ -713,7 +724,9 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _sectionLabel(context.l10n.t('presentationsList').toUpperCase()),
+                _sectionLabel(
+                  context.l10n.t('presentationsList').toUpperCase(),
+                ),
                 const SizedBox(height: 8),
                 if (visit.presentations.isEmpty)
                   _presentationCard(

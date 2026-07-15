@@ -13,7 +13,7 @@ import 'package:lima/features/auth/providers/auth_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import '../../../core/db/local_database.dart';
-import '../../../core/network/remote_api_service.dart';
+import '../data/organisations_repository.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
 class VisitsHubScreen extends ConsumerStatefulWidget {
@@ -78,7 +78,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
   void initState() {
     super.initState();
     _hydrateLocalCache();
-    _dbChangesSub = ref.read(localDatabaseProvider).changes.listen((tables) {
+    _dbChangesSub = ref.read(organisationsRepositoryProvider).changes.listen((tables) {
       if (!mounted || !tables.contains('organisations')) return;
       _load();
     });
@@ -123,11 +123,11 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
 
   Future<void> _load() async {
     final generation = ++_loadGeneration;
-    final db = ref.read(localDatabaseProvider);
+    final repo = ref.read(organisationsRepositoryProvider);
     final rows =
         await Future.wait([
-          db.getOrganisations(type: 'lpu'),
-          db.getOrganisations(type: 'pharmacy'),
+          repo.getLocal(type: 'lpu'),
+          repo.getLocal(type: 'pharmacy'),
         ]).timeout(
           const Duration(seconds: 6),
           onTimeout: () => const <List<Map<String, dynamic>>>[
@@ -284,8 +284,8 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
     final wantLpu = _isLpu;
     if (mounted) setState(() => _isRemoteSearching = true);
     try {
-      final remote = ref.read(remoteApiServiceProvider);
-      final results = await remote.searchOrganizations(
+      final repo = ref.read(organisationsRepositoryProvider);
+      final results = await repo.search(
         query: query,
         // type_id: 1 = pharmacy, 2 = LPU (matches the web's find call).
         typeIds: wantLpu ? const [2] : const [1],
@@ -301,7 +301,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
       // Persist found orgs locally so freshly-created ones survive and the next
       // search/visit can use them offline too.
       if (results.isNotEmpty) {
-        await ref.read(localDatabaseProvider).upsertOrganisations(results);
+        await ref.read(organisationsRepositoryProvider).upsertLocal(results);
       }
       if (!mounted || generation != _remoteSearchGeneration) return;
       setState(() {
@@ -336,9 +336,9 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(context.l10n.t('geoUnavailable'))));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.t('geoUnavailable'))),
+        );
       }
       return null;
     }
@@ -351,9 +351,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
         permission == LocationPermission.deniedForever) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.l10n.t('enableGeoInSettings')),
-          ),
+          SnackBar(content: Text(context.l10n.t('enableGeoInSettings'))),
         );
       }
       await Geolocator.openAppSettings();
@@ -442,13 +440,9 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
       _orgs = orgs;
     });
     if (map.isEmpty && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.t('noCoordsNearby'),
-          ),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.t('noCoordsNearby'))));
     }
   }
 
@@ -496,66 +490,66 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _searchCtrl,
-                              onChanged: _onQueryChange,
-                              decoration: InputDecoration(
-                                hintText: _isLpu
-                                    ? context.l10n.t('searchLpu')
-                                    : context.l10n.t('searchPharmacy'),
-                                prefixIcon: const Icon(
-                                  Icons.search_rounded,
-                                  color: AppColors.hintText,
+                            Expanded(
+                              child: TextFormField(
+                                controller: _searchCtrl,
+                                onChanged: _onQueryChange,
+                                decoration: InputDecoration(
+                                  hintText: _isLpu
+                                      ? context.l10n.t('searchLpu')
+                                      : context.l10n.t('searchPharmacy'),
+                                  prefixIcon: const Icon(
+                                    Icons.search_rounded,
+                                    color: AppColors.hintText,
+                                  ),
+                                  suffixIcon: _query.isNotEmpty
+                                      ? IconButton(
+                                          icon: const Icon(
+                                            Icons.close_rounded,
+                                            color: AppColors.hintText,
+                                            size: 18,
+                                          ),
+                                          onPressed: () {
+                                            setState(() => _query = '');
+                                            _searchCtrl.clear();
+                                            final pos = _lastNearbyPosition;
+                                            if (_nearbyMode && pos != null) {
+                                              _loadNearbyForPosition(pos);
+                                            } else {
+                                              _load();
+                                            }
+                                          },
+                                        )
+                                      : null,
                                 ),
-                                suffixIcon: _query.isNotEmpty
-                                    ? IconButton(
-                                        icon: const Icon(
-                                          Icons.close_rounded,
-                                          color: AppColors.hintText,
-                                          size: 18,
-                                        ),
-                                        onPressed: () {
-                                          setState(() => _query = '');
-                                          _searchCtrl.clear();
-                                          final pos = _lastNearbyPosition;
-                                          if (_nearbyMode && pos != null) {
-                                            _loadNearbyForPosition(pos);
-                                          } else {
-                                            _load();
-                                          }
-                                        },
-                                      )
-                                    : null,
                               ),
                             ),
-                          ),
-                          // Org creation (web parity): "+" opens the add form
-                          // for the active tab — ЛПУ or Аптека.
-                          const SizedBox(width: 8),
-                          AppTapScale(
-                            pressedScale: 0.92,
-                            onTap: () async {
-                              final created = await context.push<bool>(
-                                _isLpu
-                                    ? '/visits/lpu/add'
-                                    : '/visits/pharmacy/add',
-                              );
-                              if (created == true && mounted) _load();
-                            },
-                            child: Container(
-                              width: 52,
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Icon(
-                                Icons.add_rounded,
-                                color: Colors.white,
-                                size: 26,
+                            // Org creation (web parity): "+" opens the add form
+                            // for the active tab — ЛПУ or Аптека.
+                            const SizedBox(width: 8),
+                            AppTapScale(
+                              pressedScale: 0.92,
+                              onTap: () async {
+                                final created = await context.push<bool>(
+                                  _isLpu
+                                      ? '/visits/lpu/add'
+                                      : '/visits/pharmacy/add',
+                                );
+                                if (created == true && mounted) _load();
+                              },
+                              child: Container(
+                                width: 52,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Icon(
+                                  Icons.add_rounded,
+                                  color: Colors.white,
+                                  size: 26,
+                                ),
                               ),
                             ),
-                          ),
                           ],
                         ),
                       ),

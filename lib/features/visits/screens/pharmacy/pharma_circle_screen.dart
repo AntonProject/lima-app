@@ -4,9 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/knowledge/data/drugs_repository.dart';
+import 'package:lima/features/visits/data/visits_repository.dart';
 import 'package:lima/core/models/local_visit.dart';
-import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/providers/dashboard_counts_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -51,7 +51,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
   }
 
   Future<void> _loadDrugs() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(drugsRepositoryProvider);
     var rows = await db.getDrugs(
       onlyWithPositivePrice: false,
       onlyWithDocuments: true,
@@ -280,7 +280,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
       return;
     }
 
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(drugsRepositoryProvider);
     final materials = await db.getDrugMaterials(drug.id);
     if (!mounted) return;
     if (materials.isEmpty) {
@@ -516,7 +516,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
         'start_date': now,
         'end_date': now,
       });
-      localId = await ref.read(localDatabaseProvider).insertVisit({
+      localId = await ref.read(visitsRepositoryProvider).insertVisit({
         'remote_id': null,
         'org_id': widget.pharmacyId,
         'org_name': widget.pharmacyName,
@@ -536,7 +536,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
         try {
           final createdAt = DateTime.tryParse(now) ?? DateTime.now();
           final pushResult = await ref
-              .read(remoteApiServiceProvider)
+              .read(visitsRepositoryProvider)
               .pushUnsyncedVisitDebug(
                 LocalVisit(
                   id: localId,
@@ -552,7 +552,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
                   rawJson: rawVisitJson,
                 ),
               );
-          await ref.read(localDatabaseProvider).markSynced([localId]);
+          await ref.read(visitsRepositoryProvider).markSynced([localId]);
           final responseObj = pushResult['response'];
           final remoteId = switch (responseObj) {
             int v => v,
@@ -568,7 +568,7 @@ class _PharmaCircleScreenState extends ConsumerState<PharmaCircleScreen> {
           };
           if (remoteId != null) {
             await ref
-                .read(localDatabaseProvider)
+                .read(visitsRepositoryProvider)
                 .updateVisitRemoteId(localVisitId: localId, remoteId: remoteId);
           }
         } catch (_) {}

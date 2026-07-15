@@ -5,7 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/knowledge/data/drugs_repository.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 
 class DrugDetailScreen extends ConsumerStatefulWidget {
@@ -30,7 +30,7 @@ class _DrugDetailScreenState extends ConsumerState<DrugDetailScreen> {
   }
 
   Future<void> _load() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(drugsRepositoryProvider);
     final drugs = await db.getDrugs();
     final drug = drugs.where((d) => d['id'] == widget.drugId).firstOrNull;
     final materials = await db.getDrugMaterials(widget.drugId);

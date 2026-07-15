@@ -7,140 +7,19 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 
-import '../../../core/db/local_database.dart';
+import '../../visits/data/doctors_repository.dart';
 import '../../../core/i18n/app_i18n.dart';
 import '../../../core/models/models.dart';
 import '../../../core/providers/sync_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
-import '../../../core/dialogs/visit_detail_dialog.dart';
+import '../../visits/data/organisations_repository.dart';
+import '../../visits/data/visits_repository.dart';
+import '../../visits/dialogs/visit_detail_dialog.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../visits/models/history_records.dart';
+import '../providers/planned_visits_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
-
-// ─── Provider ─────────────────────────────────────────────────────────────────
-
-class PlannedVisitsNotifier extends StateNotifier<List<PlannedVisit>> {
-  final LocalDatabase _db;
-
-  PlannedVisitsNotifier(this._db) : super(const []) {
-    load();
-  }
-
-  // Composite signature for matching a locally-created plan against its
-  // server-synced twin: same organisation + same calendar day. Used to drop
-  // un-stamped local duplicates once the server row for the same plan arrives
-  // (the push response sometimes omits the remote id, leaving the local row
-  // un-stamped — without this, a second "ghost" card appears after restart).
-  static String _planSignature(int? orgId, DateTime date) =>
-      '${orgId ?? 0}_${date.year}-${date.month}-${date.day}';
-
-  Future<void> load() async {
-    final merged = <String, PlannedVisit>{};
-    // Signatures of server-stamped planned rows (have a remote_id).
-    final serverSignatures = <String>{};
-    // Local-keyed entries we may need to drop if a server twin exists.
-    final localKeyToSignature = <String, String>{};
-
-    // Load synced planned visits from local DB
-    try {
-      final dbRows = await _db.getPlannedVisits();
-      for (final row in dbRows) {
-        final remoteId = (row['remote_id'] as num?)?.toInt();
-        final localId = (row['id'] as num?)?.toInt();
-        if (localId == null) continue;
-        final key = remoteId != null ? 'r_$remoteId' : 'l_$localId';
-        final visitDate =
-            DateTime.tryParse('${row['visit_date'] ?? ''}') ?? DateTime.now();
-        final orgId = (row['org_id'] as num?)?.toInt();
-        final signature = _planSignature(orgId, visitDate);
-        if (remoteId != null) {
-          serverSignatures.add(signature);
-        } else {
-          localKeyToSignature[key] = signature;
-        }
-        merged[key] = PlannedVisit(
-          id: remoteId ?? localId,
-          organisationName: '${row['org_name'] ?? ''}',
-          organisationId: (row['org_id'] as num?)?.toInt(),
-          organisationType: (row['org_type'] ?? 'lpu') == 'pharmacy'
-              ? OrgType.pharmacy
-              : OrgType.lpu,
-          doctorName: (row['doctor_name'] as String?)?.isNotEmpty == true
-              ? row['doctor_name'] as String
-              : null,
-          assignedBy: row['assigned_by'] as String? ?? '',
-          city: row['city'] as String?,
-          district: row['district'] as String?,
-          date: visitDate,
-          status: VisitStatus.planned,
-          visitFormat: row['visit_format'] as String?,
-        );
-      }
-    } catch (_) {}
-
-    // Local DB visits (created by this user on this device)
-    try {
-      final localRows = await _db.getVisits();
-      for (final row in localRows) {
-        final localId = (row['id'] as num?)?.toInt();
-        if (localId == null) continue;
-        final status = '${row['status'] ?? 'planned'}'.toLowerCase();
-        if (status == 'completed') continue;
-        final remoteId = (row['remote_id'] as num?)?.toInt();
-        final createdRaw = '${row['created_at'] ?? ''}';
-        final created = DateTime.tryParse(createdRaw);
-        if (created == null) continue;
-        final visitType = '${row['visit_type'] ?? 'lpu'}'.toLowerCase();
-        final orgName = '${row['org_name'] ?? ''}'.trim();
-        if (orgName.isEmpty) continue;
-        final key = remoteId != null ? 'r_$remoteId' : 'l_$localId';
-        merged[key] = PlannedVisit(
-          id: remoteId ?? localId,
-          organisationName: orgName,
-          organisationId: (row['org_id'] as num?)?.toInt(),
-          organisationType:
-              (visitType == 'pharmacy' ||
-                  visitType == 'order' ||
-                  visitType == 'circle')
-              ? OrgType.pharmacy
-              : OrgType.lpu,
-          doctorName: '${row['doctor_name'] ?? ''}'.trim().isEmpty
-              ? null
-              : '${row['doctor_name']}'.trim(),
-          assignedBy: 'Локально',
-          city: null,
-          date: created,
-          status: status == 'completed'
-              ? VisitStatus.completed
-              : VisitStatus.planned,
-        );
-      }
-    } catch (_) {}
-
-    // Drop un-stamped local planned rows whose server twin (same org + day)
-    // is already present, so a failed remote-id stamp doesn't surface a
-    // doctorless/wrong-type duplicate card after the next pull/restart.
-    localKeyToSignature.forEach((key, signature) {
-      if (serverSignatures.contains(signature)) {
-        merged.remove(key);
-      }
-    });
-
-    final list = merged.values.toList()
-      ..sort((a, b) => b.date.compareTo(a.date));
-    state = list;
-  }
-
-  void addPlannedVisit(PlannedVisit visit) {
-    state = [...state, visit];
-  }
-}
-
-final plannedVisitsProvider =
-    StateNotifierProvider<PlannedVisitsNotifier, List<PlannedVisit>>((ref) {
-      return PlannedVisitsNotifier(ref.watch(localDatabaseProvider));
-    });
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -213,7 +92,9 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
       debugPrint('Plan: openVisitDetail failed: $e\n$st');
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text(l10n.t('couldNotOpenVisit', args: {'error': '$e'}))),
+        SnackBar(
+          content: Text(l10n.t('couldNotOpenVisit', args: {'error': '$e'})),
+        ),
       );
     }
   }
@@ -593,7 +474,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
   }
 
   Future<void> _openCreateVisitSheet() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(doctorsRepositoryProvider);
 
     await showModalBottomSheet(
       context: context,
@@ -701,7 +582,9 @@ class _PlanVisitCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isCompleted = visit.status == VisitStatus.completed;
-    final statusText = isCompleted ? context.l10n.t('conducted') : context.l10n.t('planned');
+    final statusText = isCompleted
+        ? context.l10n.t('conducted')
+        : context.l10n.t('planned');
     // Cream/orange palette for "Запланировано", green-ish for "Проведено".
     final statusBg = isCompleted
         ? const Color(0xFFE6F7EE)
@@ -743,7 +626,9 @@ class _PlanVisitCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      doctorCsv.isEmpty ? context.l10n.t('doctorNotAssigned') : doctorCsv,
+                      doctorCsv.isEmpty
+                          ? context.l10n.t('doctorNotAssigned')
+                          : doctorCsv,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.manrope(
@@ -827,7 +712,7 @@ class _PlanVisitCard extends StatelessWidget {
 // ─── Create Visit Sheet ───────────────────────────────────────────────────────
 
 class _CreateVisitSheet extends ConsumerStatefulWidget {
-  final LocalDatabase db;
+  final DoctorsRepository db;
   final DateTime selectedDay;
   final String Function(int) monthRu;
   final void Function(PlannedVisit) onSubmit;
@@ -869,7 +754,10 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
     super.didChangeDependencies();
     if (_lpuFormats.isEmpty) {
       _lpuFormats = [
-        _PickerOption(value: 'group', label: context.l10n.t('groupPresentation')),
+        _PickerOption(
+          value: 'group',
+          label: context.l10n.t('groupPresentation'),
+        ),
         _PickerOption(value: 'double', label: context.l10n.t('doubleVisit')),
       ];
       _pharmacyFormats = [
@@ -889,7 +777,7 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
   /// Filters out id=4 so the picker shows group/double as separate items.
   Future<void> _loadFormats() async {
     try {
-      final rows = await widget.db.getVisitFormats();
+      final rows = await ref.read(visitsRepositoryProvider).getVisitFormats();
       if (!mounted || rows.isEmpty) return;
 
       final lpuOpts = <_PickerOption<String>>[];
@@ -933,9 +821,10 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
   List<Map<String, dynamic>> get _allOrgs => _isLpu ? _lpuOrgs : _pharmacyOrgs;
 
   Future<void> _loadOrgs() async {
+    final orgsRepo = ref.read(organisationsRepositoryProvider);
     final rows = await Future.wait([
-      widget.db.getOrganisations(type: 'lpu'),
-      widget.db.getOrganisations(type: 'pharmacy'),
+      orgsRepo.getLocal(type: 'lpu'),
+      orgsRepo.getLocal(type: 'pharmacy'),
     ]);
     if (!mounted) return;
     setState(() {
@@ -1250,7 +1139,10 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
                         ),
                       ),
                       child: Text(
-                        context.l10n.t('doneCount', args: {'count': '${draft.length}'}),
+                        context.l10n.t(
+                          'doneCount',
+                          args: {'count': '${draft.length}'},
+                        ),
                         style: GoogleFonts.manrope(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
@@ -1422,7 +1314,8 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
       10,
       0,
     );
-    final userName = ref.read(authProvider).user?.fullName ?? context.l10n.t('you');
+    final userName =
+        ref.read(authProvider).user?.fullName ?? context.l10n.t('you');
     final comment = _commentCtrl.text.trim();
 
     final localRow = <String, dynamic>{
@@ -1442,8 +1335,9 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
 
     int localPlanId;
     try {
-      localPlanId = await widget.db.insertLocalPlannedVisit(localRow);
-      await widget.db.enqueuePendingPlan(
+      final visitsRepo = ref.read(visitsRepositoryProvider);
+      localPlanId = await visitsRepo.insertLocalPlannedVisit(localRow);
+      await visitsRepo.enqueuePendingPlan(
         localPlanId: localPlanId,
         orgId: orgId,
         orgType: _isLpu ? 'lpu' : 'pharmacy',
@@ -1456,7 +1350,9 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
       if (!mounted) return;
       setState(() => _submitting = false);
       messenger.showSnackBar(
-        SnackBar(content: Text(l10n.t('couldNotSavePlan', args: {'error': '$e'}))),
+        SnackBar(
+          content: Text(l10n.t('couldNotSavePlan', args: {'error': '$e'})),
+        ),
       );
       return;
     }
@@ -1576,7 +1472,11 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
             child: Row(
               children: [
                 _tabBtn(context.l10n.t('lpu'), _isLpu, () => _switchTab(true)),
-                _tabBtn(context.l10n.t('pharmacyOne'), !_isLpu, () => _switchTab(false)),
+                _tabBtn(
+                  context.l10n.t('pharmacyOne'),
+                  !_isLpu,
+                  () => _switchTab(false),
+                ),
               ],
             ),
           ),
@@ -1584,13 +1484,17 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
 
           // Organization dropdown
           _selectField(
-            hint: _isLpu ? context.l10n.t('orgNameHint') : context.l10n.t('pharmacyNameHint'),
+            hint: _isLpu
+                ? context.l10n.t('orgNameHint')
+                : context.l10n.t('pharmacyNameHint'),
             value: _selectedOrg?['name']?.toString(),
             onTap: _allOrgs.isEmpty
                 ? null
                 : () async {
                     final picked = await _openPicker<int>(
-                      title: _isLpu ? context.l10n.t('selectLpu') : context.l10n.t('selectPharmacyTitle'),
+                      title: _isLpu
+                          ? context.l10n.t('selectLpu')
+                          : context.l10n.t('selectPharmacyTitle'),
                       selected: selectedOrgId,
                       searchable: true,
                       options: _allOrgs
@@ -1646,7 +1550,9 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
 
           // Visit form type dropdown
           _selectField(
-            hint: _isLpu ? context.l10n.t('visitFormatHint') : context.l10n.t('visitTypeHint'),
+            hint: _isLpu
+                ? context.l10n.t('visitFormatHint')
+                : context.l10n.t('visitTypeHint'),
             value: () {
               if (_selectedForm == null) return null;
               final opts = _isLpu ? _lpuFormats : _pharmacyFormats;
@@ -1661,7 +1567,9 @@ class _CreateVisitSheetState extends ConsumerState<_CreateVisitSheet> {
             onTap: () async {
               final options = _isLpu ? _lpuFormats : _pharmacyFormats;
               final picked = await _openPicker<String>(
-                title: _isLpu ? context.l10n.t('visitFormatTitle') : context.l10n.t('visitType'),
+                title: _isLpu
+                    ? context.l10n.t('visitFormatTitle')
+                    : context.l10n.t('visitType'),
                 selected: _selectedForm,
                 options: options,
               );

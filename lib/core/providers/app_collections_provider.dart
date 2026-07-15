@@ -2,13 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
-import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/models/models.dart';
-import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/network/api_client.dart';
-
-const _favoritePharmacyIdsKey = 'favorite_pharmacy_ids';
-const _cartItemsKey = 'cart_items';
+import 'package:lima/features/collections/data/favorites_repository.dart';
+import 'package:lima/features/collections/data/cart_repository.dart';
 
 class CartItemSnapshot {
   final int drugId;
@@ -208,24 +204,18 @@ class AppCollectionsState {
 
 class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
   final Ref _ref;
-  final dynamic _prefs;
+  final FavoritesRepository _favorites;
+  final CartRepository _cart;
 
-  AppCollectionsNotifier(this._ref, this._prefs)
+  AppCollectionsNotifier(this._ref, this._favorites, this._cart)
     : super(const AppCollectionsState()) {
     _load();
   }
 
   Future<void> _load() async {
-    final storedFavoriteIds = _prefs.getStringList(_favoritePharmacyIdsKey);
-    final Set<int> favoritePharmacyIds =
-        (storedFavoriteIds == null || storedFavoriteIds.isEmpty)
-        ? <int>{}
-        : storedFavoriteIds
-              .map((id) => int.tryParse('$id'))
-              .whereType<int>()
-              .toSet();
+    final favoritePharmacyIds = _favorites.readLocal();
 
-    final storedCartItems = _prefs.getStringList(_cartItemsKey) ?? [];
+    final storedCartItems = _cart.readRawLocal();
     final cartItems = <CartItemSnapshot>[];
     for (final raw in storedCartItems) {
       try {
@@ -259,16 +249,14 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     }
 
     try {
-      final api = _ref.read(remoteApiServiceProvider);
-      final remoteFavorites = await api.getFavoriteOrganizations();
+      final remoteFavorites = await _favorites.getRemote();
       final remoteIds = remoteFavorites
           .map((e) => e['id'])
           .whereType<int>()
           .toSet();
-      final db = _ref.read(localDatabaseProvider);
-      await db.clearOrgFavorites();
+      await _favorites.clearOrgFavoritesLocal();
       for (final id in remoteIds) {
-        await db.updateOrgFavorite(id, true);
+        await _favorites.setOrgFavoriteLocal(id, true);
       }
       state = state.copyWith(favoritePharmacyIds: remoteIds);
       await _persistFavorites(remoteIds);
@@ -278,8 +266,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
 
     // Load server-side cart — overwrites local cache if server returns items.
     try {
-      final api = _ref.read(remoteApiServiceProvider);
-      final serverItems = await api.getServerCart();
+      final serverItems = await _cart.getServerCart();
       if (serverItems.isNotEmpty) {
         final cartItems = serverItems
             .map((e) => CartItemSnapshot.fromJson(e))
@@ -294,19 +281,10 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     }
   }
 
-  Future<void> _persistFavorites(Set<int> ids) async {
-    await _prefs.setStringList(
-      _favoritePharmacyIdsKey,
-      ids.map((id) => '$id').toList(),
-    );
-  }
+  Future<void> _persistFavorites(Set<int> ids) => _favorites.persist(ids);
 
-  Future<void> _persistCart(List<CartItemSnapshot> items) async {
-    await _prefs.setStringList(
-      _cartItemsKey,
-      items.map((item) => jsonEncode(item.toJson())).toList(),
-    );
-  }
+  Future<void> _persistCart(List<CartItemSnapshot> items) =>
+      _cart.persistRaw(items.map((item) => jsonEncode(item.toJson())).toList());
 
   Future<bool> toggleFavoritePharmacy(int pharmacyId) async {
     final next = {...state.favoritePharmacyIds};
@@ -319,20 +297,18 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     state = state.copyWith(favoritePharmacyIds: next);
     await _persistFavorites(next);
 
-    final db = _ref.read(localDatabaseProvider);
-    await db.updateOrgFavorite(pharmacyId, !had);
+    await _favorites.setOrgFavoriteLocal(pharmacyId, !had);
 
     try {
-      final api = _ref.read(remoteApiServiceProvider);
       if (had) {
-        await api.removeOrganizationFromFavorites(pharmacyId);
+        await _favorites.removeRemote(pharmacyId);
       } else {
-        await api.addOrganizationToFavorites(pharmacyId);
+        await _favorites.addRemote(pharmacyId);
       }
     } catch (_) {
       // Queue for retry when internet returns.
       try {
-        await db.enqueueFavorite(
+        await _favorites.enqueuePending(
           entityType: 'pharmacy',
           entityId: pharmacyId,
           add: !had,
@@ -451,8 +427,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     }
     for (final id in removedCartIds) {
       try {
-        final api = _ref.read(remoteApiServiceProvider);
-        await api.clearServerCart(id);
+        await _cart.clearServerCart(id);
       } catch (_) {}
     }
   }
@@ -469,8 +444,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     }
     for (final cartId in cartIds) {
       try {
-        final api = _ref.read(remoteApiServiceProvider);
-        await api.clearServerCart(cartId);
+        await _cart.clearServerCart(cartId);
       } catch (_) {
         // Best-effort: server cart deletion failures are non-blocking.
       }
@@ -511,5 +485,9 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
 
 final appCollectionsProvider =
     StateNotifierProvider<AppCollectionsNotifier, AppCollectionsState>((ref) {
-      return AppCollectionsNotifier(ref, ref.watch(sharedPreferencesProvider));
+      return AppCollectionsNotifier(
+        ref,
+        ref.watch(favoritesRepositoryProvider),
+        ref.watch(cartRepositoryProvider),
+      );
     });

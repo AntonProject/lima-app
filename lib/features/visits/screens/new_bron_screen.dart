@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/knowledge/data/drugs_repository.dart';
+import 'package:lima/features/visits/data/organisations_repository.dart';
+import 'package:lima/features/visits/data/visits_repository.dart';
 import 'package:lima/core/models/models.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
@@ -134,7 +136,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
   }
 
   Future<void> _loadDrugs() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(drugsRepositoryProvider);
 
     // Seed from cart snapshot first so items show immediately even if DB lookup
     // returns a different ID space (price-list binding IDs vs dict drug IDs).
@@ -355,9 +357,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         return;
       }
 
-      final db = ref.read(localDatabaseProvider);
-      final api = ref.read(remoteApiServiceProvider);
-      final org = await db.getOrganisationById(widget.pharmacyId);
+      final db = ref.read(visitsRepositoryProvider);
+      final org = await ref
+          .read(organisationsRepositoryProvider)
+          .getById(widget.pharmacyId);
       final organizationInn = _parseInt(org?['inn']);
 
       Map<String, dynamic>? pricingTerms;
@@ -373,7 +376,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
           };
         } else {
           try {
-            pricingTerms = await api.resolveOrderPricingTerms(
+            pricingTerms = await db.resolveOrderPricingTerms(
               prepaymentPercent: _prepayment,
               isWholesaler: isWholesaler,
               orderTotal: _total,
@@ -443,7 +446,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       ref.invalidate(dashboardCountsProvider);
       if (!isOffline) {
         try {
-          final pushResult = await api.createOrderVisitDebug(
+          final pushResult = await db.createOrderVisitDebug(
             orderUserId: orderUserId,
             organizationId: widget.pharmacyId,
             companyId: _parseInt(pricingTerms?['company_id']),
@@ -479,7 +482,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
             // Replace local request payload with canonical server history payload
             // so UI details (e.g. serial_no, computed sums) match agent view.
             try {
-              final remoteRow = await api.getVisitHistoryOrderById(remoteId);
+              final remoteRow = await db.getVisitHistoryOrderById(remoteId);
               if (remoteRow != null) {
                 final remoteRaw = remoteRow['raw_json'] is String
                     ? remoteRow['raw_json'] as String

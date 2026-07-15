@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/knowledge/data/drugs_repository.dart';
 import 'package:lima/core/network/api_client.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -129,7 +129,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
   }
 
   Future<void> _load() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(drugsRepositoryProvider);
     final drugs = await db.getDrugs(onlyWithPositivePrice: false);
     final drug = drugs.where((d) => d['id'] == widget.drugId).firstOrNull;
     final materials = await db.getDrugMaterials(widget.drugId);

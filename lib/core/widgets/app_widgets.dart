@@ -151,7 +151,7 @@ class LimaCard extends StatelessWidget {
           color: Colors.transparent,
           borderRadius: BorderRadius.circular(radius),
           child: InkWell(
-            onTap: onTap,
+            onTap: onTap == null ? null : () {},
             borderRadius: BorderRadius.circular(radius),
             child: Padding(
               padding: padding ?? const EdgeInsets.all(16),

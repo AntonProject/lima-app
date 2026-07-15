@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/collections/data/favorites_repository.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
@@ -31,8 +31,8 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
   }
 
   Future<void> _load() async {
-    final db = ref.read(localDatabaseProvider);
-    final pharmacies = await db.getFavoriteOrgs(type: 'pharmacy');
+    final repo = ref.read(favoritesRepositoryProvider);
+    final pharmacies = await repo.getFavoriteOrgsLocal(type: 'pharmacy');
     if (!mounted) return;
     setState(() {
       _pharmacies = pharmacies;

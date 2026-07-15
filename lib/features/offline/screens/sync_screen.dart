@@ -9,7 +9,7 @@ import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/utils/swallowed.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/offline/data/sync_diagnostics_repository.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
@@ -38,7 +38,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   @override
   void initState() {
     super.initState();
-    _dbChangesSub = ref.read(localDatabaseProvider).changes.listen((tables) {
+    _dbChangesSub = ref.read(syncDiagnosticsRepositoryProvider).changes.listen((tables) {
       if (!mounted) return;
       if (tables.intersection(_localDataTables).isEmpty) return;
       unawaited(_loadData(refreshSyncCount: false));
@@ -69,7 +69,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   Future<void> _loadData({bool refreshSyncCount = true}) async {
     if (!mounted || _loadingData) return;
     _loadingData = true;
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(syncDiagnosticsRepositoryProvider);
     final syncNotifier = ref.read(syncProvider.notifier);
     try {
       await db.deleteLegacyTestVisits();
@@ -99,30 +99,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     }
   }
 
-  Future<Map<String, int>> _loadLocalTotals(LocalDatabase db) async {
-    Future<int> count(String sql) async {
-      final rows = await db.db.rawQuery(sql);
-      if (rows.isEmpty) return 0;
-      return (rows.first['c'] as num?)?.toInt() ?? 0;
-    }
-
-    return {
-      'organizations': await count('SELECT COUNT(*) AS c FROM organisations'),
-      'lpu': await count(
-        "SELECT COUNT(*) AS c FROM organisations WHERE type = 'lpu'",
-      ),
-      'pharmacy': await count(
-        "SELECT COUNT(*) AS c FROM organisations WHERE type = 'pharmacy'",
-      ),
-      'distributor': await count(
-        "SELECT COUNT(*) AS c FROM organisations WHERE type = 'distributor'",
-      ),
-      'doctors': await count('SELECT COUNT(*) AS c FROM doctors'),
-      'visits': await count('SELECT COUNT(*) AS c FROM visits'),
-      'drugs': await count('SELECT COUNT(*) AS c FROM drugs'),
-      'materials': await count('SELECT COUNT(*) AS c FROM drug_materials'),
-    };
-  }
+  Future<Map<String, int>> _loadLocalTotals(SyncDiagnosticsRepository db) =>
+      db.getLocalTotals();
 
   int get _unsyncedTotalPages {
     if (_unsyncedVisits.isEmpty) return 1;
@@ -506,7 +484,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   }
 
   Future<void> _retryFailedVisit(int id) async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(syncDiagnosticsRepositoryProvider);
     await db.retryFailedVisit(id);
     if (!mounted) return;
     await ref.read(syncProvider.notifier).refreshUnsyncedCount();
@@ -536,7 +514,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(syncDiagnosticsRepositoryProvider);
     await db.deleteVisit(id);
     if (!mounted) return;
     await ref.read(syncProvider.notifier).refreshUnsyncedCount();
@@ -671,7 +649,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(syncDiagnosticsRepositoryProvider);
     await db.deletePendingDoctor(id);
   }
 

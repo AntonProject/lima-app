@@ -1617,6 +1617,11 @@ class LocalDatabase {
     }
   }
 
+  Future<void> clearCachedStats() async {
+    await db.delete('cached_stats');
+    _notifyChanged(['cached_stats']);
+  }
+
   // ── Favourite Organisations ───────────────────────────────────────────────
 
   Future<void> updateOrgFavorite(int orgId, bool isFavorite) async {

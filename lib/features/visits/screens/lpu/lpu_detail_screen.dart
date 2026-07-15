@@ -7,8 +7,9 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/services/app_actions.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
-import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/network/remote_api_service.dart';
+import 'package:lima/features/collections/data/favorites_repository.dart';
+import 'package:lima/features/visits/data/doctors_repository.dart';
+import 'package:lima/features/visits/data/organisations_repository.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
@@ -58,15 +59,15 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
 
   Future<void> _loadOrg() async {
     final org = await ref
-        .read(localDatabaseProvider)
-        .getOrganisationById(widget.orgId);
+        .read(organisationsRepositoryProvider)
+        .getById(widget.orgId);
     if (!mounted) return;
     setState(() => _org = org);
   }
 
   Future<void> _loadDoctors() async {
     final hadVisitLabel = context.l10n.t('hadVisit');
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(doctorsRepositoryProvider);
     var results = await db.getDoctors(
       orgId: widget.orgId,
       includeGlobalFallback: false,
@@ -76,11 +77,11 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       _remoteDoctorsLoaded = true;
       try {
         final remoteDoctors = await ref
-            .read(remoteApiServiceProvider)
-            .getDoctorsByOrganization(widget.orgId);
+            .read(doctorsRepositoryProvider)
+            .getByOrganizationRemote(widget.orgId);
         if (remoteDoctors.length > results.length) {
-          await db.upsertDoctors(remoteDoctors);
-          await db.upsertDoctorOrganisationLinks(
+          await db.upsertLocal(remoteDoctors);
+          await db.upsertOrganisationLinks(
             remoteDoctors
                 .map((d) => (d['id'] as num?)?.toInt())
                 .whereType<int>()
@@ -131,11 +132,11 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
 
     setState(() => doctor['is_favorite'] = next ? 1 : 0);
 
-    final db = ref.read(localDatabaseProvider);
-    final api = ref.read(remoteApiServiceProvider);
-    var updated = await db.updateDoctorFavorite(doctorId, next);
+    final doctorsRepo = ref.read(doctorsRepositoryProvider);
+    final favorites = ref.read(favoritesRepositoryProvider);
+    var updated = await favorites.setDoctorFavoriteLocal(doctorId, next);
     if (updated == 0) {
-      await db.upsertDoctors([
+      await doctorsRepo.upsertLocal([
         {
           'id': doctorId,
           'full_name': (doctor['full_name'] ?? doctor['name'] ?? '').toString(),
@@ -152,13 +153,13 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
           'updated_at': DateTime.now().toIso8601String(),
         },
       ]);
-      await db.updateDoctorFavorite(doctorId, next);
+      await favorites.setDoctorFavoriteLocal(doctorId, next);
     }
     try {
       if (next) {
-        await api.addDoctorToFavorites(doctorId);
+        await favorites.addDoctorRemote(doctorId);
       } else {
-        await api.removeDoctorFromFavorites(doctorId);
+        await favorites.removeDoctorRemote(doctorId);
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -171,7 +172,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     } catch (_) {
       // Queue for retry when internet returns.
       try {
-        await db.enqueueFavorite(
+        await favorites.enqueuePending(
           entityType: 'doctor',
           entityId: doctorId,
           add: next,
@@ -416,8 +417,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     );
     if (saved != true) return;
 
-    final db = ref.read(localDatabaseProvider);
-    final api = ref.read(remoteApiServiceProvider);
+    final orgs = ref.read(organisationsRepositoryProvider);
     final name = nameCtrl.text.trim();
     final address = addressCtrl.text.trim();
     final phone = phoneCtrl.text.trim();
@@ -428,7 +428,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     final responsible = responsibleCtrl.text.trim();
 
     // Сначала сохраняем локально — UI реагирует мгновенно
-    await db.updateOrganisation(
+    await orgs.updateLocal(
       id: widget.orgId,
       name: name,
       address: address,
@@ -450,7 +450,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
 
     // Отправляем в API в фоне; при ошибке кладём в очередь
     try {
-      await api.updateOrganization(
+      await orgs.updateRemote(
         organizationId: widget.orgId,
         name: name,
         address: address,
@@ -464,7 +464,7 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
         longitude: lon,
       );
     } catch (_) {
-      await db.enqueuePendingOrgUpdate(
+      await orgs.enqueuePendingOrgUpdate(
         orgId: widget.orgId,
         name: name,
         address: address,

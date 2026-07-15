@@ -5,9 +5,9 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'dart:convert';
 import 'package:lima/core/i18n/app_i18n.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/knowledge/data/drugs_repository.dart';
+import 'package:lima/features/visits/data/visits_repository.dart';
 import 'package:lima/core/models/local_visit.dart';
-import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/providers/dashboard_counts_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -57,7 +57,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
   }
 
   Future<void> _loadDrugs() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(drugsRepositoryProvider);
     final rows = await db.getDrugs();
     final loaded = rows.map(Drug.fromJson).toList();
     if (!mounted) return;
@@ -177,7 +177,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
         'start_date': now,
         'end_date': now,
       });
-      localId = await ref.read(localDatabaseProvider).insertVisit({
+      localId = await ref.read(visitsRepositoryProvider).insertVisit({
         'remote_id': null,
         'org_id': widget.pharmacyId,
         'org_name': widget.pharmacyName,
@@ -197,7 +197,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
         try {
           final createdAt = DateTime.tryParse(now) ?? DateTime.now();
           final pushResult = await ref
-              .read(remoteApiServiceProvider)
+              .read(visitsRepositoryProvider)
               .pushUnsyncedVisitDebug(
                 LocalVisit(
                   id: localId,
@@ -213,7 +213,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                   rawJson: rawVisitJson,
                 ),
               );
-          await ref.read(localDatabaseProvider).markSynced([localId]);
+          await ref.read(visitsRepositoryProvider).markSynced([localId]);
           final responseObj = pushResult['response'];
           final remoteId = switch (responseObj) {
             int v => v,
@@ -229,11 +229,11 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
           };
           if (remoteId != null) {
             await ref
-                .read(localDatabaseProvider)
+                .read(visitsRepositoryProvider)
                 .updateVisitRemoteId(localVisitId: localId, remoteId: remoteId);
             try {
               final remoteRow = await ref
-                  .read(remoteApiServiceProvider)
+                  .read(visitsRepositoryProvider)
                   .getVisitHistoryRemnantById(remoteId);
               if (remoteRow != null) {
                 final serverRaw = remoteRow['raw_json'];
@@ -253,7 +253,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
                   mergedRaw['drugs'] = drugsPayload;
                 }
                 await ref
-                    .read(localDatabaseProvider)
+                    .read(visitsRepositoryProvider)
                     .updateVisitRawJson(
                       localVisitId: localId,
                       rawJson: jsonEncode(mergedRaw),
@@ -262,7 +262,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
             } catch (_) {}
           }
           await ref
-              .read(localDatabaseProvider)
+              .read(visitsRepositoryProvider)
               .setVisitPushPayload(
                 visitId: localId,
                 requestJson: jsonEncode(pushResult['request']),
@@ -270,7 +270,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
               );
         } catch (e) {
           await ref
-              .read(localDatabaseProvider)
+              .read(visitsRepositoryProvider)
               .setVisitPushPayload(
                 visitId: localId,
                 responseJson: jsonEncode({'error': '$e'}),

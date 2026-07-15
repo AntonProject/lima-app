@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lima/core/dialogs/payment_type_dialog.dart';
-import 'package:lima/core/network/remote_api_service.dart';
+import 'package:lima/features/visits/dialogs/payment_type_dialog.dart';
+import 'package:lima/features/visits/data/visits_repository.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import '../../../../core/i18n/app_i18n.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -111,7 +111,7 @@ class PharmacyTypeScreen extends ConsumerWidget {
                     try {
                       final companyId = ref.read(authProvider).user?.companyId;
                       allowWholesale = await ref
-                          .read(remoteApiServiceProvider)
+                          .read(visitsRepositoryProvider)
                           .supportsWholesaleOrders(companyId: companyId);
                     } catch (_) {
                       allowWholesale = true;
@@ -166,9 +166,7 @@ class PharmacyTypeScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 16),
 
-                HintBox(
-                  text: context.l10n.t('bronNote'),
-                ),
+                HintBox(text: context.l10n.t('bronNote')),
               ],
             ),
           ),

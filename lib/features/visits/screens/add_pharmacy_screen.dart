@@ -6,9 +6,8 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../../../core/db/local_database.dart';
+import '../data/organisations_repository.dart';
 import '../../../core/i18n/app_i18n.dart';
-import '../../../core/network/remote_api_service.dart';
 import '../../../core/providers/connectivity_provider.dart';
 import '../../../core/providers/form_dictionaries_provider.dart';
 import '../../../core/theme/app_theme.dart';
@@ -176,7 +175,7 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
     // Districts are fetched per region from /dict/common/areas/{regionId}.
     try {
       final areas = await ref
-          .read(remoteApiServiceProvider)
+          .read(organisationsRepositoryProvider)
           .getAreas(id);
       if (!mounted) return;
       setState(() {
@@ -412,8 +411,7 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
     final l10n = context.l10n;
     setState(() => _submitting = true);
 
-    final db = ref.read(localDatabaseProvider);
-    final api = ref.read(remoteApiServiceProvider);
+    final db = ref.read(organisationsRepositoryProvider);
 
     final name = _nameCtrl.text.trim();
     final inn = _innCtrl.text.trim();
@@ -429,7 +427,7 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
     // it for the next sync.
     final tempId = -(DateTime.now().millisecondsSinceEpoch ~/ 1000);
     try {
-      await db.insertLocalOrganisation({
+      await db.insertLocal({
         'id': tempId,
         'name': name,
         'address': address,
@@ -460,7 +458,7 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
     var queued = false;
     if (!offline) {
       try {
-        final remoteId = await api.createOrganization(
+        final remoteId = await db.createRemote(
           name: name,
           inn: inn,
           typeId: _typeId,
@@ -478,7 +476,7 @@ class _AddPharmacyScreenState extends ConsumerState<AddPharmacyScreen> {
           longitude: _longitude,
         );
         if (remoteId != null) {
-          await db.replaceOrganizationTempId(tempId, remoteId);
+          await db.replaceTempId(tempId, remoteId);
         }
       } catch (_) {
         queued = true;

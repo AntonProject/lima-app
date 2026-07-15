@@ -6,8 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
-import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/network/remote_api_service.dart';
+import 'package:lima/features/knowledge/data/drugs_repository.dart';
+import 'package:lima/features/visits/data/visits_repository.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
@@ -80,7 +80,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
   }
 
   Future<void> _loadDrugs() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(drugsRepositoryProvider);
     final rows = await db.getDrugs();
     final loaded = rows
         .map(Drug.fromJson)
@@ -172,7 +172,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
             .toList();
         try {
           pricingDraft = await ref
-              .read(remoteApiServiceProvider)
+              .read(visitsRepositoryProvider)
               .prepareOrderVisitDraft(
                 prepaymentPercent: _prepayment,
                 isWholesaler: isWholesaler,

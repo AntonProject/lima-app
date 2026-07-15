@@ -6,8 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
-import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/network/remote_api_service.dart';
+import 'package:lima/features/visits/data/organisations_repository.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/services/app_actions.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -51,8 +50,8 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
 
   Future<void> _loadOrg() async {
     final org = await ref
-        .read(localDatabaseProvider)
-        .getOrganisationById(widget.pharmacyId);
+        .read(organisationsRepositoryProvider)
+        .getById(widget.pharmacyId);
     if (!mounted) return;
     setState(() => _org = org);
   }
@@ -248,8 +247,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
     );
     if (saved != true) return;
 
-    final db = ref.read(localDatabaseProvider);
-    final api = ref.read(remoteApiServiceProvider);
+    final orgs = ref.read(organisationsRepositoryProvider);
     final name = nameCtrl.text.trim();
     final address = addressCtrl.text.trim();
     final phone = phoneCtrl.text.trim();
@@ -260,7 +258,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
     final responsible = responsibleCtrl.text.trim();
 
     // Сначала сохраняем локально — UI реагирует мгновенно
-    await db.updateOrganisation(
+    await orgs.updateLocal(
       id: widget.pharmacyId,
       name: name,
       address: address,
@@ -282,7 +280,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
 
     // Отправляем в API в фоне; при ошибке кладём в очередь
     try {
-      await api.updateOrganization(
+      await orgs.updateRemote(
         organizationId: widget.pharmacyId,
         name: name,
         address: address,
@@ -296,7 +294,7 @@ class _PharmacyDetailScreenState extends ConsumerState<PharmacyDetailScreen> {
         longitude: lon,
       );
     } catch (_) {
-      await db.enqueuePendingOrgUpdate(
+      await orgs.enqueuePendingOrgUpdate(
         orgId: widget.pharmacyId,
         name: name,
         address: address,

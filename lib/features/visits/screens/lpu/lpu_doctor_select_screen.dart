@@ -4,10 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/visits/data/doctors_repository.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/dialogs/manager_select_dialog.dart';
-import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/providers/form_dictionaries_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -78,16 +77,16 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
 
   /// Ensures the preselected doctor (from a favourite) appears in the list even
   /// when [getDoctors] filtered it out (e.g. global doctor not org-linked).
-  Future<void> _ensurePreselectedDoctorLoaded(LocalDatabase db) async {
+  Future<void> _ensurePreselectedDoctorLoaded(DoctorsRepository db) async {
     final preselect = widget.preselectedDoctorId;
     if (preselect == null || _query.isNotEmpty) return;
     if (_doctors.any((d) => '${d['id']}' == '$preselect')) return;
-    final row = await db.getDoctorById(preselect);
+    final row = await db.getById(preselect);
     if (row != null) _doctors.insert(0, Map<String, dynamic>.from(row));
   }
 
   Future<void> _loadDoctors() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(doctorsRepositoryProvider);
     var results = await db.getDoctors(
       orgId: widget.orgId,
       query: _query.isEmpty ? null : _query,
@@ -100,11 +99,11 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
       _remoteDoctorsLoaded = true;
       try {
         final remoteDoctors = await ref
-            .read(remoteApiServiceProvider)
-            .getDoctorsByOrganization(widget.orgId);
+            .read(doctorsRepositoryProvider)
+            .getByOrganizationRemote(widget.orgId);
         if (remoteDoctors.length > results.length) {
-          await db.upsertDoctors(remoteDoctors);
-          await db.upsertDoctorOrganisationLinks(
+          await db.upsertLocal(remoteDoctors);
+          await db.upsertOrganisationLinks(
             remoteDoctors
                 .map((d) => (d['id'] as num?)?.toInt())
                 .whereType<int>()
@@ -326,8 +325,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     if (result == null) return;
     if (!mounted) return;
     final noVisitsLabel = context.l10n.t('noVisitsYet');
-    final db = ref.read(localDatabaseProvider);
-    final api = ref.read(remoteApiServiceProvider);
+    final db = ref.read(doctorsRepositoryProvider);
     final now = DateTime.now().toIso8601String();
     final specId = result['specialization_id'] as int;
 
@@ -335,7 +333,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     final tempId = -(DateTime.now().millisecondsSinceEpoch ~/ 1000);
 
     // Сначала сохраняем локально, чтобы врач был доступен сразу.
-    await db.insertDoctor({
+    await db.insertLocal({
       'id': tempId,
       'full_name': result['name'],
       'specialty': result['specialization_name'],
@@ -349,7 +347,7 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     // Пробуем отправить в API немедленно.
     int? remoteDoctorId;
     try {
-      remoteDoctorId = await api.addDoctor(
+      remoteDoctorId = await db.addRemote(
         organizationId: widget.orgId,
         fullName: result['name'] ?? '',
         specializationId: specId,
@@ -363,10 +361,10 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
     }
 
     if (remoteDoctorId != null) {
-      await db.replaceDoctorTempId(tempId, remoteDoctorId);
+      await db.replaceTempId(tempId, remoteDoctorId);
     } else {
       // Оффлайн — в очередь с полным payload; temp id живёт до синхронизации.
-      await db.enqueuePendingDoctor(
+      await db.enqueuePending(
         tempLocalId: tempId,
         orgId: widget.orgId,
         fullName: result['name'] ?? '',

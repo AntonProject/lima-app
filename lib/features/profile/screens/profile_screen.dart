@@ -14,10 +14,9 @@ import 'package:lima/core/dialogs/feedback_dialog.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/providers/dashboard_counts_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
-import 'package:lima/core/network/api_client.dart';
-import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/services/local_notifications_service.dart';
-import 'package:lima/core/services/material_cache_service.dart';
+import 'package:lima/features/collections/data/favorites_repository.dart';
+import 'package:lima/features/knowledge/data/drugs_repository.dart';
 import 'package:lima/core/models/models.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
@@ -51,8 +50,7 @@ String _doctorsLabel(BuildContext context, int count) =>
 final favoriteDoctorsCountProvider = FutureProvider.autoDispose<int>((
   ref,
 ) async {
-  final db = ref.watch(localDatabaseProvider);
-  return db.getFavoriteDoctorsCount();
+  return ref.watch(favoritesRepositoryProvider).getFavoriteDoctorsCount();
 });
 
 class ProfileScreen extends ConsumerWidget {
@@ -330,14 +328,9 @@ class ProfileScreen extends ConsumerWidget {
                       await ref
                           .read(appCollectionsProvider.notifier)
                           .clearCart();
-                      final db = ref.read(localDatabaseProvider);
-                      final apiClient = ref.read(apiClientProvider);
-                      final cacheService = MaterialCacheService(
-                        dio: apiClient.dio,
-                        authToken: apiClient.token,
-                      );
-                      await cacheService.clearCache(db);
-                      await db.db.delete('cached_stats');
+                      await ref
+                          .read(drugsRepositoryProvider)
+                          .clearMaterialsCache();
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(

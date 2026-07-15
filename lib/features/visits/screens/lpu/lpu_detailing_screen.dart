@@ -6,10 +6,12 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
-import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/dialogs/medical_status_sheet.dart';
+import 'package:lima/features/knowledge/data/drugs_repository.dart';
+import 'package:lima/features/visits/data/doctors_repository.dart';
+import 'package:lima/features/visits/data/organisations_repository.dart';
+import 'package:lima/features/visits/data/visits_repository.dart';
+import 'package:lima/features/visits/dialogs/medical_status_sheet.dart';
 import 'package:lima/core/models/local_visit.dart';
-import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/services/in_app_notifications_service.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -74,7 +76,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
   }
 
   Future<void> _loadDoctors() async {
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(doctorsRepositoryProvider);
     final ids = _allDoctorIds;
     final results = await db.getDoctors(
       orgId: widget.orgId,
@@ -85,7 +87,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
         .where((d) => ids.contains((d['id'] as num?)?.toInt()))
         .toList();
     // Real drugs (the whole catalogue), plus a name→meta map for docs/id.
-    final dbDrugs = await db.getDrugs(onlyWithPositivePrice: false);
+    final dbDrugs = await ref.read(drugsRepositoryProvider).getDrugs(onlyWithPositivePrice: false);
     final drugMap = <String, Map<String, dynamic>>{};
     final drugList = <Map<String, String>>[];
     for (final row in dbDrugs) {
@@ -115,7 +117,10 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
     final now = DateTime.now().toIso8601String();
     final comment = selectedDrugs.isEmpty
         ? context.l10n.t('noDrugsChosen')
-        : context.l10n.t('drugsSelectedN', args: {'count': '${selectedDrugs.length}'});
+        : context.l10n.t(
+            'drugsSelectedN',
+            args: {'count': '${selectedDrugs.length}'},
+          );
     final medRepName = ref.read(authProvider).user?.fullName ?? '—';
     // Capture localized notification strings before async gaps.
     final visitDoneTitle = context.l10n.t('visitDone');
@@ -129,13 +134,13 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
     if (widget.visitId != null) {
       try {
         await ref
-            .read(remoteApiServiceProvider)
+            .read(visitsRepositoryProvider)
             .updateVisit(
               widget.visitId!,
               data: {'complete': true, 'comment': comment, 'end_date': now},
             );
         await ref
-            .read(localDatabaseProvider)
+            .read(visitsRepositoryProvider)
             .updateVisitStatusByRemoteId(
               widget.visitId!,
               'completed',
@@ -154,15 +159,15 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
             : ((positive / _statuses.length) * 5).round().clamp(1, 5);
 
         await ref
-            .read(remoteApiServiceProvider)
-            .markDoctorVisited(
+            .read(doctorsRepositoryProvider)
+            .markVisitedRemote(
               doctorId: widget.doctorId,
               organizationId: widget.orgId,
               visitId: widget.visitId,
             );
 
         await ref
-            .read(remoteApiServiceProvider)
+            .read(visitsRepositoryProvider)
             .rateVisit(
               visitId: widget.visitId!,
               rating: rating,
@@ -223,7 +228,8 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
           'visit_type': 2,
           if (isGroupVisit) 'visit_format': 3,
           if (isGroupVisit) 'visit_format_id': 3,
-          if (isGroupVisit) 'visit_format_name': context.l10n.t('groupPresentation'),
+          if (isGroupVisit)
+            'visit_format_name': context.l10n.t('groupPresentation'),
           'doctor_ids': _allDoctorIds,
           'doctor_name': widget.doctorName,
           'medical_representative_name': medRepName,
@@ -234,7 +240,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
           'start_date': now,
           'end_date': now,
         });
-        localId = await ref.read(localDatabaseProvider).insertVisit({
+        localId = await ref.read(visitsRepositoryProvider).insertVisit({
           'remote_id': null,
           'org_id': widget.orgId,
           'org_name': widget.orgName,
@@ -254,7 +260,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
         if (!isOffline) {
           try {
             final pushResult = await ref
-                .read(remoteApiServiceProvider)
+                .read(visitsRepositoryProvider)
                 .pushUnsyncedVisitDebug(
                   LocalVisit(
                     id: localId,
@@ -272,7 +278,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                     rawJson: rawVisitJson,
                   ),
                 );
-            await ref.read(localDatabaseProvider).markSynced([localId]);
+            await ref.read(visitsRepositoryProvider).markSynced([localId]);
             apiOk = true;
             final responseObj = pushResult['response'];
             final remoteId = switch (responseObj) {
@@ -289,14 +295,14 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
             };
             if (remoteId != null) {
               await ref
-                  .read(localDatabaseProvider)
+                  .read(visitsRepositoryProvider)
                   .updateVisitRemoteId(
                     localVisitId: localId,
                     remoteId: remoteId,
                   );
             }
             await ref
-                .read(localDatabaseProvider)
+                .read(visitsRepositoryProvider)
                 .setVisitPushPayload(
                   visitId: localId,
                   requestJson: jsonEncode(pushResult['request']),
@@ -313,7 +319,7 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
       pulseOfflineBanner(ref);
     }
     if (!mounted) return;
-    final db = ref.read(localDatabaseProvider);
+    final db = ref.read(visitsRepositoryProvider);
     final localRows = await db.getVisits();
     if (widget.visitId == null && localId != null) {
       final exists = localRows.any((r) => (r['id'] as int?) == localId);
@@ -330,8 +336,8 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
       kind: 'visit',
     );
     final org = await ref
-        .read(localDatabaseProvider)
-        .getOrganisationById(widget.orgId);
+        .read(organisationsRepositoryProvider)
+        .getById(widget.orgId);
     if (!mounted) return;
     final orgAddress = '${org?['address'] ?? ''}'.trim();
 
@@ -340,8 +346,12 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
       barrierDismissible: false,
       builder: (ctx) {
         final isGroup = _allDoctorIds.length > 1;
-        final doctorsLabel = isGroup ? context.l10n.t('doctorsWord') : context.l10n.t('doctorWord');
-        final subtitle = isGroup ? context.l10n.t('groupPresentation') : context.l10n.t('presentation11');
+        final doctorsLabel = isGroup
+            ? context.l10n.t('doctorsWord')
+            : context.l10n.t('doctorWord');
+        final subtitle = isGroup
+            ? context.l10n.t('groupPresentation')
+            : context.l10n.t('presentation11');
         final firstDrug = selectedDrugs.isEmpty
             ? context.l10n.t('noDrugsSelected')
             : selectedDrugs.first;
@@ -350,7 +360,9 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
             : _statuses[selectedDrugs.first];
         final firstStatusText = switch (firstStatus) {
           DrugStatus.familiarPrescribes => context.l10n.t('familiarPrescribes'),
-          DrugStatus.familiarNotPrescribes => context.l10n.t('familiarNotPrescribes'),
+          DrugStatus.familiarNotPrescribes => context.l10n.t(
+            'familiarNotPrescribes',
+          ),
           DrugStatus.unfamiliar => context.l10n.t('notFamiliar'),
           DrugStatus.other => context.l10n.t('comment'),
           _ => null,
@@ -445,7 +457,10 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
                   const Divider(height: 1, color: AppColors.divider),
                   const SizedBox(height: 10),
                   Text(
-                    context.l10n.t('drugsN', args: {'count': '${selectedDrugs.length}'}),
+                    context.l10n.t(
+                      'drugsN',
+                      args: {'count': '${selectedDrugs.length}'},
+                    ),
                     style: GoogleFonts.manrope(
                       fontSize: 13,
                       color: AppColors.secondaryText,

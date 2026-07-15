@@ -5,8 +5,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
-import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/network/remote_api_service.dart';
+import 'package:lima/features/collections/data/favorites_repository.dart';
+import 'package:lima/features/visits/data/doctors_repository.dart';
+import 'package:lima/features/visits/data/organisations_repository.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/features/profile/screens/profile_screen.dart';
@@ -40,15 +41,16 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
   }
 
   Future<void> _loadDoctors() async {
-    final db = ref.read(localDatabaseProvider);
+    final favorites = ref.read(favoritesRepositoryProvider);
+    final doctorsRepo = ref.read(doctorsRepositoryProvider);
 
-    final doctors = await db.getFavoriteDoctors();
+    final doctors = await favorites.getFavoriteDoctorsLocal();
     final favList = doctors.map((e) => Map<String, dynamic>.from(e)).toList();
     final ids = favList
         .map((e) => (e['id'] as num?)?.toInt())
         .whereType<int>()
         .toList();
-    final visitCounts = await db.getVisitCountsByDoctorIds(ids);
+    final visitCounts = await doctorsRepo.getVisitCountsByDoctorIds(ids);
     for (final row in favList) {
       final id = (row['id'] as num?)?.toInt();
       if (id != null) {
@@ -85,17 +87,16 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
   Future<void> _removeFavorite(Map<String, dynamic> doctor) async {
     final doctorId = doctor['id'] as int?;
     if (doctorId == null) return;
-    final db = ref.read(localDatabaseProvider);
-    final api = ref.read(remoteApiServiceProvider);
+    final favorites = ref.read(favoritesRepositoryProvider);
 
-    await db.updateDoctorFavorite(doctorId, false);
+    await favorites.setDoctorFavoriteLocal(doctorId, false);
     if (!mounted) return;
     setState(() {
       _allDoctors = _allDoctors.where((d) => d['id'] != doctorId).toList();
     });
 
     try {
-      await api.removeDoctorFromFavorites(doctorId);
+      await favorites.removeDoctorRemote(doctorId);
       ref.invalidate(favoriteDoctorsCountProvider);
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -144,7 +145,8 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
   }
 
   Future<void> _openDoctorSheet(Map<String, dynamic> doctor) async {
-    final db = ref.read(localDatabaseProvider);
+    final doctorsRepo = ref.read(doctorsRepositoryProvider);
+    final orgsRepo = ref.read(organisationsRepositoryProvider);
     final doctorId = (doctor['id'] as num?)?.toInt();
     // The doctor row's own organisation_id is often 0/NULL for globally-synced
     // doctors. Resolve the real org via the link table / past visits so the
@@ -153,11 +155,11 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
         ? (doctor['organisation_id'] as num).toInt()
         : null;
     if ((orgId == null || orgId <= 0) && doctorId != null) {
-      orgId = await db.getPrimaryOrgIdForDoctor(doctorId);
+      orgId = await doctorsRepo.getPrimaryOrgId(doctorId);
     }
     final org = (orgId == null || orgId <= 0)
         ? null
-        : await db.getOrganisationById(orgId);
+        : await orgsRepo.getById(orgId);
     final resolvedOrgId = orgId;
 
     if (!mounted) return;

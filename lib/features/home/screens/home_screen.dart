@@ -17,6 +17,7 @@ import 'package:lima/core/providers/dashboard_counts_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/services/in_app_notifications_service.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/features/visits/data/visits_repository.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 
@@ -59,7 +60,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     super.initState();
     _recentVisits = _cachedRecentVisits;
     WidgetsBinding.instance.addObserver(this);
-    _dbChangesSub = ref.read(localDatabaseProvider).changes.listen((tables) {
+    _dbChangesSub = ref.read(visitsRepositoryProvider).changes.listen((tables) {
       if (!mounted) return;
       if (tables.contains('visits')) {
         _loadRecentVisits();
@@ -113,8 +114,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       setState(() => _loadingRecent = true);
     }
     try {
-      final db = ref.read(localDatabaseProvider);
-      final dbRows = await db.getVisits().timeout(
+      final visitsRepo = ref.read(visitsRepositoryProvider);
+      final dbRows = await visitsRepo.getVisits().timeout(
         const Duration(seconds: 6),
         onTimeout: () => const <Map<String, dynamic>>[],
       );
