@@ -1,17 +1,15 @@
 import 'dart:io';
-import 'dart:convert';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lima/features/knowledge/data/drugs_repository.dart';
-import 'package:lima/core/network/api_client.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
+import 'package:lima/core/utils/swallowed.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:path_provider/path_provider.dart';
+import '../providers/material_viewer_provider.dart';
+import '../presentation/view_models/material_viewer_view_model.dart';
 import 'package:video_player/video_player.dart';
 
 // ── File type helpers ──────────────────────────────────────────────────────
@@ -29,8 +27,7 @@ _MediaType _mediaTypeOf(String url, String? fileType, String? fileName) {
   if (ft == 'pdf') return _MediaType.pdf;
 
   // Fall back to file_name extension
-  final nameExt =
-      (fileName ?? '').split('.').last.toLowerCase();
+  final nameExt = (fileName ?? '').split('.').last.toLowerCase();
   if ({'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}.contains(nameExt)) {
     return _MediaType.image;
   }
@@ -49,24 +46,6 @@ _MediaType _mediaTypeOf(String url, String? fileType, String? fileName) {
   }
   if (ext == 'pdf') return _MediaType.pdf;
   return _MediaType.document;
-}
-
-String _fileExtOf(Map<String, dynamic> material) {
-  // Prefer file_name from raw_json (has real extension like .mp4, .pdf)
-  final raw = material['raw_json'];
-  if (raw is String && raw.isNotEmpty) {
-    try {
-      final j = jsonDecode(raw) as Map<String, dynamic>;
-      final fn = (j['file_name'] as String? ?? '');
-      final ext = fn.split('.').last.toLowerCase();
-      if (ext.isNotEmpty && ext != fn) return ext;
-    } catch (_) {}
-  }
-  // Fallback to URL extension
-  final url = (material['local_path'] as String? ?? '');
-  final ext = url.split('.').last.split('?').first.toLowerCase();
-  if (ext.length <= 5 && ext.isNotEmpty) return ext;
-  return 'bin';
 }
 
 IconData _iconOf(_MediaType t) {
@@ -101,22 +80,21 @@ class MaterialViewerScreen extends ConsumerStatefulWidget {
 
 class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
   final _pageController = PageController();
-  Map<String, dynamic>? _drug;
-  List<Map<String, dynamic>> _materials = [];
-  int _currentIndex = 0;
-  bool _loading = true;
-
-  // Per-index state
-  final _localPaths = <int, String>{};
-  final _isDownloading = <int, bool>{};
-  final _hasError = <int, bool>{};
   final _videoControllers = <int, VideoPlayerController>{};
+  bool _initialPageApplied = false;
+
+  MaterialViewerKey get _providerKey =>
+      (drugId: widget.drugId, initialIndex: widget.initialIndex);
+
+  MaterialViewerViewModel get _viewModel =>
+      ref.read(materialViewerViewModelProvider(_providerKey).notifier);
+
+  MaterialViewerViewState get _viewState =>
+      ref.read(materialViewerViewModelProvider(_providerKey));
 
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.initialIndex;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
   @override
@@ -128,61 +106,13 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
-    final db = ref.read(drugsRepositoryProvider);
-    final drugs = await db.getDrugs(onlyWithPositivePrice: false);
-    final drug = drugs.where((d) => d['id'] == widget.drugId).firstOrNull;
-    final materials = await db.getDrugMaterials(widget.drugId);
-    final safeIndex = materials.isEmpty
-        ? 0
-        : widget.initialIndex.clamp(0, materials.length - 1);
-
-    setState(() {
-      _drug = drug;
-      _materials = materials;
-      _currentIndex = safeIndex;
-      _loading = false;
-    });
-
-    if (materials.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_pageController.hasClients) return;
-        _pageController.jumpToPage(safeIndex);
-        _prepare(safeIndex);
-      });
-    }
-  }
-
-  String _resolveUrl(String rawPath) {
-    if (rawPath.startsWith('http')) return rawPath;
-    final baseUrl = ref.read(apiClientProvider).dio.options.baseUrl;
-    final base = Uri.parse(baseUrl);
-    final origin =
-        '${base.scheme}://${base.host}${base.hasPort ? ':${base.port}' : ''}';
-    if (rawPath.startsWith('/api/')) return '$origin$rawPath';
-    if (rawPath.startsWith('/')) return '$origin/api$rawPath';
-    return '$origin/api/$rawPath';
-  }
-
-  String? get _token => ref.read(apiClientProvider).token;
-
   _MediaType _typeAt(int index) {
-    final m = _materials[index];
-    final url = (m['local_path'] as String?) ?? '';
-    final ft = m['file_type'] as String?;
-    final raw = m['raw_json'] as String?;
-    String? fileName;
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        final j = jsonDecode(raw) as Map<String, dynamic>;
-        fileName = j['file_name'] as String?;
-      } catch (_) {}
-    }
-    return _mediaTypeOf(url, ft, fileName);
+    final m = _viewState.materials[index];
+    return _mediaTypeOf(m.url, m.fileType, m.fileName);
   }
 
   Future<void> _prepare(int index) async {
-    if (index >= _materials.length) return;
+    if (index >= _viewState.materials.length) return;
     final type = _typeAt(index);
 
     if (type == _MediaType.image) {
@@ -193,164 +123,65 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
   }
 
   Future<void> _downloadToLocal(int index) async {
-    if (_localPaths.containsKey(index)) return;
-    if (_isDownloading[index] == true) return;
-
-    final material = _materials[index];
-    final cached = (material['cached_path'] as String?) ?? '';
-    if (cached.isNotEmpty && File(cached).existsSync()) {
-      if (mounted) setState(() => _localPaths[index] = cached);
-      return;
-    }
-
-    if (mounted) setState(() => _isDownloading[index] = true);
-    try {
-      final rawUrl = (material['local_path'] as String?) ?? '';
-      final fullUrl = _resolveUrl(rawUrl);
-      final dir = await getTemporaryDirectory();
-      final ext = _fileExtOf(material);
-      final savePath = '${dir.path}/lima_img_${widget.drugId}_$index.$ext';
-
-      if (!File(savePath).existsSync()) {
-        await Dio().download(
-          fullUrl,
-          savePath,
-          options: Options(
-            headers: _token != null
-                ? {'Authorization': 'Bearer $_token'}
-                : null,
-          ),
-        );
-      }
-      if (mounted) {
-        setState(() {
-          _localPaths[index] = savePath;
-          _isDownloading[index] = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _isDownloading[index] = false;
-          _hasError[index] = true;
-        });
-      }
-    }
+    await _viewModel.ensureLocal(
+      index,
+      cacheName: 'lima_img_${widget.drugId}_$index',
+    );
   }
 
   Future<void> _initVideo(int index) async {
     if (_videoControllers.containsKey(index)) return;
-    if (_isDownloading[index] == true) return;
-
-    final material = _materials[index];
-    if (mounted) setState(() => _isDownloading[index] = true);
+    final savePath = await _viewModel.ensureLocal(
+      index,
+      cacheName: 'lima_vid_${widget.drugId}_$index',
+    );
+    if (savePath == null) return;
 
     try {
-      // Use persistent cached file if available
-      final cached = (material['cached_path'] as String?) ?? '';
-      String savePath;
-      if (cached.isNotEmpty && File(cached).existsSync()) {
-        savePath = cached;
-      } else {
-        final rawUrl = (material['local_path'] as String?) ?? '';
-        final fullUrl = _resolveUrl(rawUrl);
-        final dir = await getTemporaryDirectory();
-        final ext = _fileExtOf(material);
-        savePath = '${dir.path}/lima_vid_${widget.drugId}_$index.$ext';
-        if (!File(savePath).existsSync()) {
-          await Dio().download(
-            fullUrl,
-            savePath,
-            options: Options(
-              headers: _token != null
-                  ? {'Authorization': 'Bearer $_token'}
-                  : null,
-            ),
-          );
-        }
-      }
-
       final controller = VideoPlayerController.file(File(savePath));
       await controller.initialize();
-
-      if (mounted) {
-        setState(() {
-          _videoControllers[index] = controller;
-          _localPaths[index] = savePath;
-          _isDownloading[index] = false;
-        });
-      } else {
+      if (!mounted) {
         controller.dispose();
+        return;
       }
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _isDownloading[index] = false;
-          _hasError[index] = true;
-        });
-      }
+      setState(() => _videoControllers[index] = controller);
+    } catch (error) {
+      logSwallowed(error, 'MaterialViewerScreen.initVideo');
+      _viewModel.retry(index);
     }
   }
 
   Future<void> _openExternal(int index) async {
-    if (index >= _materials.length) return;
-    final material = _materials[index];
+    if (index >= _viewState.materials.length) return;
 
     // Check in-memory path first
-    final local = _localPaths[index];
+    final local = _viewState.localPaths[index];
     if (local != null && File(local).existsSync()) {
       await OpenFilex.open(local);
       return;
     }
 
-    // Check persistent cached_path from DB
-    final cached = (material['cached_path'] as String?) ?? '';
-    if (cached.isNotEmpty && File(cached).existsSync()) {
-      await OpenFilex.open(cached);
-      return;
-    }
-
-    if (mounted) setState(() => _isDownloading[index] = true);
-    try {
-      final rawUrl = (material['local_path'] as String?) ?? '';
-      final fullUrl = _resolveUrl(rawUrl);
-      final dir = await getTemporaryDirectory();
-      final ext = _fileExtOf(material);
-      final title = (material['title'] as String? ?? 'file_$index')
-          .replaceAll(RegExp(r'[/\\:*?"<>|]'), '_');
-      final savePath = '${dir.path}/lima_${widget.drugId}_$title.$ext';
-
-      if (!File(savePath).existsSync()) {
-        await Dio().download(
-          fullUrl,
-          savePath,
-          options: Options(
-            headers: _token != null ? {'Authorization': 'Bearer $_token'} : null,
-          ),
-        );
-      }
-      if (mounted) {
-        setState(() {
-          _localPaths[index] = savePath;
-          _isDownloading[index] = false;
-        });
-        await OpenFilex.open(savePath);
-      }
-    } catch (_) {
-      if (mounted) setState(() => _isDownloading[index] = false);
-    }
+    final material = _viewState.materials[index];
+    final title = (material.title.isEmpty ? 'file_$index' : material.title)
+        .replaceAll(RegExp(r'[/\\:*?"<>|]'), '_');
+    final savePath = await _viewModel.ensureLocal(
+      index,
+      cacheName: 'lima_${widget.drugId}_$title',
+    );
+    if (savePath != null) await OpenFilex.open(savePath);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
+    final viewState = ref.watch(materialViewerViewModelProvider(_providerKey));
+    if (viewState.isLoading) {
       return const Scaffold(
         backgroundColor: Color(0xFF0B0E17),
         body: Center(child: CircularProgressIndicator()),
       );
     }
 
-    if (_drug == null || _materials.isEmpty) {
+    if (viewState.drug == null || viewState.materials.isEmpty) {
       return Scaffold(
         backgroundColor: const Color(0xFF0B0E17),
         body: SafeArea(
@@ -359,8 +190,10 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
               _buildHeader(''),
               Expanded(
                 child: Center(
-                  child: Text(context.l10n.t('materialsNotFound'),
-                      style: const TextStyle(color: Colors.white70)),
+                  child: Text(
+                    context.l10n.t('materialsNotFound'),
+                    style: const TextStyle(color: Colors.white70),
+                  ),
                 ),
               ),
             ],
@@ -369,20 +202,29 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
       );
     }
 
+    if (!_initialPageApplied) {
+      _initialPageApplied = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_pageController.hasClients) return;
+        _pageController.jumpToPage(viewState.currentIndex);
+        _prepare(viewState.currentIndex);
+      });
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF0B0E17),
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(_drug!['name'] as String? ?? ''),
+            _buildHeader(viewState.drug!.name),
             Expanded(
               child: PageView.builder(
                 controller: _pageController,
-                itemCount: _materials.length,
+                itemCount: viewState.materials.length,
                 onPageChanged: (i) {
                   // Pause previous video
-                  _videoControllers[_currentIndex]?.pause();
-                  setState(() => _currentIndex = i);
+                  _videoControllers[viewState.currentIndex]?.pause();
+                  _viewModel.setCurrentIndex(i);
                   _prepare(i);
                 },
                 itemBuilder: (_, index) => _buildPreview(index),
@@ -407,25 +249,31 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(context.l10n.t('documents'),
-                    style: GoogleFonts.manrope(
-                        color: Colors.white54,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500)),
+                Text(
+                  context.l10n.t('documents'),
+                  style: GoogleFonts.manrope(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
                 if (drugName.isNotEmpty)
-                  Text(drugName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.manrope(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600)),
+                  Text(
+                    drugName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.manrope(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
               ],
             ),
           ),
           _TopBtn(
             icon: Icons.download_rounded,
-            onTap: () => _openExternal(_currentIndex),
+            onTap: () => _openExternal(_viewState.currentIndex),
           ),
         ],
       ),
@@ -434,13 +282,16 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
 
   Widget _buildPreview(int index) {
     final type = _typeAt(index);
-    final isLoading = _isDownloading[index] == true;
-    final hasErr = _hasError[index] == true;
+    final state = _viewState;
+    final isLoading = state.isDownloading(index);
+    final hasErr = state.hasFailed(index);
 
     switch (type) {
       case _MediaType.image:
-        final localPath = _localPaths[index];
-        if (isLoading) return _loadingPlaceholder(context.l10n.t('loadingImage'));
+        final localPath = state.localPaths[index];
+        if (isLoading) {
+          return _loadingPlaceholder(context.l10n.t('loadingImage'));
+        }
         if (hasErr || localPath == null) return _errorPlaceholder(index);
         return Stack(
           children: [
@@ -459,9 +310,13 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
 
       case _MediaType.video:
         final controller = _videoControllers[index];
-        if (isLoading) return _loadingPlaceholder(context.l10n.t('loadingVideo'));
+        if (isLoading) {
+          return _loadingPlaceholder(context.l10n.t('loadingVideo'));
+        }
         if (hasErr) return _errorPlaceholder(index);
-        if (controller == null) return _loadingPlaceholder(context.l10n.t('loadingVideo'));
+        if (controller == null) {
+          return _loadingPlaceholder(context.l10n.t('loadingVideo'));
+        }
         return Stack(
           alignment: Alignment.center,
           children: [
@@ -490,8 +345,11 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                     color: Colors.black54,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.play_arrow_rounded,
-                      color: Colors.white, size: 40),
+                  child: const Icon(
+                    Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 40,
+                  ),
                 ),
               ),
             ),
@@ -517,9 +375,10 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
       case _MediaType.pdf:
       case _MediaType.document:
         if (isLoading) return _loadingPlaceholder(context.l10n.t('loadingDoc'));
-        final mat = _materials[index];
-        final cachedDoc = (mat['cached_path'] as String?) ?? '';
-        final isDocCached = cachedDoc.isNotEmpty && File(cachedDoc).existsSync();
+        final mat = state.materials[index];
+        final cachedDoc = mat.cachedPath ?? '';
+        final isDocCached =
+            cachedDoc.isNotEmpty && File(cachedDoc).existsSync();
         return Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -535,11 +394,12 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                mat['title'] as String? ?? '',
+                mat.title,
                 style: GoogleFonts.manrope(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600),
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
@@ -547,16 +407,21 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    isDocCached ? Icons.offline_pin_rounded : Icons.cloud_outlined,
+                    isDocCached
+                        ? Icons.offline_pin_rounded
+                        : Icons.cloud_outlined,
                     color: isDocCached ? AppColors.success : Colors.white38,
                     size: 14,
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    isDocCached ? context.l10n.t('availableOffline') : context.l10n.t('opensInExtApp'),
+                    isDocCached
+                        ? context.l10n.t('availableOffline')
+                        : context.l10n.t('opensInExtApp'),
                     style: GoogleFonts.manrope(
-                        color: isDocCached ? AppColors.success : Colors.white54,
-                        fontSize: 12),
+                      color: isDocCached ? AppColors.success : Colors.white54,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
@@ -565,16 +430,21 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                 onTap: () => _openExternal(index),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 12),
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.primary,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Text(context.l10n.t('open'),
-                      style: GoogleFonts.manrope(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600)),
+                  child: Text(
+                    context.l10n.t('open'),
+                    style: GoogleFonts.manrope(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -587,25 +457,32 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
     return Container(
       color: const Color(0xFF111421),
       padding: EdgeInsets.fromLTRB(
-          16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
+        16,
+        12,
+        16,
+        MediaQuery.of(context).padding.bottom + 12,
+      ),
       child: Column(
         children: [
           SizedBox(
             height: 80,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              itemCount: _materials.length,
+              itemCount: _viewState.materials.length,
               separatorBuilder: (_, i) => const SizedBox(width: 8),
               itemBuilder: (_, index) {
-                final mat = _materials[index];
-                final selected = index == _currentIndex;
+                final state = _viewState;
+                final mat = state.materials[index];
+                final selected = index == state.currentIndex;
                 final type = _typeAt(index);
                 return GestureDetector(
                   onTap: () {
-                    _videoControllers[_currentIndex]?.pause();
-                    _pageController.animateToPage(index,
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOut);
+                    _videoControllers[state.currentIndex]?.pause();
+                    _pageController.animateToPage(
+                      index,
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOut,
+                    );
                     _prepare(index);
                   },
                   child: Stack(
@@ -628,17 +505,20 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(_iconOf(type),
-                                color: selected
-                                    ? AppColors.primary
-                                    : Colors.white54,
-                                size: 22),
+                            Icon(
+                              _iconOf(type),
+                              color: selected
+                                  ? AppColors.primary
+                                  : Colors.white54,
+                              size: 22,
+                            ),
                             const SizedBox(height: 6),
                             Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                              ),
                               child: Text(
-                                mat['title'] as String? ?? '',
+                                mat.title,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 textAlign: TextAlign.center,
@@ -662,10 +542,14 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                             width: 18,
                             height: 18,
                             decoration: const BoxDecoration(
-                                color: AppColors.success,
-                                shape: BoxShape.circle),
-                            child: const Icon(Icons.check_rounded,
-                                color: Colors.white, size: 12),
+                              color: AppColors.success,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.check_rounded,
+                              color: Colors.white,
+                              size: 12,
+                            ),
                           ),
                         ),
                     ],
@@ -685,13 +569,17 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
                 foregroundColor: Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
-              child: Text(context.l10n.t('close'),
-                  style: GoogleFonts.manrope(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white)),
+              child: Text(
+                context.l10n.t('close'),
+                style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
             ),
           ),
         ],
@@ -700,67 +588,78 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
   }
 
   Widget _loadingPlaceholder(String msg) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(
-                strokeWidth: 2, color: AppColors.primary),
-            const SizedBox(height: 12),
-            Text(msg,
-                style: GoogleFonts.manrope(
-                    color: Colors.white54, fontSize: 13)),
-          ],
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const CircularProgressIndicator(
+          strokeWidth: 2,
+          color: AppColors.primary,
         ),
-      );
+        const SizedBox(height: 12),
+        Text(
+          msg,
+          style: GoogleFonts.manrope(color: Colors.white54, fontSize: 13),
+        ),
+      ],
+    ),
+  );
 
   Widget _errorPlaceholder(int index) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline_rounded,
-                color: Colors.white38, size: 48),
-            const SizedBox(height: 12),
-            Text(context.l10n.t('failedToLoad'),
-                style: GoogleFonts.manrope(
-                    color: Colors.white54, fontSize: 13)),
-            const SizedBox(height: 16),
-            TextButton(
-              onPressed: () {
-                setState(() => _hasError[index] = false);
-                _prepare(index);
-              },
-              child: Text(context.l10n.t('retry'),
-                  style: GoogleFonts.manrope(
-                      color: AppColors.primary, fontSize: 13)),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(
+          Icons.error_outline_rounded,
+          color: Colors.white38,
+          size: 48,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          context.l10n.t('failedToLoad'),
+          style: GoogleFonts.manrope(color: Colors.white54, fontSize: 13),
+        ),
+        const SizedBox(height: 16),
+        TextButton(
+          onPressed: () {
+            _viewModel.retry(index);
+            _prepare(index);
+          },
+          child: Text(
+            context.l10n.t('retry'),
+            style: GoogleFonts.manrope(color: AppColors.primary, fontSize: 13),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _fullscreenBtn(int index) => Positioned(
+    right: 12,
+    bottom: 12,
+    child: GestureDetector(
+      onTap: () => _openExternal(index),
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: AppColors.primary,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
           ],
         ),
-      );
-
-  Widget _fullscreenBtn(int index) => Positioned(
-        right: 12,
-        bottom: 12,
-        child: GestureDetector(
-          onTap: () => _openExternal(index),
-          child: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.fullscreen_rounded,
-                color: Colors.white, size: 22),
-          ),
+        child: const Icon(
+          Icons.fullscreen_rounded,
+          color: Colors.white,
+          size: 22,
         ),
-      );
+      ),
+    ),
+  );
 }
 
 class _TopBtn extends StatelessWidget {

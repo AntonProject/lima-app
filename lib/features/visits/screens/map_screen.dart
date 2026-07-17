@@ -7,7 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:lima/features/visits/data/organisations_repository.dart';
+import 'package:lima/features/visits/providers/visits_hub_provider.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/services/app_actions.dart';
@@ -59,19 +59,34 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        if (mounted) setState(() { _error = tDisabled; _loading = false; });
+        if (mounted) {
+          setState(() {
+            _error = tDisabled;
+            _loading = false;
+          });
+        }
         return;
       }
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          if (mounted) setState(() { _error = tDenied; _loading = false; });
+          if (mounted) {
+            setState(() {
+              _error = tDenied;
+              _loading = false;
+            });
+          }
           return;
         }
       }
       if (permission == LocationPermission.deniedForever) {
-        if (mounted) setState(() { _error = tPermanent; _loading = false; });
+        if (mounted) {
+          setState(() {
+            _error = tPermanent;
+            _loading = false;
+          });
+        }
         return;
       }
       final pos = await Geolocator.getCurrentPosition(
@@ -79,16 +94,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
       await _loadNearbyOrgs(pos);
     } catch (e) {
-      if (mounted) setState(() { _error = tFail; _loading = false; });
+      if (mounted) {
+        setState(() {
+          _error = tFail;
+          _loading = false;
+        });
+      }
     }
   }
 
   Future<void> _loadNearbyOrgs(Position pos) async {
-    final repo = ref.read(organisationsRepositoryProvider);
-    final rows = await repo.getLocal(type: widget.isPharmacy ? 'pharmacy' : 'lpu');
+    final repo = ref.read(organisationsDirectoryRepositoryProvider);
+    final orgs = await repo.getLocalModels(
+      type: widget.isPharmacy ? 'pharmacy' : 'lpu',
+    );
     const distance = Distance();
-    final mapped = rows.map((row) {
-      final id = row['id'] as int? ?? 0;
+    final mapped = orgs.map((org) {
+      final id = org.id;
       final angle = (id % 360) * 3.141592653589793 / 180.0;
       final radius = 0.007 + ((id % 9) * 0.0015);
       final lat = pos.latitude + radius * math.sin(angle);
@@ -99,14 +121,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
       return _NearbyOrg(
         id: id,
-        name: '${row['name'] ?? ''}',
-        address: '${row['address'] ?? ''}',
+        name: org.name,
+        address: org.address,
         latitude: lat,
         longitude: lon,
         distanceMeters: meters,
       );
-    }).toList()
-      ..sort((a, b) => a.distanceMeters.compareTo(b.distanceMeters));
+    }).toList()..sort((a, b) => a.distanceMeters.compareTo(b.distanceMeters));
 
     if (!mounted) return;
     setState(() {
@@ -127,31 +148,44 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         padding: EdgeInsets.fromLTRB(
-            16, 16, 16, MediaQuery.of(context).padding.bottom + 16),
+          16,
+          16,
+          16,
+          MediaQuery.of(context).padding.bottom + 16,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Center(
               child: Container(
-                width: 36, height: 4,
+                width: 36,
+                height: 4,
                 margin: const EdgeInsets.only(bottom: 16),
                 decoration: BoxDecoration(
-                    color: AppColors.border,
-                    borderRadius: BorderRadius.circular(2)),
+                  color: AppColors.border,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
             Row(
               children: [
                 Container(
-                  width: 44, height: 44,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
-                    color: widget.isPharmacy ? AppColors.iconBgGreen : AppColors.iconBgBlue,
+                    color: widget.isPharmacy
+                        ? AppColors.iconBgGreen
+                        : AppColors.iconBgBlue,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
-                    widget.isPharmacy ? Icons.local_pharmacy_rounded : Icons.medication_rounded,
-                    color: widget.isPharmacy ? AppColors.success : AppColors.primary,
+                    widget.isPharmacy
+                        ? Icons.local_pharmacy_rounded
+                        : Icons.medication_rounded,
+                    color: widget.isPharmacy
+                        ? AppColors.success
+                        : AppColors.primary,
                     size: 22,
                   ),
                 ),
@@ -160,13 +194,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(org.name,
-                          style: GoogleFonts.manrope(
-                              fontSize: 15, fontWeight: FontWeight.w700,
-                              color: AppColors.primaryText)),
-                      Text(org.address,
-                          style: GoogleFonts.manrope(
-                              fontSize: 12, color: AppColors.secondaryText)),
+                      Text(
+                        org.name,
+                        style: GoogleFonts.manrope(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primaryText,
+                        ),
+                      ),
+                      Text(
+                        org.address,
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          color: AppColors.secondaryText,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -189,9 +231,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       side: const BorderSide(color: AppColors.primary),
                       foregroundColor: AppColors.primary,
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                       textStyle: GoogleFonts.manrope(
-                          fontSize: 15, fontWeight: FontWeight.w600),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
@@ -201,26 +246,38 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     onPressed: () {
                       Navigator.pop(context);
                       if (widget.isPharmacy) {
-                        context.push(Uri(
-                          path: '/visits/pharmacy/detail/${org.id}',
-                          queryParameters: {'name': org.name},
-                        ).toString());
+                        context.push(
+                          Uri(
+                            path: '/visits/pharmacy/detail/${org.id}',
+                            queryParameters: {'name': org.name},
+                          ).toString(),
+                        );
                       } else {
-                        context.push(Uri(
-                          path: '/visits/lpu/detail/${org.id}',
-                          queryParameters: {'name': org.name, 'address': org.address},
-                        ).toString());
+                        context.push(
+                          Uri(
+                            path: '/visits/lpu/detail/${org.id}',
+                            queryParameters: {
+                              'name': org.name,
+                              'address': org.address,
+                            },
+                          ).toString(),
+                        );
                       }
                     },
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    child: Text(context.l10n.t('open'),
-                        style: GoogleFonts.manrope(
-                            fontSize: 15, fontWeight: FontWeight.w600,
-                            color: Colors.white)),
+                    child: Text(
+                      context.l10n.t('open'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -244,25 +301,38 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               boxShadow: shadowSm,
             ),
             padding: EdgeInsets.fromLTRB(
-                16, MediaQuery.of(context).padding.top + 8, 16, 12),
+              16,
+              MediaQuery.of(context).padding.top + 8,
+              16,
+              12,
+            ),
             child: Row(
               children: [
                 GestureDetector(
                   onTap: () => context.pop(),
-                  child: const Icon(Icons.arrow_back_rounded,
-                      color: AppColors.primaryText, size: 24),
+                  child: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: AppColors.primaryText,
+                    size: 24,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Text(
-                  widget.isPharmacy ? context.l10n.t('pharmaciesNearby') : context.l10n.t('lpuNearby'),
+                  widget.isPharmacy
+                      ? context.l10n.t('pharmaciesNearby')
+                      : context.l10n.t('lpuNearby'),
                   style: GoogleFonts.manrope(
-                    fontSize: 18, fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.primaryText,
                   ),
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.iconBgBlue,
                     borderRadius: BorderRadius.circular(10),
@@ -270,8 +340,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   child: Text(
                     context.l10n.plural(_orgs.length, 'objects'),
                     style: GoogleFonts.manrope(
-                        fontSize: 12, color: AppColors.primary,
-                        fontWeight: FontWeight.w600),
+                      fontSize: 12,
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -281,8 +353,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
-                    ? _ErrorView(message: _error!, onRetry: _requestLocation)
-                    : _buildMap(),
+                ? _ErrorView(message: _error!, onRetry: _requestLocation)
+                : _buildMap(),
           ),
         ],
       ),
@@ -297,7 +369,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       // User marker
       Marker(
         point: LatLng(userLat, userLon),
-        width: 44, height: 44,
+        width: 44,
+        height: 44,
         child: Container(
           decoration: BoxDecoration(
             color: AppColors.primary,
@@ -312,12 +385,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       ..._orgs.map((org) {
         return Marker(
           point: LatLng(org.latitude, org.longitude),
-          width: 48, height: 48,
+          width: 48,
+          height: 48,
           child: GestureDetector(
             onTap: () => _showOrgSheet(org),
             child: Container(
               decoration: BoxDecoration(
-                color: widget.isPharmacy ? AppColors.success : AppColors.primary,
+                color: widget.isPharmacy
+                    ? AppColors.success
+                    : AppColors.primary,
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.white, width: 2),
                 boxShadow: shadowSm,
@@ -326,7 +402,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 widget.isPharmacy
                     ? Icons.local_pharmacy_rounded
                     : Icons.medication_rounded,
-                color: Colors.white, size: 22,
+                color: Colors.white,
+                size: 22,
               ),
             ),
           ),
@@ -365,23 +442,40 @@ class _ErrorView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.location_off_rounded,
-                size: 64, color: AppColors.hintText),
+            const Icon(
+              Icons.location_off_rounded,
+              size: 64,
+              color: AppColors.hintText,
+            ),
             const SizedBox(height: 16),
-            Text(message,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.manrope(
-                    fontSize: 15, color: AppColors.secondaryText)),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.manrope(
+                fontSize: 15,
+                color: AppColors.secondaryText,
+              ),
+            ),
             const SizedBox(height: 20),
             ElevatedButton.icon(
               onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded, size: 18, color: Colors.white),
-              label: Text(context.l10n.t('retry'),
-                  style: GoogleFonts.manrope(
-                      fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
+              icon: const Icon(
+                Icons.refresh_rounded,
+                size: 18,
+                color: Colors.white,
+              ),
+              label: Text(
+                context.l10n.t('retry'),
+                style: GoogleFonts.manrope(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
               style: ElevatedButton.styleFrom(
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ],

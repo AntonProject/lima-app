@@ -3,15 +3,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/core/models/models.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
-import 'package:lima/features/collections/data/favorites_repository.dart';
-import 'package:lima/features/visits/data/doctors_repository.dart';
-import 'package:lima/features/visits/data/organisations_repository.dart';
+import 'package:lima/features/collections/providers/collections_repository_providers.dart';
+import 'package:lima/features/visits/providers/lpu_details_provider.dart';
+import 'package:lima/features/visits/providers/visits_hub_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/features/profile/screens/profile_screen.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
+
+/// Favourite doctor + its visit count. The count is a derived, screen-local
+/// stat (from getVisitCountsByDoctorIds), not part of the Doctor entity, so
+/// it's kept separate rather than bolted onto the model.
+class _FavDoctorVm {
+  final Doctor doctor;
+  final int visitCount;
+
+  const _FavDoctorVm({required this.doctor, required this.visitCount});
+}
 
 class FavDoctorsScreen extends ConsumerStatefulWidget {
   const FavDoctorsScreen({super.key});
@@ -23,15 +34,14 @@ class FavDoctorsScreen extends ConsumerStatefulWidget {
 class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
   String _query = '';
   bool _loading = true;
-  List<Map<String, dynamic>> _allDoctors = [];
+  List<_FavDoctorVm> _allDoctors = [];
   int? _pressedDoctorId;
   DateTime? _lastSyncSeenAt;
 
-  List<Map<String, dynamic>> get _filtered => _allDoctors.where((d) {
-    final name = (d['full_name'] as String? ?? '').toLowerCase();
-    final spec = (d['specialty'] as String? ?? '').toLowerCase();
+  List<_FavDoctorVm> get _filtered => _allDoctors.where((vm) {
     final q = _query.toLowerCase();
-    return name.contains(q) || spec.contains(q);
+    return vm.doctor.fullName.toLowerCase().contains(q) ||
+        (vm.doctor.specialty ?? '').toLowerCase().contains(q);
   }).toList();
 
   @override
@@ -42,21 +52,15 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
 
   Future<void> _loadDoctors() async {
     final favorites = ref.read(favoritesRepositoryProvider);
-    final doctorsRepo = ref.read(doctorsRepositoryProvider);
+    final doctorsRepo = ref.read(doctorsDirectoryRepositoryProvider);
 
-    final doctors = await favorites.getFavoriteDoctorsLocal();
-    final favList = doctors.map((e) => Map<String, dynamic>.from(e)).toList();
-    final ids = favList
-        .map((e) => (e['id'] as num?)?.toInt())
-        .whereType<int>()
+    final doctors = await favorites.getFavoriteDoctorModels();
+    final visitCounts = await doctorsRepo.getVisitCountsByDoctorIds(
+      doctors.map((d) => d.id).toList(),
+    );
+    final favList = doctors
+        .map((d) => _FavDoctorVm(doctor: d, visitCount: visitCounts[d.id] ?? 0))
         .toList();
-    final visitCounts = await doctorsRepo.getVisitCountsByDoctorIds(ids);
-    for (final row in favList) {
-      final id = (row['id'] as num?)?.toInt();
-      if (id != null) {
-        row['visit_count'] = visitCounts[id] ?? 0;
-      }
-    }
     if (!mounted) return;
     setState(() {
       _allDoctors = favList;
@@ -64,18 +68,13 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
     });
   }
 
-  String _visitLabel(BuildContext context, Map<String, dynamic> doctor) {
-    final count = (doctor['visit_count'] as num?)?.toInt() ?? 0;
-    if (count <= 0) return context.l10n.t('noVisitsYet');
-    return context.l10n.plural(count, 'visits');
+  String _visitLabel(BuildContext context, int visitCount) {
+    if (visitCount <= 0) return context.l10n.t('noVisitsYet');
+    return context.l10n.plural(visitCount, 'visits');
   }
 
-  Future<void> _onDoctorCardTap(Map<String, dynamic> doctor) async {
-    final doctorId = (doctor['id'] as num?)?.toInt();
-    if (doctorId == null) {
-      await _openDoctorSheet(doctor);
-      return;
-    }
+  Future<void> _onDoctorCardTap(Doctor doctor) async {
+    final doctorId = doctor.id;
     if (!mounted) return;
     setState(() => _pressedDoctorId = doctorId);
     await Future<void>.delayed(const Duration(milliseconds: 90));
@@ -84,15 +83,16 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
     await _openDoctorSheet(doctor);
   }
 
-  Future<void> _removeFavorite(Map<String, dynamic> doctor) async {
-    final doctorId = doctor['id'] as int?;
-    if (doctorId == null) return;
+  Future<void> _removeFavorite(Doctor doctor) async {
+    final doctorId = doctor.id;
     final favorites = ref.read(favoritesRepositoryProvider);
 
     await favorites.setDoctorFavoriteLocal(doctorId, false);
     if (!mounted) return;
     setState(() {
-      _allDoctors = _allDoctors.where((d) => d['id'] != doctorId).toList();
+      _allDoctors = _allDoctors
+          .where((vm) => vm.doctor.id != doctorId)
+          .toList();
     });
 
     try {
@@ -109,22 +109,14 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
       ref.invalidate(favoriteDoctorsCountProvider);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.t('removedLocallyNoSync'),
-          ),
-        ),
+        SnackBar(content: Text(context.l10n.t('removedLocallyNoSync'))),
       );
     }
   }
 
-  void _startVisitForDoctor(
-    Map<String, dynamic> doctor, {
-    int? orgId,
-    String? orgName,
-  }) {
-    final doctorId = doctor['id'] as int?;
-    if (doctorId == null || orgId == null || orgId <= 0) {
+  void _startVisitForDoctor(Doctor doctor, {int? orgId, String? orgName}) {
+    final doctorId = doctor.id;
+    if (orgId == null || orgId <= 0) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.t('noLpuForDoctor'))));
@@ -144,22 +136,18 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
     );
   }
 
-  Future<void> _openDoctorSheet(Map<String, dynamic> doctor) async {
-    final doctorsRepo = ref.read(doctorsRepositoryProvider);
-    final orgsRepo = ref.read(organisationsRepositoryProvider);
-    final doctorId = (doctor['id'] as num?)?.toInt();
+  Future<void> _openDoctorSheet(Doctor doctor) async {
+    final doctorsRepo = ref.read(doctorsDirectoryRepositoryProvider);
+    final orgsRepo = ref.read(organisationsDirectoryRepositoryProvider);
+    final doctorId = doctor.id;
     // The doctor row's own organisation_id is often 0/NULL for globally-synced
     // doctors. Resolve the real org via the link table / past visits so the
     // workplace (region + ЛПУ name) and the "Визит" action both work.
-    var orgId = (doctor['organisation_id'] is num)
-        ? (doctor['organisation_id'] as num).toInt()
-        : null;
-    if ((orgId == null || orgId <= 0) && doctorId != null) {
-      orgId = await doctorsRepo.getPrimaryOrgId(doctorId);
-    }
+    var orgId = doctor.organisationId > 0 ? doctor.organisationId : null;
+    orgId ??= await doctorsRepo.getPrimaryOrgId(doctorId);
     final org = (orgId == null || orgId <= 0)
         ? null
-        : await orgsRepo.getById(orgId);
+        : await orgsRepo.getModelById(orgId);
     final resolvedOrgId = orgId;
 
     if (!mounted) return;
@@ -171,12 +159,15 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
-        final name = (doctor['full_name'] as String?) ?? '';
-        final specialty = (doctor['specialty'] as String?) ?? '—';
-        final category = ctx.l10n.t('categoryN', args: {'cat': '${doctor['category'] ?? 'C'}'});
-        final city = (org?['city'] as String?) ?? '—';
-        final orgName = (org?['name'] as String?) ?? ctx.l10n.t('lpuNotSet');
-        final orgAddress = (org?['address'] as String?) ?? '';
+        final name = doctor.fullName;
+        final specialty = doctor.specialty ?? '—';
+        final category = ctx.l10n.t(
+          'categoryN',
+          args: {'cat': doctor.category ?? 'C'},
+        );
+        final city = org?.city ?? '—';
+        final orgName = org?.name ?? ctx.l10n.t('lpuNotSet');
+        final orgAddress = org?.address ?? '';
 
         return Padding(
           padding: EdgeInsets.fromLTRB(
@@ -239,7 +230,10 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: _SheetField(label: ctx.l10n.t('fullName'), value: name),
+                          child: _SheetField(
+                            label: ctx.l10n.t('fullName'),
+                            value: name,
+                          ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -263,7 +257,10 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: _SheetField(label: ctx.l10n.t('region'), value: city),
+                          child: _SheetField(
+                            label: ctx.l10n.t('region'),
+                            value: city,
+                          ),
                         ),
                       ],
                     ),
@@ -491,20 +488,21 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                     ),
                     itemCount: _filtered.length,
                     itemBuilder: (_, i) {
-                      final d = _filtered[i];
-                      final name = (d['full_name'] as String?) ?? '';
-                      final specialty = (d['specialty'] as String?) ?? '—';
-                      final category = context.l10n.t('categoryN', args: {'cat': '${d['category'] ?? 'C'}'});
-                      final lastVisit = _visitLabel(context, d);
-                      final doctorId = (d['id'] as num?)?.toInt();
-                      final pressed =
-                          doctorId != null && _pressedDoctorId == doctorId;
+                      final vm = _filtered[i];
+                      final name = vm.doctor.fullName;
+                      final specialty = vm.doctor.specialty ?? '—';
+                      final category = context.l10n.t(
+                        'categoryN',
+                        args: {'cat': vm.doctor.category ?? 'C'},
+                      );
+                      final lastVisit = _visitLabel(context, vm.visitCount);
+                      final doctorId = vm.doctor.id;
+                      final pressed = _pressedDoctorId == doctorId;
 
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: GestureDetector(
                           onTapDown: (_) {
-                            if (doctorId == null) return;
                             setState(() => _pressedDoctorId = doctorId);
                           },
                           onTapCancel: () {
@@ -513,7 +511,7 @@ class _FavDoctorsScreenState extends ConsumerState<FavDoctorsScreen> {
                           onTapUp: (_) {
                             setState(() => _pressedDoctorId = null);
                           },
-                          onTap: () => _onDoctorCardTap(d),
+                          onTap: () => _onDoctorCardTap(vm.doctor),
                           child: AnimatedScale(
                             duration: const Duration(milliseconds: 110),
                             curve: Curves.easeOutCubic,

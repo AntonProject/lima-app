@@ -1,10 +1,13 @@
-import 'dart:convert';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/models/models.dart';
-import 'package:lima/features/collections/data/favorites_repository.dart';
-import 'package:lima/features/collections/data/cart_repository.dart';
+import 'package:lima/features/collections/domain/repositories/cart_repository.dart';
+import 'package:lima/features/collections/domain/repositories/favorites_repository.dart';
+import 'package:lima/features/collections/domain/entities/cart_server_item.dart';
+import 'package:lima/features/collections/domain/use_cases/toggle_favorite_pharmacy.dart';
+import 'package:lima/features/collections/providers/collections_repository_providers.dart';
+import 'package:lima/core/utils/swallowed.dart';
 
 class CartItemSnapshot {
   final int drugId;
@@ -206,6 +209,9 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
   final Ref _ref;
   final FavoritesRepository _favorites;
   final CartRepository _cart;
+  late final ToggleFavoritePharmacy _toggleFavorite = ToggleFavoritePharmacy(
+    _favorites,
+  );
 
   AppCollectionsNotifier(this._ref, this._favorites, this._cart)
     : super(const AppCollectionsState()) {
@@ -215,27 +221,10 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
   Future<void> _load() async {
     final favoritePharmacyIds = _favorites.readLocal();
 
-    final storedCartItems = _cart.readRawLocal();
-    final cartItems = <CartItemSnapshot>[];
-    for (final raw in storedCartItems) {
-      try {
-        final decoded = jsonDecode(raw);
-        if (decoded is Map<String, dynamic>) {
-          cartItems.add(CartItemSnapshot.fromJson(decoded));
-          continue;
-        }
-        // Backward compatibility: a single entry may contain a JSON array.
-        if (decoded is List) {
-          for (final e in decoded) {
-            if (e is Map<String, dynamic>) {
-              cartItems.add(CartItemSnapshot.fromJson(e));
-            }
-          }
-        }
-      } catch (_) {
-        // Ignore malformed legacy values and continue loading app state.
-      }
-    }
+    final storedCartItems = _cart.readLocalItems();
+    final cartItems = storedCartItems
+        .map((item) => CartItemSnapshot.fromJson(item.toMap()))
+        .toList(growable: false);
 
     final activeCartItems = _filterExpiredCart(cartItems);
 
@@ -249,11 +238,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     }
 
     try {
-      final remoteFavorites = await _favorites.getRemote();
-      final remoteIds = remoteFavorites
-          .map((e) => e['id'])
-          .whereType<int>()
-          .toSet();
+      final remoteIds = await _favorites.getRemoteFavoriteOrgIds();
       await _favorites.clearOrgFavoritesLocal();
       for (final id in remoteIds) {
         await _favorites.setOrgFavoriteLocal(id, true);
@@ -269,10 +254,10 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
       final serverItems = await _cart.getServerCart();
       if (serverItems.isNotEmpty) {
         final cartItems = serverItems
-            .map((e) => CartItemSnapshot.fromJson(e))
+            .map((e) => CartItemSnapshot.fromJson(e.toMap()))
             .toList();
         // Extract the cart ID from the first item so we can delete it later.
-        final cartId = serverItems.first['cart_id'] as int?;
+        final cartId = serverItems.first.cartId;
         state = state.copyWith(cartItems: cartItems, serverCartId: cartId);
         await _persistCart(cartItems);
       }
@@ -284,7 +269,11 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
   Future<void> _persistFavorites(Set<int> ids) => _favorites.persist(ids);
 
   Future<void> _persistCart(List<CartItemSnapshot> items) =>
-      _cart.persistRaw(items.map((item) => jsonEncode(item.toJson())).toList());
+      _cart.persistLocalItems(
+        items
+            .map((item) => CartServerItem.fromMap(item.toJson()))
+            .toList(growable: false),
+      );
 
   Future<bool> toggleFavoritePharmacy(int pharmacyId) async {
     final next = {...state.favoritePharmacyIds};
@@ -297,26 +286,37 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     state = state.copyWith(favoritePharmacyIds: next);
     await _persistFavorites(next);
 
-    await _favorites.setOrgFavoriteLocal(pharmacyId, !had);
-
     try {
-      if (had) {
-        await _favorites.removeRemote(pharmacyId);
-      } else {
-        await _favorites.addRemote(pharmacyId);
-      }
-    } catch (_) {
-      // Queue for retry when internet returns.
-      try {
-        await _favorites.enqueuePending(
-          entityType: 'pharmacy',
-          entityId: pharmacyId,
-          add: !had,
+      final result = await _toggleFavorite(
+        pharmacyId: pharmacyId,
+        currentlyFavorite: had,
+        isOffline: _ref.read(isOfflineProvider),
+      );
+      if (result.isFavorite != !had) {
+        state = state.copyWith(
+          favoritePharmacyIds: {...state.favoritePharmacyIds}
+            ..remove(pharmacyId),
         );
-      } catch (_) {}
-      if (_ref.read(isOfflineProvider)) {
+        if (had) {
+          state = state.copyWith(
+            favoritePharmacyIds: {...state.favoritePharmacyIds, pharmacyId},
+          );
+        }
+        await _persistFavorites(state.favoritePharmacyIds);
+      }
+      if (result.queued) {
         pulseOfflineBanner(_ref);
       }
+    } catch (error, stackTrace) {
+      debugPrint('Favorite mutation failed: $error\n$stackTrace');
+      final restored = {...state.favoritePharmacyIds};
+      if (had) {
+        restored.add(pharmacyId);
+      } else {
+        restored.remove(pharmacyId);
+      }
+      state = state.copyWith(favoritePharmacyIds: restored);
+      await _persistFavorites(restored);
     }
     return !had;
   }
@@ -428,7 +428,9 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     for (final id in removedCartIds) {
       try {
         await _cart.clearServerCart(id);
-      } catch (_) {}
+      } catch (error) {
+        logSwallowed(error, 'AppCollectionsNotifier.removeExpiredCart');
+      }
     }
   }
 

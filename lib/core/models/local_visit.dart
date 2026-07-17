@@ -1,3 +1,7 @@
+/// A visit, as stored in the local `visits` table. Field set mirrors the
+/// SQLite schema in local_database.dart (including offline-first sync
+/// bookkeeping — is_synced/sync_failed/push_attempts/next_retry_at, and the
+/// last push request/response for diagnostics).
 class LocalVisit {
   final int? id;
   final int? remoteId;
@@ -13,6 +17,22 @@ class LocalVisit {
   final bool isSynced;
   final String? rawJson;
 
+  /// True once the push loop has given up on this visit (server rejected it,
+  /// or all retry attempts were exhausted). Parked visits stay in the queue
+  /// table but are excluded from automatic pushes — see
+  /// LocalDatabase.markVisitPushFailedPermanently.
+  final bool syncFailed;
+
+  /// Number of failed push attempts so far. Reset to 0 by retryFailedVisit.
+  final int pushAttempts;
+
+  /// Backoff: the push loop skips this visit until this time, if set.
+  final DateTime? nextRetryAt;
+
+  final String? medicalRepName;
+  final String? lastPushRequestJson;
+  final String? lastPushResponseJson;
+
   const LocalVisit({
     this.id,
     this.remoteId,
@@ -27,6 +47,12 @@ class LocalVisit {
     required this.updatedAt,
     this.isSynced = false,
     this.rawJson,
+    this.syncFailed = false,
+    this.pushAttempts = 0,
+    this.nextRetryAt,
+    this.medicalRepName,
+    this.lastPushRequestJson,
+    this.lastPushResponseJson,
   });
 
   LocalVisit copyWith({
@@ -43,6 +69,12 @@ class LocalVisit {
     DateTime? updatedAt,
     bool? isSynced,
     String? rawJson,
+    bool? syncFailed,
+    int? pushAttempts,
+    DateTime? nextRetryAt,
+    String? medicalRepName,
+    String? lastPushRequestJson,
+    String? lastPushResponseJson,
   }) {
     return LocalVisit(
       id: id ?? this.id,
@@ -58,6 +90,12 @@ class LocalVisit {
       updatedAt: updatedAt ?? this.updatedAt,
       isSynced: isSynced ?? this.isSynced,
       rawJson: rawJson ?? this.rawJson,
+      syncFailed: syncFailed ?? this.syncFailed,
+      pushAttempts: pushAttempts ?? this.pushAttempts,
+      nextRetryAt: nextRetryAt ?? this.nextRetryAt,
+      medicalRepName: medicalRepName ?? this.medicalRepName,
+      lastPushRequestJson: lastPushRequestJson ?? this.lastPushRequestJson,
+      lastPushResponseJson: lastPushResponseJson ?? this.lastPushResponseJson,
     );
   }
 
@@ -76,6 +114,15 @@ class LocalVisit {
       'updated_at': updatedAt.toIso8601String(),
       'is_synced': isSynced ? 1 : 0,
       if (rawJson != null) 'raw_json': rawJson,
+      'sync_failed': syncFailed ? 1 : 0,
+      'push_attempts': pushAttempts,
+      if (nextRetryAt != null)
+        'next_retry_at': nextRetryAt!.toIso8601String(),
+      if (medicalRepName != null) 'medical_rep_name': medicalRepName,
+      if (lastPushRequestJson != null)
+        'last_push_request_json': lastPushRequestJson,
+      if (lastPushResponseJson != null)
+        'last_push_response_json': lastPushResponseJson,
     };
   }
 
@@ -94,6 +141,14 @@ class LocalVisit {
       updatedAt: DateTime.parse(map['updated_at'] as String),
       isSynced: (map['is_synced'] as int? ?? 0) == 1,
       rawJson: map['raw_json'] as String?,
+      syncFailed: (map['sync_failed'] as int? ?? 0) == 1,
+      pushAttempts: (map['push_attempts'] as num?)?.toInt() ?? 0,
+      nextRetryAt: map['next_retry_at'] == null
+          ? null
+          : DateTime.tryParse(map['next_retry_at'] as String),
+      medicalRepName: map['medical_rep_name'] as String?,
+      lastPushRequestJson: map['last_push_request_json'] as String?,
+      lastPushResponseJson: map['last_push_response_json'] as String?,
     );
   }
 }

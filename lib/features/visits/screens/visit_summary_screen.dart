@@ -94,20 +94,34 @@ class VisitSummaryScreen extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                       boxShadow: shadowSm,
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
                     child: Column(
                       children: [
                         _row(
                           context.l10n.t('date'),
                           '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}',
                         ),
-                        const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
+                        const Divider(
+                          height: 1,
+                          thickness: 0.5,
+                          color: AppColors.divider,
+                        ),
                         _row(
                           context.l10n.t('time'),
                           '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
                         ),
-                        const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
-                        _row(context.l10n.t('status'), context.l10n.t('completed')),
+                        const Divider(
+                          height: 1,
+                          thickness: 0.5,
+                          color: AppColors.divider,
+                        ),
+                        _row(
+                          context.l10n.t('status'),
+                          context.l10n.t('completed'),
+                        ),
                       ],
                     ),
                   ),

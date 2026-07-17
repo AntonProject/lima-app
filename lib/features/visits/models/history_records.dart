@@ -16,6 +16,7 @@ class HistoryVisitRecord {
   final String doctor;
   final List<HistoryPresentationRecord> presentations;
   final List<HistoryStockItemRecord> stockItems;
+  final List<HistoryOrderItemRecord> orderItems;
   final String pharmacistsFio;
   final int participantsCount;
   final int discussedDrugsCount;
@@ -45,6 +46,7 @@ class HistoryVisitRecord {
     this.doctor = '—',
     this.presentations = const <HistoryPresentationRecord>[],
     this.stockItems = const <HistoryStockItemRecord>[],
+    this.orderItems = const <HistoryOrderItemRecord>[],
     this.pharmacistsFio = '—',
     this.participantsCount = 0,
     this.discussedDrugsCount = 0,
@@ -140,6 +142,7 @@ class HistoryVisitRecord {
         ? _statusKey(statusRaw)
         : presentations.first.statusKey;
     final stockItems = _extractStockItems(raw);
+    final orderItems = _extractOrderItems(raw);
     final firstStock = stockItems.isEmpty ? null : stockItems.first;
     final itemsTotal = _extractItemsTotal(raw);
     final totalSum = _toDouble(raw['total_sum']);
@@ -217,6 +220,7 @@ class HistoryVisitRecord {
       doctor: doctor,
       presentations: presentations,
       stockItems: stockItems,
+      orderItems: orderItems,
       pharmacistsFio:
           _pick(raw, const [
                 'pharmacists_fio',
@@ -568,6 +572,46 @@ class HistoryVisitRecord {
     return result;
   }
 
+  static List<HistoryOrderItemRecord> _extractOrderItems(
+    Map<String, dynamic> raw,
+  ) {
+    final candidates = <dynamic>[raw['drugs'], raw['items'], raw['products']];
+    List<dynamic>? list;
+    for (final candidate in candidates) {
+      if (candidate is List && candidate.isNotEmpty) {
+        list = candidate;
+        break;
+      }
+    }
+    if (list == null) return const <HistoryOrderItemRecord>[];
+
+    final result = <HistoryOrderItemRecord>[];
+    for (final item in list) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final quantity =
+          _toInt(map['package'] ?? map['quantity'] ?? map['qty']) ?? 1;
+      final directTotal = _toDouble(
+        map['total_sum'] ?? map['sum'] ?? map['amount'],
+      );
+      final salePrice = _toDouble(map['sale_price'] ?? map['price']) ?? 0;
+      result.add(
+        HistoryOrderItemRecord(
+          name: _pick(map, const ['drug_name', 'name', 'title']),
+          quantity: quantity,
+          serialNumber: _pick(map, const [
+            'serial_no',
+            'serial_number',
+            'series',
+            'series_number',
+          ]),
+          total: directTotal ?? salePrice * quantity,
+        ),
+      );
+    }
+    return result;
+  }
+
   static double? _extractItemsTotal(Map<String, dynamic> raw) {
     final candidates = <dynamic>[
       raw['stock_items'],
@@ -801,6 +845,20 @@ class HistoryStockItemRecord {
     required this.name,
     required this.serialNumber,
     required this.quantity,
+  });
+}
+
+class HistoryOrderItemRecord {
+  final String name;
+  final int quantity;
+  final String serialNumber;
+  final double total;
+
+  const HistoryOrderItemRecord({
+    required this.name,
+    required this.quantity,
+    required this.serialNumber,
+    required this.total,
   });
 }
 

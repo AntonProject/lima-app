@@ -1671,10 +1671,7 @@ class LocalDatabase {
     // pending_organizations/pending_doctors) live only as mirror rows in
     // these tables — capture them before the wipe so they don't vanish from
     // the UI until they're actually pushed.
-    final unsyncedOrgs = await db.query(
-      'organisations',
-      where: 'id < 0',
-    );
+    final unsyncedOrgs = await db.query('organisations', where: 'id < 0');
     final unsyncedDoctors = replaceDoctors
         ? await db.query('doctors', where: 'id < 0')
         : const <Map<String, dynamic>>[];
@@ -1826,6 +1823,36 @@ class LocalDatabase {
     );
     final count = Sqflite.firstIntValue(result) ?? 0;
     return count == 0;
+  }
+
+  /// Counts the local records used by the offline-data summary.
+  ///
+  /// SQL belongs to the local data source; repositories should expose this
+  /// operation without knowing table names or column predicates.
+  Future<Map<String, int>> getLocalTotals() async {
+    Future<int> count(String sql) async {
+      final rows = await db.rawQuery(sql);
+      if (rows.isEmpty) return 0;
+      return (rows.first['c'] as num?)?.toInt() ?? 0;
+    }
+
+    return {
+      'organizations': await count('SELECT COUNT(*) AS c FROM organisations'),
+      'lpu': await count(
+        "SELECT COUNT(*) AS c FROM organisations WHERE type = 'lpu'",
+      ),
+      'pharmacy': await count(
+        "SELECT COUNT(*) AS c FROM organisations WHERE type = 'pharmacy'",
+      ),
+      'distributor': await count(
+        "SELECT COUNT(*) AS c FROM organisations WHERE type = 'distributor'",
+      ),
+      'doctors': await count('SELECT COUNT(*) AS c FROM doctors'),
+      'visits': await count('SELECT COUNT(*) AS c FROM visits'),
+      'plannedVisits': await count('SELECT COUNT(*) AS c FROM planned_visits'),
+      'drugs': await count('SELECT COUNT(*) AS c FROM drugs'),
+      'materials': await count('SELECT COUNT(*) AS c FROM drug_materials'),
+    };
   }
 
   Future<void> setCurrentUserOwner({
@@ -2146,16 +2173,16 @@ class LocalDatabase {
       whereArgs: [doctorId],
       limit: 1,
     );
-    final directOrg = (direct.isEmpty ? null : direct.first['organisation_id'])
-        as num?;
+    final directOrg =
+        (direct.isEmpty ? null : direct.first['organisation_id']) as num?;
     if (directOrg != null && directOrg.toInt() > 0) return directOrg.toInt();
 
     final linked = await db.rawQuery(
       'SELECT organisation_id FROM doctor_organisations WHERE doctor_id = ? LIMIT 1',
       [doctorId],
     );
-    final linkedOrg = (linked.isEmpty ? null : linked.first['organisation_id'])
-        as num?;
+    final linkedOrg =
+        (linked.isEmpty ? null : linked.first['organisation_id']) as num?;
     if (linkedOrg != null && linkedOrg.toInt() > 0) return linkedOrg.toInt();
 
     final fromVisit = await db.rawQuery(
@@ -2163,8 +2190,8 @@ class LocalDatabase {
       'ORDER BY created_at DESC LIMIT 1',
       [doctorId],
     );
-    final visitOrg = (fromVisit.isEmpty ? null : fromVisit.first['org_id'])
-        as num?;
+    final visitOrg =
+        (fromVisit.isEmpty ? null : fromVisit.first['org_id']) as num?;
     if (visitOrg != null && visitOrg.toInt() > 0) return visitOrg.toInt();
 
     return null;

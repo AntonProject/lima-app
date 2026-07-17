@@ -1,16 +1,15 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lima/features/visits/data/visits_repository.dart';
 import 'package:lima/features/visits/dialogs/visit_detail_dialog.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/features/visits/models/history_records.dart';
+import 'package:lima/features/visits/providers/history_repository_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
 class HistoryScreen extends ConsumerStatefulWidget {
@@ -22,99 +21,23 @@ class HistoryScreen extends ConsumerStatefulWidget {
 
 class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   static const int _pageSize = 10;
-  int _filterIndex = 0;
-  int _pageIndex = 0;
-  String _query = '';
-  bool _todayOnly = false;
   bool _routeParamsApplied = false;
   bool _didAutoOpen = false;
   int? _orgIdFilter;
   String? _visitIdToOpen;
   bool _autoOpenFirst = false;
-  List<HistoryVisitRecord> _records = [];
-  StreamSubscription<Set<String>>? _dbChangesSub;
+  List<HistoryVisitRecord> get _records =>
+      ref.read(historyViewModelProvider).records;
 
   @override
   void initState() {
     super.initState();
-    // Reload when the visits table changes (e.g. a visit is conducted or
-    // synced while this screen is already open) so history stays in sync with
-    // home's "recent visits" instead of showing a stale snapshot.
-    _dbChangesSub = ref.read(visitsRepositoryProvider).changes.listen((tables) {
-      if (!mounted) return;
-      if (tables.contains('visits')) _loadVisits();
-    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadVisits());
   }
 
-  @override
-  void dispose() {
-    _dbChangesSub?.cancel();
-    super.dispose();
-  }
-
   Future<void> _loadVisits() async {
-    final db = ref.read(visitsRepositoryProvider);
-    final rows = (await db.getVisits())
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-    final localRecords = rows.map(HistoryVisitRecord.fromVisitMap).toList();
-
-    final merged = <String, HistoryVisitRecord>{};
-    void mergeRecord(HistoryVisitRecord r) {
-      final key = r.id != '—' && r.id.trim().isNotEmpty
-          ? '${r.id}_${r.type}_${r.subType}'
-          : '${r.type}_${r.orgId}_${r.dateTime}';
-      final prev = merged[key];
-      if (prev == null) {
-        merged[key] = r;
-        return;
-      }
-      int score(HistoryVisitRecord v) {
-        var s = 0;
-        if (v.status == 'completed') s += 6;
-        if (v.dateTime != '—') s += 4;
-        if (v.doctor != '—') s += 3;
-        if (v.presentations.isNotEmpty) s += 5;
-        if (v.stockItems.isNotEmpty) s += 5;
-        if (v.orderTotal > 0) s += 6;
-        if (v.serialNumber.isNotEmpty) s += 2;
-        if (v.type == 'stock' || v.type == 'pharmacy') s += 1;
-        return s;
-      }
-
-      final prevScore = score(prev);
-      final nextScore = score(r);
-      if (nextScore >= prevScore) {
-        merged[key] = r;
-      }
-    }
-
-    for (final r in localRecords) {
-      mergeRecord(r);
-    }
-
-    if (!mounted) return;
-    setState(() {
-      final values = merged.values.toList();
-      DateTime parse(HistoryVisitRecord r) {
-        final raw = r.dateTime.trim();
-        final m = RegExp(
-          r'^(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2}):(\d{2})$',
-        ).firstMatch(raw);
-        if (m == null) return DateTime.fromMillisecondsSinceEpoch(0);
-        final day = int.tryParse(m.group(1) ?? '') ?? 1;
-        final month = int.tryParse(m.group(2) ?? '') ?? 1;
-        final year = int.tryParse(m.group(3) ?? '') ?? 1970;
-        final hour = int.tryParse(m.group(4) ?? '') ?? 0;
-        final min = int.tryParse(m.group(5) ?? '') ?? 0;
-        return DateTime(year, month, day, hour, min);
-      }
-
-      values.sort((a, b) => parse(b).compareTo(parse(a)));
-      _records = values;
-    });
-    _tryAutoOpenVisit();
+    await ref.read(historyViewModelProvider.notifier).load();
+    if (mounted) _tryAutoOpenVisit();
   }
 
   @override
@@ -125,11 +48,17 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final range = params['range'];
     final type = params['type'];
     if (range == 'today') {
-      _todayOnly = true;
+      ref.read(historyViewModelProvider.notifier).setTodayOnly(true);
     }
-    if (type == 'lpu') _filterIndex = 1;
-    if (type == 'pharmacy') _filterIndex = 2;
-    if (type == 'stock') _filterIndex = 3;
+    if (type == 'lpu') {
+      ref.read(historyViewModelProvider.notifier).setFilterIndex(1);
+    }
+    if (type == 'pharmacy') {
+      ref.read(historyViewModelProvider.notifier).setFilterIndex(2);
+    }
+    if (type == 'stock') {
+      ref.read(historyViewModelProvider.notifier).setFilterIndex(3);
+    }
     final orgId = params['orgId'];
     if (orgId != null) _orgIdFilter = int.tryParse(orgId);
     _visitIdToOpen = params['visitId'];
@@ -162,23 +91,24 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   }
 
   List<HistoryVisitRecord> get _filtered {
+    final filter = ref.read(historyViewModelProvider).filter;
     var list = _records.where((visit) {
       if (_orgIdFilter != null && visit.orgId != _orgIdFilter) return false;
-      if (_filterIndex == 1) return visit.type == 'lpu';
-      if (_filterIndex == 2) return visit.type == 'pharmacy';
-      if (_filterIndex == 3) return visit.type == 'stock';
+      if (filter.filterIndex == 1) return visit.type == 'lpu';
+      if (filter.filterIndex == 2) return visit.type == 'pharmacy';
+      if (filter.filterIndex == 3) return visit.type == 'stock';
       return true;
     });
 
-    if (_todayOnly) {
+    if (filter.todayOnly) {
       list = list.where(_isTodayRecord);
     }
 
-    if (_query.isNotEmpty) {
+    if (filter.query.isNotEmpty) {
       list = list.where(
         (visit) =>
-            visit.org.toLowerCase().contains(_query.toLowerCase()) ||
-            visit.id.contains(_query),
+            visit.org.toLowerCase().contains(filter.query.toLowerCase()) ||
+            visit.id.contains(filter.query),
       );
     }
 
@@ -230,9 +160,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(historyViewModelProvider);
+    final historyState = ref.read(historyViewModelProvider);
+    final filterState = historyState.filter;
     final filtered = _filtered;
     final totalPages = _totalPages(filtered.length);
-    final effectivePage = _pageIndex.clamp(0, totalPages - 1);
+    final effectivePage = filterState.pageIndex.clamp(0, totalPages - 1);
     final paged = _pageItems(filtered, effectivePage);
     final filters = [
       context.l10n.t('all'),
@@ -286,7 +219,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                if (_todayOnly) ...[
+                if (filterState.todayOnly) ...[
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -325,12 +258,11 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                     itemCount: filters.length,
                     separatorBuilder: (_, _) => const SizedBox(width: 8),
                     itemBuilder: (_, i) {
-                      final active = _filterIndex == i;
+                      final active = filterState.filterIndex == i;
                       return AppTapScale(
-                        onTap: () => setState(() {
-                          _filterIndex = i;
-                          _pageIndex = 0;
-                        }),
+                        onTap: () => ref
+                            .read(historyViewModelProvider.notifier)
+                            .setFilterIndex(i),
                         pressedScale: 0.93,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -360,10 +292,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 ),
                 const SizedBox(height: 10),
                 TextFormField(
-                  onChanged: (value) => setState(() {
-                    _query = value;
-                    _pageIndex = 0;
-                  }),
+                  onChanged: (value) => ref
+                      .read(historyViewModelProvider.notifier)
+                      .setQuery(value),
                   decoration: InputDecoration(
                     hintText: context.l10n.t('searchByNameOrId'),
                     prefixIcon: const Icon(
@@ -436,10 +367,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                         _pageBtn(
                                           icon: Icons.chevron_left_rounded,
                                           enabled: effectivePage > 0,
-                                          onTap: () => setState(
-                                            () =>
-                                                _pageIndex = effectivePage - 1,
-                                          ),
+                                          onTap: () => ref
+                                              .read(
+                                                historyViewModelProvider
+                                                    .notifier,
+                                              )
+                                              .setPage(effectivePage - 1),
                                         ),
                                         const SizedBox(width: 12),
                                         Text(
@@ -455,10 +388,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                           icon: Icons.chevron_right_rounded,
                                           enabled:
                                               effectivePage < totalPages - 1,
-                                          onTap: () => setState(
-                                            () =>
-                                                _pageIndex = effectivePage + 1,
-                                          ),
+                                          onTap: () => ref
+                                              .read(
+                                                historyViewModelProvider
+                                                    .notifier,
+                                              )
+                                              .setPage(effectivePage + 1),
                                         ),
                                       ],
                                     ),

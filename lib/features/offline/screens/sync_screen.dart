@@ -1,16 +1,19 @@
 import 'dart:async';
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/core/models/local_visit.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/utils/swallowed.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
-import 'package:lima/features/offline/data/sync_diagnostics_repository.dart';
-import 'package:lima/core/providers/sync_provider.dart';
+import 'package:lima/features/offline/domain/entities/sync_queue_records.dart';
+import 'package:lima/features/offline/domain/entities/sync_state.dart';
+import 'package:lima/features/offline/presentation/view_models/sync_view_model.dart';
+import 'package:lima/features/offline/presentation/view_models/sync_screen_view_model.dart';
+import 'package:lima/features/offline/providers/sync_diagnostics_repository_provider.dart';
+import 'package:lima/features/offline/providers/sync_screen_provider.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
@@ -22,100 +25,41 @@ class SyncScreen extends ConsumerStatefulWidget {
 }
 
 class _SyncScreenState extends ConsumerState<SyncScreen> {
-  static const int _unsyncedPageSize = 10;
-
-  List<Map<String, dynamic>> _unsyncedVisits = [];
-  List<Map<String, dynamic>> _failedVisits = [];
-  List<Map<String, dynamic>> _pendingDoctors = [];
-  List<Map<String, dynamic>> _failedPendingDoctors = [];
-  List<Map<String, dynamic>> _pendingOrgUpdates = [];
-  Map<String, int> _localTotals = const {};
-  bool _loadingVisits = true;
-  bool _loadingData = false;
-  int _unsyncedPage = 0;
-  StreamSubscription<Set<String>>? _dbChangesSub;
+  SyncScreenViewState get _screenState => ref.read(syncScreenViewModelProvider);
+  List<LocalVisit> get _unsyncedVisits => _screenState.unsyncedVisits;
+  List<LocalVisit> get _failedVisits => _screenState.failedVisits;
+  List<PendingDoctorRecord> get _pendingDoctors => _screenState.pendingDoctors;
+  List<PendingDoctorRecord> get _failedPendingDoctors =>
+      _screenState.failedPendingDoctors;
+  List<PendingOrganisationUpdateRecord> get _pendingOrgUpdates =>
+      _screenState.pendingOrgUpdates;
+  SyncLocalTotals get _localTotals => _screenState.localTotals;
+  bool get _hasLocalTotals => _screenState.hasLocalTotals;
+  bool get _loadingVisits => _screenState.isLoadingVisits;
+  int get _unsyncedPage => _screenState.unsyncedPage;
 
   @override
   void initState() {
     super.initState();
-    _dbChangesSub = ref.read(syncDiagnosticsRepositoryProvider).changes.listen((tables) {
-      if (!mounted) return;
-      if (tables.intersection(_localDataTables).isEmpty) return;
-      unawaited(_loadData(refreshSyncCount: false));
-    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadData();
     });
   }
 
-  @override
-  void dispose() {
-    _dbChangesSub?.cancel();
-    super.dispose();
-  }
-
-  static const _localDataTables = {
-    'organisations',
-    'doctors',
-    'doctor_organisations',
-    'drugs',
-    'drug_materials',
-    'visits',
-    'planned_visits',
-    'pending_doctors',
-    'pending_org_updates',
-  };
-
   Future<void> _loadData({bool refreshSyncCount = true}) async {
-    if (!mounted || _loadingData) return;
-    _loadingData = true;
-    final db = ref.read(syncDiagnosticsRepositoryProvider);
-    final syncNotifier = ref.read(syncProvider.notifier);
-    try {
-      await db.deleteLegacyTestVisits();
-      final unsynced = await db.getVisits(unsyncedOnly: true);
-      final failedVisits = await db.getFailedVisits();
-      final pendingDoctors = await db.getPendingDoctors();
-      final failedPendingDoctors = await db.getFailedPendingDoctors();
-      final pendingOrgUpdates = await db.getPendingOrgUpdates();
-      final localTotals = await _loadLocalTotals(db);
-      if (!mounted) return;
-      if (refreshSyncCount) {
-        await syncNotifier.refreshUnsyncedCount();
-        if (!mounted) return;
-      }
-      setState(() {
-        _unsyncedVisits = unsynced;
-        _failedVisits = failedVisits;
-        _pendingDoctors = pendingDoctors;
-        _failedPendingDoctors = failedPendingDoctors;
-        _pendingOrgUpdates = pendingOrgUpdates;
-        _localTotals = localTotals;
-        _clampUnsyncedPage();
-        _loadingVisits = false;
-      });
-    } finally {
-      _loadingData = false;
-    }
+    if (!mounted) return;
+    final screenViewModel = ref.read(syncScreenViewModelProvider.notifier);
+    final syncViewModel = ref.read(syncViewModelProvider.notifier);
+    await screenViewModel.load();
+    if (refreshSyncCount && mounted) await syncViewModel.refreshUnsyncedCount();
   }
-
-  Future<Map<String, int>> _loadLocalTotals(SyncDiagnosticsRepository db) =>
-      db.getLocalTotals();
 
   int get _unsyncedTotalPages {
-    if (_unsyncedVisits.isEmpty) return 1;
-    return ((_unsyncedVisits.length - 1) ~/ _unsyncedPageSize) + 1;
+    return _screenState.totalUnsyncedPages;
   }
 
-  List<Map<String, dynamic>> get _visibleUnsyncedVisits {
-    final start = _unsyncedPage * _unsyncedPageSize;
-    return _unsyncedVisits.skip(start).take(_unsyncedPageSize).toList();
-  }
-
-  void _clampUnsyncedPage() {
-    final lastPage = _unsyncedTotalPages - 1;
-    if (_unsyncedPage > lastPage) _unsyncedPage = lastPage;
-    if (_unsyncedPage < 0) _unsyncedPage = 0;
+  List<LocalVisit> get _visibleUnsyncedVisits {
+    return _screenState.visibleUnsyncedVisits;
   }
 
   String _formatDateTime(String? isoString) {
@@ -167,12 +111,14 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   }
 
   Future<void> _runDeltaPull() async {
-    final notifier = ref.read(syncProvider.notifier);
+    final viewModel = ref.read(syncViewModelProvider.notifier);
     try {
-      await notifier.syncLayeredFromRemote(pushPendingFirst: false);
+      await viewModel.runDelta();
       await _loadData();
       if (!mounted) return;
-      _showSnack(ref.read(syncProvider).message ?? context.l10n.t('synced'));
+      _showSnack(
+        ref.read(syncViewModelProvider).message ?? context.l10n.t('synced'),
+      );
     } catch (e) {
       if (!mounted) return;
       _showSnack('${context.l10n.t('syncStatus')}: $e');
@@ -199,15 +145,14 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
     if (confirmed != true || !mounted) return;
 
-    final notifier = ref.read(syncProvider.notifier);
+    final viewModel = ref.read(syncViewModelProvider.notifier);
     try {
-      await notifier.syncLayeredFromRemote(
-        fullRefresh: true,
-        pushPendingFirst: false,
-      );
+      await viewModel.runFullRefresh();
       await _loadData();
       if (!mounted) return;
-      _showSnack(ref.read(syncProvider).message ?? context.l10n.t('synced'));
+      _showSnack(
+        ref.read(syncViewModelProvider).message ?? context.l10n.t('synced'),
+      );
     } catch (e) {
       if (!mounted) return;
       _showSnack('${context.l10n.t('syncStatus')}: $e');
@@ -215,12 +160,14 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   }
 
   Future<void> _runPush() async {
-    final notifier = ref.read(syncProvider.notifier);
+    final viewModel = ref.read(syncViewModelProvider.notifier);
     try {
-      await notifier.pushToRemote();
+      await viewModel.pushPending();
       await _loadData();
       if (!mounted) return;
-      _showSnack(ref.read(syncProvider).message ?? context.l10n.t('synced'));
+      _showSnack(
+        ref.read(syncViewModelProvider).message ?? context.l10n.t('synced'),
+      );
     } catch (e) {
       if (!mounted) return;
       _showSnack('${context.l10n.t('syncStatus')}: $e');
@@ -277,7 +224,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       IconButton(
         onPressed: _unsyncedPage == 0
             ? null
-            : () => setState(() => _unsyncedPage--),
+            : () => ref
+                  .read(syncScreenViewModelProvider.notifier)
+                  .setUnsyncedPage(_unsyncedPage - 1),
         icon: const Icon(Icons.chevron_left_rounded),
         tooltip: context.l10n.t('prevPage'),
       ),
@@ -303,7 +252,11 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       final selected = page == _unsyncedPage;
       children.add(
         InkWell(
-          onTap: selected ? null : () => setState(() => _unsyncedPage = page),
+          onTap: selected
+              ? null
+              : () => ref
+                    .read(syncScreenViewModelProvider.notifier)
+                    .setUnsyncedPage(page),
           borderRadius: BorderRadius.circular(8),
           child: Container(
             width: 32,
@@ -335,7 +288,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       IconButton(
         onPressed: _unsyncedPage >= totalPages - 1
             ? null
-            : () => setState(() => _unsyncedPage++),
+            : () => ref
+                  .read(syncScreenViewModelProvider.notifier)
+                  .setUnsyncedPage(_unsyncedPage + 1),
         icon: const Icon(Icons.chevron_right_rounded),
         tooltip: context.l10n.t('nextPage'),
       ),
@@ -350,8 +305,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
-  Widget _buildVisitCard(Map<String, dynamic> visit) {
-    final isSynced = visit['is_synced'] == 1;
+  Widget _buildVisitCard(LocalVisit visit) {
+    final isSynced = visit.isSynced;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -374,7 +329,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    visit['org_name'] ?? '—',
+                    visit.orgName.isEmpty ? '—' : visit.orgName,
                     style: GoogleFonts.manrope(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -393,7 +348,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
-                    isSynced ? context.l10n.t('synced') : context.l10n.t('notSynced'),
+                    isSynced
+                        ? context.l10n.t('synced')
+                        : context.l10n.t('notSynced'),
                     style: GoogleFonts.manrope(
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
@@ -406,42 +363,39 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             const SizedBox(height: 6),
             Row(
               children: [
-                if (visit['visit_type'] != null) ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      visit['visit_type'].toString().toUpperCase(),
-                      style: GoogleFonts.manrope(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.primary,
-                      ),
-                    ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
                   ),
-                  const SizedBox(width: 8),
-                ],
-                if (visit['status'] != null)
-                  Text(
-                    visit['status'].toString(),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    visit.visitType.toUpperCase(),
                     style: GoogleFonts.manrope(
-                      fontSize: 12,
-                      color: Colors.grey[600],
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
                     ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  visit.status,
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                  ),
+                ),
               ],
             ),
-            if (visit['notes'] != null && visit['notes'].toString().isNotEmpty)
+            if (visit.notes != null && visit.notes!.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  visit['notes'].toString(),
+                  visit.notes!,
                   style: GoogleFonts.manrope(
                     fontSize: 12,
                     color: Colors.grey[700],
@@ -452,7 +406,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
               ),
             const SizedBox(height: 4),
             Text(
-              _formatDateTime(visit['created_at']?.toString()),
+              _formatDateTime(visit.createdAt.toIso8601String()),
               style: GoogleFonts.manrope(fontSize: 11, color: Colors.grey[500]),
             ),
           ],
@@ -461,33 +415,11 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
-  /// Short human-readable reason extracted from the last push response.
-  String _failedVisitError(BuildContext context, Map<String, dynamic> visit) {
-    final raw = visit['last_push_response_json']?.toString();
-    if (raw == null || raw.isEmpty) return context.l10n.t('serverRejectedData');
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map) {
-        final message =
-            decoded['error'] ??
-            decoded['message'] ??
-            decoded['detail'] ??
-            decoded['title'];
-        if (message != null && message.toString().trim().isNotEmpty) {
-          return message.toString();
-        }
-      }
-      return raw;
-    } catch (_) {
-      return raw;
-    }
-  }
-
   Future<void> _retryFailedVisit(int id) async {
     final db = ref.read(syncDiagnosticsRepositoryProvider);
     await db.retryFailedVisit(id);
     if (!mounted) return;
-    await ref.read(syncProvider.notifier).refreshUnsyncedCount();
+    await ref.read(syncViewModelProvider.notifier).refreshUnsyncedCount();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(context.l10n.t('visitReturnedToQueue'))),
@@ -517,12 +449,12 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     final db = ref.read(syncDiagnosticsRepositoryProvider);
     await db.deleteVisit(id);
     if (!mounted) return;
-    await ref.read(syncProvider.notifier).refreshUnsyncedCount();
+    await ref.read(syncViewModelProvider.notifier).refreshUnsyncedCount();
   }
 
-  Widget _buildFailedVisitCard(Map<String, dynamic> visit) {
-    final id = (visit['id'] as num?)?.toInt();
-    final attempts = (visit['push_attempts'] as num?)?.toInt() ?? 0;
+  Widget _buildFailedVisitCard(LocalVisit visit) {
+    final id = visit.id;
+    final attempts = visit.pushAttempts;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -546,7 +478,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    visit['org_name'] ?? '—',
+                    visit.orgName.isEmpty ? '—' : visit.orgName,
                     style: GoogleFonts.manrope(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -575,14 +507,19 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              _failedVisitError(context, visit),
+              ref
+                  .read(syncDiagnosticsRepositoryProvider)
+                  .failedVisitMessage(
+                    visit,
+                    fallback: context.l10n.t('serverRejectedData'),
+                  ),
               style: GoogleFonts.manrope(fontSize: 12, color: Colors.red[700]),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 4),
             Text(
-              '${_formatDateTime(visit['created_at']?.toString())}'
+              '${_formatDateTime(visit.createdAt.toIso8601String())}'
               '${attempts > 0 ? ' · ${context.l10n.t('attemptsN', args: {'count': '$attempts'})}' : ''}',
               style: GoogleFonts.manrope(fontSize: 11, color: Colors.grey[500]),
             ),
@@ -653,8 +590,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     await db.deletePendingDoctor(id);
   }
 
-  Widget _buildFailedPendingDoctorCard(Map<String, dynamic> doctor) {
-    final id = (doctor['id'] as num?)?.toInt();
+  Widget _buildFailedPendingDoctorCard(PendingDoctorRecord doctor) {
+    final id = doctor.id;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -678,7 +615,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    doctor['full_name'] as String? ?? '—',
+                    doctor.fullName.isEmpty ? '—' : doctor.fullName,
                     style: GoogleFonts.manrope(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -714,7 +651,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              _formatDateTime(doctor['created_at']?.toString()),
+              _formatDateTime(doctor.createdAt),
               style: GoogleFonts.manrope(fontSize: 11, color: Colors.grey[500]),
             ),
             if (id != null) ...[
@@ -811,10 +748,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
-  Widget _buildSyncSummaryCard(SyncState syncState) {
-    String value(String localKey, List<String> debugKeys) {
-      final local = _localTotals[localKey];
-      if (local != null) return local.toString();
+  Widget _buildSyncSummaryCard(SyncViewState syncState) {
+    String value(int local, List<String> debugKeys) {
+      if (_hasLocalTotals) return local.toString();
       final debug = syncState.lastGetDebug;
       if (debug != null) {
         for (final key in debugKeys) {
@@ -830,10 +766,12 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       return '—';
     }
 
-    final lpu = value('lpu', const ['local_lpu_total']);
-    final pharmacy = value('pharmacy', const ['local_pharmacy_total']);
-    final doctors = value('doctors', const ['local_doctors_total']);
-    final visits = value('visits', const [
+    final lpu = value(_localTotals.lpu, const ['local_lpu_total']);
+    final pharmacy = value(_localTotals.pharmacy, const [
+      'local_pharmacy_total',
+    ]);
+    final doctors = value(_localTotals.doctors, const ['local_doctors_total']);
+    final visits = value(_localTotals.visits, const [
       'local_visits_total',
       'live_visits_count',
       'fetched_visits_count',
@@ -867,12 +805,18 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            context.l10n.t('lpuPharmacyCounts', args: {'lpu': lpu, 'pharmacy': pharmacy}),
+            context.l10n.t(
+              'lpuPharmacyCounts',
+              args: {'lpu': lpu, 'pharmacy': pharmacy},
+            ),
             style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[800]),
           ),
           const SizedBox(height: 4),
           Text(
-            context.l10n.t('doctorsVisitsCounts', args: {'doctors': doctors, 'visits': visits}),
+            context.l10n.t(
+              'doctorsVisitsCounts',
+              args: {'doctors': doctors, 'visits': visits},
+            ),
             style: GoogleFonts.manrope(fontSize: 12, color: Colors.grey[800]),
           ),
           const SizedBox(height: 4),
@@ -885,7 +829,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
-  Widget _buildSyncProgressCard(SyncState syncState) {
+  Widget _buildSyncProgressCard(SyncViewState syncState) {
     final current = syncState.progressCurrent;
     final total = syncState.progressTotal;
     final hasProgress = current != null && total != null && total > 0;
@@ -935,7 +879,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   percentText,
                   style: GoogleFonts.manrope(
                     fontSize: 13,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.primary,
                   ),
                 ),
@@ -957,16 +901,17 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final syncState = ref.watch(syncProvider);
+    final syncState = ref.watch(syncViewModelProvider);
     final user = ref.watch(authProvider).user;
     final isAdmin = user?.role == 'admin';
     final activeOperation = syncState.activeOperation;
     final isSyncLoading = activeOperation != null;
-    final isPullLoading = activeOperation == SyncOperation.pull;
-    final isFullRefreshLoading = activeOperation == SyncOperation.fullRefresh;
-    final isPushLoading = activeOperation == SyncOperation.push;
+    final isPullLoading = activeOperation == SyncOperationType.deltaPull;
+    final isFullRefreshLoading =
+        activeOperation == SyncOperationType.fullRefresh;
+    final isPushLoading = activeOperation == SyncOperationType.push;
 
-    ref.listen<SyncState>(syncProvider, (prev, next) {
+    ref.listen<SyncViewState>(syncViewModelProvider, (prev, next) {
       final prevAt = prev?.lastSyncAt;
       final nextAt = next.lastSyncAt;
       final syncTimeChanged =
@@ -1027,7 +972,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                         ),
                         if (lastSyncTime != null)
                           Text(
-                            context.l10n.t('lastSyncTime', args: {'time': lastSyncTime}),
+                            context.l10n.t(
+                              'lastSyncTime',
+                              args: {'time': lastSyncTime},
+                            ),
                             style: GoogleFonts.manrope(
                               fontSize: 12,
                               color: Colors.grey[600],
@@ -1087,7 +1035,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                       ),
                     ),
                     subtitle: Text(
-                      context.l10n.t('awaitingVisits', args: {'count': '${syncState.unsyncedCount}'}),
+                      context.l10n.t(
+                        'awaitingVisits',
+                        args: {'count': '${syncState.unsyncedCount}'},
+                      ),
                       style: GoogleFonts.manrope(fontSize: 13),
                     ),
                     trailing: syncState.unsyncedCount > 0
@@ -1116,7 +1067,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 
                 if (_pendingDoctors.isNotEmpty ||
                     _pendingOrgUpdates.isNotEmpty) ...[
-                  SectionLabel(text: context.l10n.t('changesQueue').toUpperCase()),
+                  SectionLabel(
+                    text: context.l10n.t('changesQueue').toUpperCase(),
+                  ),
                   const SizedBox(height: 8),
                   Container(
                     decoration: BoxDecoration(
@@ -1147,7 +1100,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                             ),
                             subtitle: Text(
                               _pendingDoctors
-                                  .map((d) => d['full_name'] as String? ?? '—')
+                                  .map(
+                                    (d) =>
+                                        d.fullName.isEmpty ? '—' : d.fullName,
+                                  )
                                   .join(', '),
                               style: GoogleFonts.manrope(fontSize: 12),
                               maxLines: 2,
@@ -1190,7 +1146,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                             ),
                             subtitle: Text(
                               _pendingOrgUpdates
-                                  .map((o) => o['name'] as String? ?? '—')
+                                  .map((o) => o.name.isEmpty ? '—' : o.name)
                                   .join(', '),
                               style: GoogleFonts.manrope(fontSize: 12),
                               maxLines: 2,
@@ -1247,7 +1203,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                         color: Colors.blue,
                         title: context.l10n.t('updateFromServer'),
                         subtitle: isPullLoading
-                            ? (syncState.message ?? context.l10n.t('syncRunning'))
+                            ? (syncState.message ??
+                                  context.l10n.t('syncRunning'))
                             : context.l10n.t('pullChangesDesc'),
                         isRunning: isPullLoading,
                         isDisabled: isSyncLoading,
@@ -1261,8 +1218,12 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                         color: Colors.green,
                         title: context.l10n.t('sendToServer'),
                         subtitle: isPushLoading
-                            ? (syncState.message ?? context.l10n.t('syncRunning'))
-                            : context.l10n.t('awaitingVisits', args: {'count': '${_unsyncedVisits.length}'}),
+                            ? (syncState.message ??
+                                  context.l10n.t('syncRunning'))
+                            : context.l10n.t(
+                                'awaitingVisits',
+                                args: {'count': '${_unsyncedVisits.length}'},
+                              ),
                         isRunning: isPushLoading,
                         isDisabled: isSyncLoading,
                         onTap: () {
@@ -1293,7 +1254,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 
                 if (_failedVisits.isNotEmpty) ...[
                   SectionLabel(
-                    text: '${context.l10n.t('notSent').toUpperCase()} (${_failedVisits.length})',
+                    text:
+                        '${context.l10n.t('notSent').toUpperCase()} (${_failedVisits.length})',
                   ),
                   const SizedBox(height: 8),
                   ...(_failedVisits.map((v) => _buildFailedVisitCard(v))),
@@ -1301,7 +1263,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                 ],
                 if (_failedPendingDoctors.isNotEmpty) ...[
                   SectionLabel(
-                    text: '${context.l10n.t('notSentDoctors').toUpperCase()} (${_failedPendingDoctors.length})',
+                    text:
+                        '${context.l10n.t('notSentDoctors').toUpperCase()} (${_failedPendingDoctors.length})',
                   ),
                   const SizedBox(height: 8),
                   ...(_failedPendingDoctors.map(
@@ -1313,7 +1276,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   children: [
                     Expanded(
                       child: SectionLabel(
-                        text: '${context.l10n.t('notSynced').toUpperCase()} (${_unsyncedVisits.length})',
+                        text:
+                            '${context.l10n.t('notSynced').toUpperCase()} (${_unsyncedVisits.length})',
                       ),
                     ),
                   ],

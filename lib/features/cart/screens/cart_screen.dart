@@ -9,6 +9,11 @@ import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
+import 'package:lima/features/cart/providers/cart_view_provider.dart';
+import 'package:lima/features/cart/presentation/view_models/cart_view_model.dart';
+import 'package:lima/features/visits/domain/entities/pharmacy_order.dart';
+
+part '../widgets/cart_screen_widgets.dart';
 
 class CartScreen extends ConsumerStatefulWidget {
   const CartScreen({super.key});
@@ -19,7 +24,6 @@ class CartScreen extends ConsumerStatefulWidget {
 
 class _CartScreenState extends ConsumerState<CartScreen> {
   Timer? _ticker;
-  String? _checkingOutKey;
 
   @override
   void initState() {
@@ -41,6 +45,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(appCollectionsProvider);
+    final viewState = ref.watch(cartViewModelProvider);
     final notifier = ref.read(appCollectionsProvider.notifier);
     final groups = _cartGroups(state.cartItems);
 
@@ -106,7 +111,13 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                       ...groups.map(
                         (group) => Padding(
                           padding: const EdgeInsets.only(bottom: 8),
-                          child: _cartGroupCard(context, ref, notifier, group),
+                          child: _cartGroupCard(
+                            context,
+                            ref,
+                            notifier,
+                            viewState,
+                            group,
+                          ),
                         ),
                       ),
                       Container(
@@ -121,9 +132,15 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                         ),
                         child: Column(
                           children: [
-                            _summaryRow(context.l10n.t('totalOrders'), '${groups.length}'),
+                            _summaryRow(
+                              context.l10n.t('totalOrders'),
+                              '${groups.length}',
+                            ),
                             const Divider(height: 10, color: AppColors.divider),
-                            _summaryRow(context.l10n.t('totalItems'), '${state.cartCount}'),
+                            _summaryRow(
+                              context.l10n.t('totalItems'),
+                              '${state.cartCount}',
+                            ),
                             const Divider(height: 10, color: AppColors.divider),
                             _summaryRow(
                               context.l10n.t('totalAmount'),
@@ -147,6 +164,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
     BuildContext context,
     WidgetRef ref,
     AppCollectionsNotifier notifier,
+    CartViewState viewState,
     _CartGroup group,
   ) {
     return Container(
@@ -163,7 +181,10 @@ class _CartScreenState extends ConsumerState<CartScreen> {
           Row(
             children: [
               Text(
-                context.l10n.t('orderN', args: {'n': _orderIdFromDate(group.addedAt)}),
+                context.l10n.t(
+                  'orderN',
+                  args: {'n': _orderIdFromDate(group.addedAt)},
+                ),
                 style: GoogleFonts.manrope(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
@@ -201,10 +222,15 @@ class _CartScreenState extends ConsumerState<CartScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            context.l10n.t('prepaymentBullet', args: {
-            'percent': '${group.prepaymentPercent}',
-            'buyer': group.buyerType == 1 ? context.l10n.t('wholesale') : context.l10n.t('retail'),
-          }),
+            context.l10n.t(
+              'prepaymentBullet',
+              args: {
+                'percent': '${group.prepaymentPercent}',
+                'buyer': group.buyerType == 1
+                    ? context.l10n.t('wholesale')
+                    : context.l10n.t('retail'),
+              },
+            ),
             style: GoogleFonts.manrope(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -287,7 +313,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                 width: 116,
                 child: AppTapScale(
                   pressedScale: 0.97,
-                  onTap: _checkingOutKey == group.identityKey
+                  onTap: viewState.checkingOutKey == group.identityKey
                       ? null
                       : () => _checkoutGroup(context, ref, group),
                   child: ElevatedButton(
@@ -304,7 +330,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                         borderRadius: BorderRadius.circular(AppUi.buttonRadius),
                       ),
                     ),
-                    child: _checkingOutKey == group.identityKey
+                    child: viewState.checkingOutKey == group.identityKey
                         ? const SizedBox(
                             width: 18,
                             height: 18,
@@ -417,24 +443,30 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       );
       return;
     }
-    if (_checkingOutKey != null) return;
-    setState(() => _checkingOutKey = group.identityKey);
-    final items = group.items.map((e) => '${e.drugId}:${e.quantity}').join(';');
-    final itemsData = group.items
-        .map(
-          (item) => <String, dynamic>{
-            'id': item.drugId,
-            'name': item.name,
-            'manufacturer': item.manufacturer,
-            'price': item.price,
-            'serial_number': item.serialNumber,
-            'expiry_date': item.expiryDate,
-            'stock': item.stock,
-            'current_stock_id': item.currentStockId,
-            'binding_drug_id': item.bindingDrugId,
-          },
-        )
-        .toList();
+    final cartViewModel = ref.read(cartViewModelProvider.notifier);
+    if (!cartViewModel.beginCheckout(group.identityKey)) return;
+    final routeData = PharmacyOrderRouteData(
+      lines: group.items
+          .map(
+            (item) => PharmacyOrderRouteLine(
+              id: item.drugId,
+              name: item.name,
+              manufacturer: item.manufacturer,
+              price: item.price,
+              serialNumber: item.serialNumber,
+              expiryDate: item.expiryDate,
+              stock: item.stock,
+              currentStockId: item.currentStockId,
+              bindingDrugId: item.bindingDrugId,
+              quantity: item.quantity,
+            ),
+          )
+          .toList(growable: false),
+      prepaymentPercent: group.prepaymentPercent,
+      buyerType: group.buyerType,
+      cartId: group.cartId,
+      fromCart: true,
+    );
     if (ref.read(isOfflineProvider)) {
       pulseOfflineBanner(ref);
     }
@@ -444,18 +476,16 @@ class _CartScreenState extends ConsumerState<CartScreen> {
           path: '/visits/pharmacy/detail/$pharmacyId/type/checkout',
           queryParameters: {'name': group.pharmacyName},
         ).toString(),
-        extra: {
-          'items': items,
-          'items_data': itemsData,
-          'prepayment': group.prepaymentPercent,
-          'buyerType': group.buyerType,
-          if (group.cartId != null) 'cart_id': group.cartId,
-        },
+        extra: routeData,
       );
     } catch (e) {
-      if (mounted) setState(() => _checkingOutKey = null);
+      cartViewModel.clearCheckout();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.t('couldNotOpenCheckout', args: {'error': '$e'}))),
+        SnackBar(
+          content: Text(
+            context.l10n.t('couldNotOpenCheckout', args: {'error': '$e'}),
+          ),
+        ),
       );
     }
   }
@@ -496,12 +526,18 @@ class _CartScreenState extends ConsumerState<CartScreen> {
   }
 
   String _remainingLabel(BuildContext context, String? iso) {
-    if (iso == null || iso.isEmpty) return context.l10n.t('hoursMinFormat', args: {'h': '12', 'm': '00'});
+    if (iso == null || iso.isEmpty) {
+      return context.l10n.t('hoursMinFormat', args: {'h': '12', 'm': '00'});
+    }
     final created = DateTime.tryParse(iso);
-    if (created == null) return context.l10n.t('hoursMinFormat', args: {'h': '12', 'm': '00'});
+    if (created == null) {
+      return context.l10n.t('hoursMinFormat', args: {'h': '12', 'm': '00'});
+    }
     final endsAt = created.add(const Duration(hours: 12));
     final left = endsAt.difference(DateTime.now());
-    if (left.isNegative) return context.l10n.t('hoursMinFormat', args: {'h': '00', 'm': '00'});
+    if (left.isNegative) {
+      return context.l10n.t('hoursMinFormat', args: {'h': '00', 'm': '00'});
+    }
     final h = left.inHours;
     final m = left.inMinutes % 60;
     final hh = h.toString().padLeft(2, '0');
@@ -526,133 +562,5 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       return aDate.compareTo(bDate);
     });
     return groups;
-  }
-}
-
-class _CartGroup {
-  final int? pharmacyId;
-  final String pharmacyName;
-  final String? addedAt;
-  final int? cartId;
-  final int prepaymentPercent;
-  final int buyerType;
-  final List<CartItemSnapshot> items;
-
-  const _CartGroup({
-    required this.pharmacyId,
-    required this.pharmacyName,
-    required this.addedAt,
-    required this.cartId,
-    required this.prepaymentPercent,
-    required this.buyerType,
-    required this.items,
-  });
-
-  String get identityKey =>
-      '${cartId ?? 0}:${pharmacyId ?? 0}:$prepaymentPercent:$buyerType:$pharmacyName';
-
-  int get count => items.fold(0, (sum, item) => sum + item.quantity);
-  double get total => items.fold(0, (sum, item) => sum + item.total);
-  String get buyerLabel => buyerType == 1 ? 'Опт' : 'Розница';
-
-  factory _CartGroup.fromItems(List<CartItemSnapshot> items) {
-    final first = items.first;
-    return _CartGroup(
-      pharmacyId: first.pharmacyId,
-      pharmacyName: first.pharmacyName?.isNotEmpty == true
-          ? first.pharmacyName!
-          : 'Аптека',
-      addedAt: first.addedAt,
-      cartId: first.cartId,
-      prepaymentPercent: first.prepaymentPercent ?? 100,
-      buyerType: first.buyerType ?? 0,
-      items: List.unmodifiable(items),
-    );
-  }
-}
-
-class _CartBottomNav extends StatelessWidget {
-  const _CartBottomNav();
-
-  @override
-  Widget build(BuildContext context) {
-    final bottomPad = MediaQuery.of(context).padding.bottom;
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.secondaryBg,
-        boxShadow: shadowSm,
-        border: const Border(top: BorderSide(color: AppColors.divider)),
-      ),
-      padding: EdgeInsets.fromLTRB(8, 8, 8, bottomPad + 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _NavItem(
-            icon: Icons.home_rounded,
-            label: context.l10n.t('navHome'),
-            onTap: () => context.go('/home'),
-          ),
-          _NavItem(
-            icon: Icons.calendar_month_rounded,
-            label: context.l10n.t('navPlan'),
-            onTap: () => context.go('/plan'),
-          ),
-          _NavItem(
-            icon: Icons.place_rounded,
-            label: context.l10n.t('navVisits'),
-            onTap: () => context.go('/visits'),
-          ),
-          _NavItem(
-            icon: Icons.bookmark_rounded,
-            label: context.l10n.t('navKnowledge'),
-            onTap: () => context.go('/knowledge'),
-          ),
-          _NavItem(
-            icon: Icons.person_rounded,
-            label: context.l10n.t('navProfile'),
-            onTap: () => context.go('/profile'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NavItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  const _NavItem({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AppTapScale(
-      onTap: onTap,
-      child: SizedBox(
-        width: 64,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 22, color: AppColors.hintText),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.manrope(
-                fontSize: 10,
-                color: AppColors.hintText,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

@@ -1,20 +1,25 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:lima/core/config/env_config.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/db/local_database.dart';
-import 'package:lima/core/models/local_visit.dart';
-import 'package:lima/core/models/models.dart';
 import 'package:lima/core/network/api_client.dart';
 import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/services/in_app_notifications_service.dart';
-import 'package:lima/core/services/material_cache_service.dart';
+import 'package:lima/core/services/doctor_directory_sync_service.dart';
+import 'package:lima/core/services/pending_plan_sync_service.dart';
+import 'package:lima/core/services/pending_mutation_sync_service.dart';
+import 'package:lima/core/services/pending_visit_push_service.dart';
+import 'package:lima/core/services/delta_pull_service.dart';
+import 'package:lima/core/services/organization_directory_pull_service.dart';
+import 'package:lima/core/services/live_data_refresh_service.dart';
+import 'package:lima/core/services/full_seed_sync_service.dart';
+import 'package:lima/core/services/sync_diagnostics_service.dart';
+import 'package:lima/core/services/background_reconcile_service.dart';
+import 'package:lima/core/services/sync_operation_gate.dart';
 import 'package:lima/core/utils/swallowed.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
@@ -30,11 +35,9 @@ const _organizationDirectoryBootstrapKey =
     'organization_directory_bootstrap_v1_all_regions_done';
 // Timestamp of the last full organisation dictionary pull, and how often to
 // force one so orgs with sync_id = null (which the delta sync skips) still land.
-const _organizationDirectoryFullPullAtKey = 'organization_directory_full_pull_at';
+const _organizationDirectoryFullPullAtKey =
+    'organization_directory_full_pull_at';
 const _organizationDirectoryFullPullInterval = Duration(hours: 24);
-const _doctorDirectoryBootstrapKey = 'doctor_directory_bootstrap_v1_done';
-const _doctorDirectoryExpectedTotalKey = 'doctor_directory_expected_total';
-const _doctorDirectoryCursorKey = 'doctor_directory_sync_id';
 const _lastAppActivityKey = 'last_app_activity_at';
 const _lastDeltaPullKey = 'last_delta_pull_at';
 const _minimumUsableLpuDirectorySize = 100;
@@ -99,11 +102,6 @@ class SyncState {
 // ─── SyncNotifier ─────────────────────────────────────────────────────────────
 
 class SyncNotifier extends StateNotifier<SyncState> {
-  /// After this many failed push attempts a visit is treated as permanently
-  /// stuck: it is removed from the queue and surfaced in the sync report
-  /// instead of being retried forever.
-  static const int _maxPushAttempts = 8;
-
   final LocalDatabase _db;
   final RemoteApiService _remoteApi;
   final ApiClient _apiClient;
@@ -111,8 +109,20 @@ class SyncNotifier extends StateNotifier<SyncState> {
   final Future<bool> Function() _silentReauth;
   final int? Function() _currentRegionId;
   final int? Function() _currentCompanyId;
+  late final DoctorDirectorySyncService _doctorDirectorySync;
+  late final PendingPlanSyncService _pendingPlanSync;
+  late final PendingMutationSyncService _pendingMutationSync;
+  late final PendingVisitPushService _pendingVisitPush;
+  late final DeltaPullService _deltaPull;
+  late final OrganizationDirectoryPullService _organizationDirectoryPull;
+  late final LiveDataRefreshService _liveDataRefresh;
+  late final FullSeedSyncService _fullSeedSync;
+  late final SyncDiagnosticsService _diagnostics;
+  late final BackgroundReconcileService _backgroundReconcile;
   bool _isReconciling = false;
   bool _reconcilePending = false;
+  final _operationGate = SyncOperationGate();
+  final _doctorOperationGate = SyncOperationGate();
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   final InAppNotificationsService _notificationsService =
       InAppNotificationsService();
@@ -126,7 +136,54 @@ class SyncNotifier extends StateNotifier<SyncState> {
     this._currentRegionId,
     this._currentCompanyId,
   ) : super(const SyncState()) {
+    _doctorDirectorySync = DoctorDirectorySyncService(
+      db: _db,
+      remoteApi: _remoteApi,
+      isOffline: _isOffline,
+      currentRegionId: _currentRegionId,
+      onProgress: _publishDoctorDirectoryProgress,
+    );
+    _pendingPlanSync = PendingPlanSyncService(
+      db: _db,
+      remoteApi: _remoteApi,
+      isOffline: _isOffline,
+    );
+    _pendingMutationSync = PendingMutationSyncService(
+      db: _db,
+      remoteApi: _remoteApi,
+      isOffline: _isOffline,
+    );
+    _pendingVisitPush = PendingVisitPushService(db: _db, remoteApi: _remoteApi);
+    _deltaPull = DeltaPullService(db: _db, remoteApi: _remoteApi);
+    _organizationDirectoryPull = OrganizationDirectoryPullService(
+      db: _db,
+      remoteApi: _remoteApi,
+    );
+    _fullSeedSync = FullSeedSyncService(db: _db, remoteApi: _remoteApi);
+    _diagnostics = SyncDiagnosticsService(db: _db);
+    _backgroundReconcile = BackgroundReconcileService(
+      apiClient: _apiClient,
+      isOffline: _isOffline,
+      hasRealInternet: _hasRealInternet,
+      silentReauth: _silentReauth,
+    );
+    _liveDataRefresh = LiveDataRefreshService(
+      db: _db,
+      remoteApi: _remoteApi,
+      apiClient: _apiClient,
+      currentCompanyId: _currentCompanyId,
+      repairDoctors: _repairDoctorDirectoryIfNeeded,
+    );
     _startConnectivityWatcher();
+  }
+
+  /// Read-only snapshot for feature adapters that expose sync state to UI.
+  SyncState get currentState => state;
+
+  /// Shares one in-flight operation with concurrent callers instead of
+  /// starting a second pull/push against the same local cursor.
+  Future<void> _runSingleFlight(Future<void> Function() operation) {
+    return _operationGate.run(operation, onComplete: _drainPendingReconcile);
   }
 
   void _startConnectivityWatcher() {
@@ -182,6 +239,22 @@ class SyncNotifier extends StateNotifier<SyncState> {
     bool repairDoctors = true,
     bool pushPendingFirst = true,
     bool deltaOnly = false,
+  }) => _runSingleFlight(
+    () => _pullFromRemote(
+      fullRefresh: fullRefresh,
+      includeDoctors: includeDoctors,
+      repairDoctors: repairDoctors,
+      pushPendingFirst: pushPendingFirst,
+      deltaOnly: deltaOnly,
+    ),
+  );
+
+  Future<void> _pullFromRemote({
+    bool fullRefresh = false,
+    bool includeDoctors = true,
+    bool repairDoctors = true,
+    bool pushPendingFirst = true,
+    bool deltaOnly = false,
   }) async {
     if (state.activeOperation != null) return;
     if (_isOffline()) {
@@ -217,9 +290,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
     try {
       final companyId = _currentCompanyId();
       if (!fullRefresh) {
-        final delta = await _tryDeltaPull(
-          includeDoctors: includeDoctors,
-        ).timeout(const Duration(seconds: 25), onTimeout: () => null);
+        final delta = await _deltaPull
+            .pull(includeDoctors: includeDoctors)
+            .timeout(const Duration(seconds: 25), onTimeout: () => null);
         if (delta != null) {
           // Cooldown: skip the (heavy) live-data refresh if it ran < 30s ago.
           // Avoids re-downloading the visit/plan/material set on every hot
@@ -238,8 +311,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
             clearProgress: true,
           );
           final live = liveStale
-              ? await _syncAllLiveDataFromRemote(repairDoctors: repairDoctors)
-              : _LiveSyncResult.empty();
+              ? await _liveDataRefresh.refresh(repairDoctors: repairDoctors)
+              : const LiveSyncResult.empty();
           final now = DateTime.now();
           await _db.setSyncMeta('last_pull_at', now.toIso8601String());
           await _db.setSyncMeta('last_delta_pull_at', now.toIso8601String());
@@ -326,20 +399,6 @@ class SyncNotifier extends StateNotifier<SyncState> {
       }
 
       final regionId = _currentRegionId();
-      final seed = await _remoteApi.fetchOfflineSeed(
-        regionId: regionId,
-        companyId: companyId,
-        includeDoctors: includeDoctors,
-        onProgress: _setPullProgress,
-      );
-      final localTotalsBeforeReplace = await _collectLocalTotals();
-      if (seed.orgs.isEmpty) {
-        throw StateError(
-          localTotalsBeforeReplace.organizations > 0
-              ? AppI18n.tr('syncEmptyOrgsKept')
-              : AppI18n.tr('syncEmptyOrgsEmpty'),
-        );
-      }
       state = state.copyWith(
         status: SyncStatus.loading,
         message: fullRefresh
@@ -347,24 +406,14 @@ class SyncNotifier extends StateNotifier<SyncState> {
             : AppI18n.tr('syncWriting'),
         clearProgress: true,
       );
-      await _db.replaceRemoteSnapshotPreservingUnsynced(
-        orgs: seed.orgs,
-        doctors: seed.doctors,
-        doctorOrgLinks: seed.doctorOrgLinks,
-        replaceDoctors: includeDoctors,
-        drugs: seed.drugs,
-        materials: seed.materials,
-        visits: seed.visits,
-        plannedVisits: seed.plannedVisits,
-        favOrgIds: seed.favOrgIds,
-        managers: seed.managers,
-        dayTypes: seed.dayTypes,
-        dailyStats: seed.dailyStats,
+      final seed = await _fullSeedSync.fetchAndReplace(
+        regionId: regionId,
+        companyId: companyId,
+        includeDoctors: includeDoctors,
+        onProgress: _setPullProgress,
       );
 
-      final live = await _syncAllLiveDataFromRemote(
-        repairDoctors: repairDoctors,
-      );
+      final live = await _liveDataRefresh.refresh(repairDoctors: repairDoctors);
 
       final now = DateTime.now();
       await _db.setSyncMeta('last_pull_at', now.toIso8601String());
@@ -394,7 +443,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
         await _db.setSyncMeta(_organizationDirectoryBootstrapKey, '1');
       }
       if (totals.doctors > 0 && await _doctorLinksCount() > 0) {
-        await _db.setSyncMeta(_doctorDirectoryBootstrapKey, '1');
+        await _db.setSyncMeta(DoctorDirectorySyncService.bootstrapMetaKey, '1');
       }
 
       state = state.copyWith(
@@ -402,14 +451,17 @@ class SyncNotifier extends StateNotifier<SyncState> {
         clearProgress: true,
         clearActiveOperation: true,
         unsyncedCount: unsynced,
-        message: AppI18n.tr('syncCountsSummary', args: {
-          'mode': fullRefresh
-              ? AppI18n.tr('syncModeFull')
-              : AppI18n.tr('syncModeLoaded'),
-          'lpu': '${fetchedOrgCounts.lpu}',
-          'pharmacy': '${fetchedOrgCounts.pharmacy}',
-          'drugs': '${seed.drugs.length}',
-        }),
+        message: AppI18n.tr(
+          'syncCountsSummary',
+          args: {
+            'mode': fullRefresh
+                ? AppI18n.tr('syncModeFull')
+                : AppI18n.tr('syncModeLoaded'),
+            'lpu': '${fetchedOrgCounts.lpu}',
+            'pharmacy': '${fetchedOrgCounts.pharmacy}',
+            'drugs': '${seed.drugs.length}',
+          },
+        ),
         lastSyncAt: now,
         lastGetDebug: {
           'ok': true,
@@ -460,10 +512,14 @@ class SyncNotifier extends StateNotifier<SyncState> {
   }
 
   void startLayeredSyncInBackground({bool fullRefresh = false}) {
-    if (_isOffline() || state.activeOperation != null) return;
+    if (_isOffline() ||
+        state.activeOperation != null ||
+        _operationGate.isRunning) {
+      return;
+    }
     if (fullRefresh) {
       unawaited(
-        syncLayeredFromRemote(fullRefresh: true, pushPendingFirst: false),
+        syncLayeredFromRemote(fullRefresh: true, pushPendingFirst: true),
       );
       return;
     }
@@ -474,7 +530,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
   /// Silent — does not update sync state, so it can run in parallel with the
   /// main critical sync without causing UI flicker or state conflicts.
   void syncDoctorsInBackground() {
-    unawaited(_syncDoctorsBackground());
+    unawaited(_doctorOperationGate.run(_syncDoctorsBackground));
   }
 
   /// When true, [_publishLayerProgress] calls coming from the doctors
@@ -544,6 +600,20 @@ class SyncNotifier extends StateNotifier<SyncState> {
     // is already on /home. Ignored on a first run (empty DB) where that data is
     // needed up front to create visits.
     bool homeOnly = false,
+  }) => _runSingleFlight(
+    () => _syncLayeredFromRemote(
+      fullRefresh: fullRefresh,
+      pushPendingFirst: pushPendingFirst,
+      skipDoctors: skipDoctors,
+      homeOnly: homeOnly,
+    ),
+  );
+
+  Future<void> _syncLayeredFromRemote({
+    bool fullRefresh = false,
+    bool pushPendingFirst = true,
+    bool skipDoctors = false,
+    bool homeOnly = false,
   }) async {
     if (state.activeOperation != null) return;
     if (_isOffline()) {
@@ -603,20 +673,14 @@ class SyncNotifier extends StateNotifier<SyncState> {
           initialTotals.lpu < _minimumUsableLpuDirectorySize ||
           initialTotals.pharmacy < _minimumUsablePharmacyDirectorySize;
 
-      final liveFuture = _syncAllLiveDataFromRemote(
+      final liveFuture = _liveDataRefresh.refresh(
         repairDoctors: false,
         quickOnly: true,
       );
-      final orgsFuture =
-          (forceFullOrganizations
-                  ? _remoteApi.getOrganizationsDictionary()
-                  : _remoteApi.getOrganizationsSync(
-                      syncId: syncId > 0 ? syncId : null,
-                    ))
-              .then((orgs) async {
-                if (orgs.isNotEmpty) await _db.upsertOrganisations(orgs);
-                return orgs;
-              });
+      final orgsFuture = _organizationDirectoryPull.pull(
+        full: forceFullOrganizations,
+        syncId: syncId,
+      );
       final drugsFuture = _syncDrugsAndMaterialsLayer(companyId: companyId);
 
       // ── Fast home-only path (splash, warm start) ────────────────────────────
@@ -831,6 +895,31 @@ class SyncNotifier extends StateNotifier<SyncState> {
     );
   }
 
+  Future<void> _publishDoctorDirectoryProgress({
+    required int loaded,
+    required int cursor,
+    required int? expectedTotal,
+  }) async {
+    final progressCurrent = expectedTotal == null || expectedTotal <= 0
+        ? cursor
+        : cursor.clamp(0, expectedTotal);
+    final percent = _progressPercent(progressCurrent, expectedTotal);
+    await _publishLayerProgress(
+      percent == null
+          ? AppI18n.tr('syncUpdatingDataEllipsis')
+          : AppI18n.tr('syncUpdatingDataPct', args: {'percent': '$percent'}),
+      debug: {
+        'mode': 'layered',
+        'layer': 'doctors',
+        'fetched_doctors_count': loaded,
+        'doctor_sync_id': cursor,
+        'expected_doctors_total': ?expectedTotal,
+      },
+      progressCurrent: progressCurrent,
+      progressTotal: expectedTotal,
+    );
+  }
+
   Map<String, dynamic> _localTotalsDebug(_LocalTotals totals) {
     return {
       'local_organizations_total': totals.organizations,
@@ -992,14 +1081,13 @@ class SyncNotifier extends StateNotifier<SyncState> {
     );
 
     try {
-      await pushToRemote();
+      await _pushToRemote();
     } catch (_) {
       final remaining = await _db.unsyncedCount();
       state = state.copyWith(
         status: SyncStatus.error,
         unsyncedCount: remaining,
-        message:
-            AppI18n.tr('syncPushFailedDeferred'),
+        message: AppI18n.tr('syncPushFailedDeferred'),
         clearProgress: true,
         clearActiveOperation: true,
       );
@@ -1026,91 +1114,11 @@ class SyncNotifier extends StateNotifier<SyncState> {
     return true;
   }
 
-  /// Drains the [pending_plans] queue: POSTs each row to `/api/visits/plans`
-  /// and on success removes it + stamps the new `remote_id` on the local
-  /// [planned_visits] row. Network/server errors leave the row in queue.
-  /// Safe to call whenever — no-op when offline or queue empty.
-  Future<void> pushPendingPlans() => _pushPendingPlans();
+  /// Drains the [pending_plans] queue. The service owns row parsing and
+  /// retry/delete policy; this notifier only exposes the sync entrypoint.
+  Future<void> pushPendingPlans() => _pendingPlanSync.sync();
 
-  Future<void> _pushPendingPlans() async {
-    final offline = _isOffline();
-    final pending = await _db.getPendingPlans();
-    debugPrint(
-      '[PLAN PUSH] _pushPendingPlans: offline=$offline pending=${pending.length}',
-    );
-    if (offline) return;
-    if (pending.isEmpty) return;
-
-    for (final row in pending) {
-      final pendingId = (row['id'] as num?)?.toInt();
-      final localPlanId = (row['local_plan_id'] as num?)?.toInt();
-      final orgId = (row['org_id'] as num?)?.toInt();
-      final visitFormatId = (row['visit_format_id'] as num?)?.toInt();
-      final startDateRaw = row['start_date'] as String?;
-      final endDateRaw = row['end_date'] as String?;
-      if (pendingId == null ||
-          localPlanId == null ||
-          orgId == null ||
-          visitFormatId == null ||
-          startDateRaw == null) {
-        // Malformed row — drop it to avoid permanent stuckness.
-        if (pendingId != null) await _db.deletePendingPlan(pendingId);
-        continue;
-      }
-      List<int> doctorIds = const [];
-      final doctorIdsJson = row['doctor_ids_json'] as String?;
-      if (doctorIdsJson != null && doctorIdsJson.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(doctorIdsJson);
-          if (decoded is List) {
-            doctorIds = decoded
-                .map((e) => (e is num) ? e.toInt() : int.tryParse('$e'))
-                .whereType<int>()
-                .toList();
-          }
-        } catch (e) {
-          logSwallowed(e, 'Sync._pushPendingPlans');
-        }
-      }
-
-      try {
-        final response = await _remoteApi.pushPlannedVisit(
-          organizationId: orgId,
-          doctorIds: doctorIds,
-          visitFormatId: visitFormatId,
-          startDate: DateTime.parse(startDateRaw),
-          endDate: endDateRaw != null ? DateTime.tryParse(endDateRaw) : null,
-          comment: row['comment'] as String?,
-        );
-        final data = response['response'];
-        int? remoteId;
-        if (data is Map) {
-          remoteId =
-              (data['id'] as num?)?.toInt() ??
-              (data['plan_id'] as num?)?.toInt() ??
-              (data['visit_id'] as num?)?.toInt();
-        }
-        if (remoteId != null) {
-          await _db.setPlannedVisitRemoteId(
-            localId: localPlanId,
-            remoteId: remoteId,
-            rawJson: data is Map ? Map<String, dynamic>.from(data) : null,
-          );
-        }
-        await _db.deletePendingPlan(pendingId);
-      } catch (e) {
-        // 4xx validation failure — drop the queue entry to avoid spinning on
-        // bad input. Server-side / network errors keep the row for retry.
-        if (e is RemotePushException) {
-          final status = e.response['status'];
-          if (status is int && status >= 400 && status < 500) {
-            await _db.deletePendingPlan(pendingId);
-          }
-        }
-        // Continue with the next pending row regardless.
-      }
-    }
-  }
+  Future<void> _pushPendingPlans() => _pendingPlanSync.sync();
 
   void _setPullProgress(String message, {int? current, int? total}) {
     if (!mounted) return;
@@ -1137,95 +1145,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
     ].whereType<int>().fold<int>(0, (prev, id) => id > prev ? id : prev);
   }
 
-  Future<_DeltaPullResult?> _tryDeltaPull({bool includeDoctors = true}) async {
-    final syncCursor = await _db.getSyncMeta('last_sync_id');
-    final storedSyncId = int.tryParse(syncCursor ?? '') ?? 0;
-    final localSyncId = await _db.getMaxLocalSyncId();
-    final syncId = storedSyncId > localSyncId ? storedSyncId : localSyncId;
-    try {
-      final orgs = await _remoteApi.getOrganizationsSync(
-        syncId: syncId > 0 ? syncId : null,
-      );
-      final doctors = includeDoctors
-          ? await _remoteApi.getDoctorsSync(syncId: syncId > 0 ? syncId : null)
-          : const <Map<String, dynamic>>[];
-      final relations = includeDoctors
-          ? await _remoteApi.getDoctorOrganisationRelations(syncId: syncId)
-          : const <Map<String, dynamic>>[];
-      final drugs = await _remoteApi.getDrugsSync(syncId: syncId);
-
-      await _db.upsertOrganisations(orgs);
-      await _db.upsertDoctorOrganisationLinks(relations);
-      await _db.upsertDoctors(doctors);
-      await _db.upsertDrugs(drugs);
-      final maxSyncId = [
-        ...orgs.map((e) => e['sync_id'] as int?),
-        ...doctors.map((e) => e['sync_id'] as int?),
-        ...relations.map((e) => e['sync_id'] as int?),
-        ...drugs.map((e) => e['sync_id'] as int?),
-      ].whereType<int>().fold<int>(syncId, (p, e) => e > p ? e : p);
-      if (maxSyncId > 0) {
-        await _db.setSyncMeta('last_sync_id', '$maxSyncId');
-      }
-
-      return _DeltaPullResult(
-        lastSyncIdBefore: syncId,
-        lastSyncIdAfter: maxSyncId > 0 ? maxSyncId : syncId,
-        organizationsCount: orgs.length,
-        organizations: orgs,
-        doctorsCount: doctors.length,
-        drugsCount: drugs.length,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Reads the single scalar of a COUNT(*) query, tolerating an empty result
-  /// set (e.g. a cleared or corrupted table) instead of crashing on `.first`.
-  static int _scalarCount(List<Map<String, dynamic>> rows) {
-    if (rows.isEmpty) return 0;
-    return (rows.first['c'] as num?)?.toInt() ?? 0;
-  }
-
   Future<_LocalTotals> _collectLocalTotals() async {
-    final db = _db.db;
-    final orgs = await db.rawQuery('SELECT COUNT(*) AS c FROM organisations');
-    final lpu = await db.rawQuery(
-      "SELECT COUNT(*) AS c FROM organisations WHERE type = 'lpu'",
-    );
-    final pharmacies = await db.rawQuery(
-      "SELECT COUNT(*) AS c FROM organisations WHERE type = 'pharmacy'",
-    );
-    final distributors = await db.rawQuery(
-      "SELECT COUNT(*) AS c FROM organisations WHERE type = 'distributor'",
-    );
-    final doctors = await db.rawQuery('SELECT COUNT(*) AS c FROM doctors');
-    final visits = await db.rawQuery('SELECT COUNT(*) AS c FROM visits');
-    final plannedVisits = await db.rawQuery(
-      'SELECT COUNT(*) AS c FROM planned_visits',
-    );
-    final drugs = await db.rawQuery('SELECT COUNT(*) AS c FROM drugs');
-    final materials = await db.rawQuery(
-      'SELECT COUNT(*) AS c FROM drug_materials',
-    );
-    final orgTotal = _scalarCount(orgs);
-    final lpuTotal = _scalarCount(lpu);
-    final pharmacyTotal = _scalarCount(pharmacies);
-    final distributorTotal = _scalarCount(distributors);
-    return _LocalTotals(
-      organizations: orgTotal,
-      lpu: lpuTotal,
-      pharmacy: pharmacyTotal,
-      distributor: distributorTotal,
-      otherOrganizations:
-          orgTotal - lpuTotal - pharmacyTotal - distributorTotal,
-      doctors: _scalarCount(doctors),
-      visits: _scalarCount(visits),
-      plannedVisits: _scalarCount(plannedVisits),
-      drugs: _scalarCount(drugs),
-      materials: _scalarCount(materials),
-    );
+    return _diagnostics.collectLocalTotals();
   }
 
   _OrgTypeCounts _countOrgTypes(List<Map<String, dynamic>> orgs) {
@@ -1255,652 +1176,33 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   /// Refreshes all live data that changes frequently: visits, planned visits,
   /// favourite doctors/orgs, daily stats, managers, day types, and materials.
-  Future<_LiveSyncResult> _syncAllLiveDataFromRemote({
-    bool repairDoctors = true,
-    bool quickOnly = false,
-  }) async {
-    var visitsCount = 0;
-    var plannedVisitsCount = 0;
-    var materialsCount = 0;
-    var cachedFilesCount = 0;
-
-    // Full catalogue (bindings) — keeps the detailing/фармкружок list complete,
-    // not just warehouse stock. Skipped in the lightweight quick refresh.
-    if (!quickOnly) {
-      try {
-        final catalogueDrugs = await _remoteApi.getDrugsBindings();
-        if (catalogueDrugs.isNotEmpty) {
-          final now = DateTime.now().toIso8601String();
-          final rows = catalogueDrugs
-              .map(
-                (d) => <String, dynamic>{
-                  'id': d.id,
-                  'name': d.name,
-                  'manufacturer': d.manufacturer,
-                  'binding_drug_id': d.bindingDrugId,
-                  'updated_at': now,
-                },
-              )
-              .toList();
-          await _db.upsertDrugs(rows);
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote.bindings');
-      }
-    }
-
-    // Price-list drugs — refreshes current_stock_id / binding_drug_id needed for Бронь
-    if (!quickOnly) {
-      try {
-        final stockDrugs = await _remoteApi.getStockPriceListDrugs();
-        if (stockDrugs.isNotEmpty) {
-          final now = DateTime.now().toIso8601String();
-          final rows = stockDrugs
-              .map(
-                (d) => <String, dynamic>{
-                  'id': d.id,
-                  'name': d.name,
-                  'manufacturer': d.manufacturer,
-                  'price': d.price,
-                  'serial_number': d.serialNumber ?? '',
-                  'expiry_date': d.expiryDate ?? '',
-                  'main_stock': d.mainStock ?? d.stock ?? 0,
-                  'stock': d.stock ?? 0,
-                  'remains_stock': d.remainsStock ?? d.stock ?? 0,
-                  'current_stock_id': d.currentStockId,
-                  'binding_drug_id': d.bindingDrugId,
-                  'updated_at': now,
-                },
-              )
-              .toList();
-          await _db.upsertDrugs(rows);
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-      }
-    }
-
-    // Favourite doctors
-    try {
-      final favDoctors = await _remoteApi.getFavoriteDoctors(
-        allowDictionaryFallback: !quickOnly,
-      );
-      if (favDoctors.isNotEmpty) {
-        await _db.clearDoctorFavorites();
-        await _db.upsertDoctors(favDoctors);
-        for (final d in favDoctors) {
-          final id = d['id'] as int?;
-          if (id != null) await _db.updateDoctorFavorite(id, true);
-        }
-      }
-    } catch (e) {
-      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-    }
-
-    // Favourite organisations
-    try {
-      final favOrgs = await _remoteApi.getFavoriteOrganizations(
-        allowDictionaryFallback: !quickOnly,
-      );
-      if (favOrgs.isNotEmpty) {
-        await _db.upsertOrganisations(favOrgs);
-        await _db.clearOrgFavorites();
-        for (final o in favOrgs) {
-          final id = (o['id'] as num?)?.toInt();
-          if (id != null) await _db.updateOrgFavorite(id, true);
-        }
-      }
-    } catch (e) {
-      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-    }
-
-    // All visit history
-    try {
-      final allVisits = <Map<String, dynamic>>[];
-      for (final fn in [
-        _remoteApi.getVisitHistoryGeneral,
-        _remoteApi.getVisitHistoryOrders,
-        _remoteApi.getVisitHistoryRemnant,
-      ]) {
-        try {
-          allVisits.addAll(await fn());
-        } catch (e) {
-          logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-        }
-      }
-      if (allVisits.isNotEmpty) {
-        // Deduplicate by remote_id — last endpoint wins (more specific type)
-        final seen = <int>{};
-        final deduped = <Map<String, dynamic>>[];
-        for (final v in allVisits.reversed) {
-          final rid = v['remote_id'] as int?;
-          if (rid == null || seen.add(rid)) {
-            deduped.add(v);
-          }
-        }
-        final fetchedRemoteIds = deduped
-            .map((v) => (v['remote_id'] as num?)?.toInt())
-            .whereType<int>()
-            .toSet();
-        final locallyPushedRows = await _db.db.query(
-          'visits',
-          where:
-              'is_synced = ? AND remote_id IS NOT NULL AND last_push_response_json IS NOT NULL',
-          whereArgs: const [1],
-        );
-        final locallyPushedByRemoteId = {
-          for (final row in locallyPushedRows)
-            if ((row['remote_id'] as num?)?.toInt() != null)
-              (row['remote_id'] as num).toInt(): row,
-        };
-
-        const visitColumns = {
-          'remote_id',
-          'org_id',
-          'org_name',
-          'doctor_id',
-          'doctor_name',
-          'visit_type',
-          'status',
-          'notes',
-          'created_at',
-          'updated_at',
-          'is_synced',
-          'raw_json',
-          'last_push_request_json',
-          'last_push_response_json',
-          'medical_rep_name',
-        };
-        // Wrapped in a transaction so a kill/crash between the delete and the
-        // re-insert can't leave the local visit history half-erased (the
-        // delete and every insert either all land or none do).
-        await _db.db.transaction((txn) async {
-          await txn.delete('visits', where: 'is_synced = ?', whereArgs: [1]);
-          final batch = txn.batch();
-          for (final v in deduped) {
-            final remoteId = (v['remote_id'] as num?)?.toInt();
-            final row = Map<String, dynamic>.from(v)
-              ..['is_synced'] = 1
-              ..removeWhere((k, _) => !visitColumns.contains(k));
-            final localRow = remoteId == null
-                ? null
-                : locallyPushedByRemoteId[remoteId];
-            if (localRow != null) {
-              _mergeLocalOrderPushState(row, localRow);
-            }
-            batch.insert(
-              'visits',
-              row,
-              conflictAlgorithm: ConflictAlgorithm.replace,
-            );
-          }
-          for (final localRow in locallyPushedRows) {
-            final remoteId = (localRow['remote_id'] as num?)?.toInt();
-            if (remoteId == null || fetchedRemoteIds.contains(remoteId)) {
-              continue;
-            }
-            final row = Map<String, dynamic>.from(localRow)
-              ..removeWhere((k, _) => !visitColumns.contains(k));
-            batch.insert(
-              'visits',
-              row,
-              conflictAlgorithm: ConflictAlgorithm.replace,
-            );
-          }
-          await batch.commit(noResult: true);
-        });
-        visitsCount =
-            deduped.length +
-            locallyPushedRows.where((row) {
-              final remoteId = (row['remote_id'] as num?)?.toInt();
-              return remoteId != null && !fetchedRemoteIds.contains(remoteId);
-            }).length;
-      }
-    } catch (e) {
-      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-    }
-
-    // Planned visits — convert PlannedVisit model → DB row.
-    // Filter by the logged-in medrep: /visits/plans returns OTHER reps' plans
-    // too (the web hides them), so pass the owner id to drop foreign plans.
-    try {
-      final owner = await _db.getCurrentUserOwner();
-      final ownerId = owner.userId;
-      final planned = <Map<String, dynamic>>[];
-      var anyPlanFetchOk = false;
-      final fetches = <Future<List<PlannedVisit>>>[
-        _remoteApi.getCurrentVisitPlans(null, ownerId),
-        _remoteApi.getVisitPlans(ownerId),
-      ];
-      for (final f in fetches) {
-        try {
-          final items = await f;
-          anyPlanFetchOk = true;
-          for (final pv in items) {
-            final row = _plannedVisitToRow(pv);
-            final key = row['remote_id'];
-            if (key == null || !planned.any((e) => e['remote_id'] == key)) {
-              planned.add(row);
-            }
-          }
-        } catch (e) {
-          logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-        }
-      }
-      if (planned.isNotEmpty) {
-        await _db.upsertPlannedVisits(planned);
-        plannedVisitsCount = planned.length;
-      }
-      // Reconcile: drop server-origin local plans the API no longer returns
-      // (deleted/expired server-side). Only when a fetch actually succeeded —
-      // a network failure must not wipe the local cache. Locally-created
-      // (un-pushed) plans have no remote_id and are preserved.
-      if (anyPlanFetchOk) {
-        final serverIds = planned
-            .map((e) => (e['remote_id'] as num?)?.toInt())
-            .whereType<int>()
-            .toSet();
-        await _db.reconcileServerPlannedVisits(serverIds);
-      }
-    } catch (e) {
-      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-    }
-
-    if (!quickOnly) {
-      // Drug documents/materials + per-drug documents count.
-      try {
-        final docs = await _remoteApi.getDrugDocuments(
-          companyId: _currentCompanyId(),
-        );
-        if (docs.materials.isNotEmpty) {
-          await _db.upsertDrugMaterials(docs.materials);
-          materialsCount = docs.materials.length;
-        }
-        // Reset stale counts before re-applying the authoritative set so drugs
-        // without documents drop out of the knowledge base.
-        await _db.resetAllDrugDocumentsCount();
-        for (final e in docs.counts.entries) {
-          await _db.updateDrugDocumentsCount(e.key, e.value);
-        }
-        // Update drug names from documents API (may differ from sync API names)
-        for (final e in docs.drugNames.entries) {
-          await _db.updateDrugName(e.key, e.value);
-        }
-        final existingDrugRows = await _db.getDrugs(
-          onlyWithPositivePrice: false,
-        );
-        final existingDrugIds = existingDrugRows
-            .map((e) => (e['id'] as num?)?.toInt())
-            .whereType<int>()
-            .toSet();
-        final now = DateTime.now().toIso8601String();
-        final documentOnlyDrugs = docs.counts.entries
-            .where((e) => !existingDrugIds.contains(e.key))
-            .map(
-              (e) => {
-                'id': e.key,
-                'name':
-                    docs.drugNames[e.key] ??
-                    AppI18n.tr('drugNumbered', args: {'n': '${e.key}'}),
-                'manufacturer': '',
-                'price': 0,
-                'serial_number': '',
-                'expiry_date': '',
-                'main_stock': 0,
-                'stock': 0,
-                'remains_stock': 0,
-                'current_stock_id': null,
-                'binding_drug_id': e.key,
-                'documents_count': e.value,
-                'updated_at': now,
-              },
-            )
-            .toList();
-        if (documentOnlyDrugs.isNotEmpty) {
-          await _db.upsertDrugs(documentOnlyDrugs);
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-      }
-    }
-
-    // Daily stats
-    try {
-      final stats = await _remoteApi.getDailyVisitStatistics();
-      await _db.setCachedStat('daily_stats', stats);
-    } catch (e) {
-      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-    }
-
-    // Managers
-    try {
-      final managers = await _remoteApi.getManagers();
-      if (managers.isNotEmpty) {
-        final rows = managers
-            .map(
-              (m) => {
-                'full_name': m.name,
-                'role': m.role,
-                'initials': m.initials,
-                'raw_json': '{"name":"${m.name}","role":"${m.role}"}',
-              },
-            )
-            .toList();
-        await _db.upsertManagers(rows);
-      }
-    } catch (e) {
-      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-    }
-
-    // Day types
-    try {
-      final dayTypes = await _remoteApi.getDayTypes();
-      if (dayTypes.isNotEmpty) {
-        final rows = dayTypes
-            .map(
-              (e) => {
-                'id': e['id'],
-                'name': e['name'] ?? e['title'] ?? '${e['id']}',
-                'raw_json': jsonEncode(e),
-              },
-            )
-            .toList();
-        await _db.upsertDayTypes(rows);
-      }
-    } catch (e) {
-      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-    }
-
-    // Visit formats (used by plan-screen format picker).
-    try {
-      final formats = await _remoteApi.getVisitFormats();
-      if (formats.isNotEmpty) {
-        final rows = formats
-            .map(
-              (e) => {
-                'id': e['id'],
-                'name': e['name'] ?? e['title'] ?? '${e['id']}',
-                'raw_json': jsonEncode(e),
-              },
-            )
-            .toList();
-        await _db.upsertVisitFormats(rows);
-      }
-    } catch (e) {
-      logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-    }
-
-    if (!quickOnly) {
-      // Download material files for offline access
-      try {
-        final cacheService = MaterialCacheService(
-          dio: _apiClient.dio,
-          authToken: _apiClient.token,
-        );
-        cachedFilesCount = await cacheService.downloadPending(_db);
-      } catch (e) {
-        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-      }
-    }
-
-    if (repairDoctors) {
-      try {
-        await _repairDoctorDirectoryIfNeeded();
-      } catch (e) {
-        logSwallowed(e, 'Sync._syncAllLiveDataFromRemote');
-      }
-    }
-
-    return _LiveSyncResult(
-      visitsCount: visitsCount,
-      plannedVisitsCount: plannedVisitsCount,
-      materialsCount: materialsCount,
-      cachedFilesCount: cachedFilesCount,
-    );
-  }
-
-  void _mergeLocalOrderPushState(
-    Map<String, dynamic> remoteRow,
-    Map<String, dynamic> localRow,
-  ) {
-    final requestJson = localRow['last_push_request_json'] as String?;
-    final responseJson = localRow['last_push_response_json'] as String?;
-    if (requestJson != null && requestJson.isNotEmpty) {
-      remoteRow['last_push_request_json'] = requestJson;
-    }
-    if (responseJson != null && responseJson.isNotEmpty) {
-      remoteRow['last_push_response_json'] = responseJson;
-    }
-
-    final localRaw = _decodeJsonMap(localRow['raw_json'] as String?);
-    final request = _decodeJsonMap(requestJson);
-    if (localRaw == null && request == null) return;
-    final raw =
-        _decodeJsonMap(remoteRow['raw_json'] as String?) ?? <String, dynamic>{};
-
-    void copyOrderTerms(Map<String, dynamic>? source) {
-      if (source == null) return;
-      for (final key in [
-        'prepayment',
-        'prepayment_percent',
-        'buyer_type',
-        'is_wholesaler',
-        'margin_id',
-        'margin_percent',
-        'payment_variant_id',
-        'company_id',
-      ]) {
-        if (source.containsKey(key) && source[key] != null) {
-          raw[key] = source[key];
-        }
-      }
-      if (source.containsKey('prepayment_percent') &&
-          source['prepayment_percent'] != null) {
-        raw['prepayment'] = source['prepayment_percent'];
-      }
-      if (!source.containsKey('buyer_type') &&
-          source.containsKey('is_wholesaler') &&
-          source['is_wholesaler'] != null) {
-        raw['buyer_type'] = source['is_wholesaler'] == true ? 1 : 0;
-      }
-    }
-
-    copyOrderTerms(localRaw);
-    copyOrderTerms(request);
-    if (raw.isNotEmpty) {
-      remoteRow['raw_json'] = jsonEncode(raw);
-    }
-  }
-
-  Map<String, dynamic>? _decodeJsonMap(String? rawJson) {
-    if (rawJson == null || rawJson.isEmpty) return null;
-    try {
-      final decoded = jsonDecode(rawJson);
-      if (decoded is Map) return Map<String, dynamic>.from(decoded);
-    } catch (e) {
-      logSwallowed(e, 'Sync._decodeJsonMap');
-    }
-    return null;
-  }
-
   Future<int> _doctorLinksCount() async {
-    final rows = await _db.db.rawQuery(
-      'SELECT COUNT(*) AS c FROM doctor_organisations',
-    );
-    return Sqflite.firstIntValue(rows) ?? 0;
+    return _diagnostics.doctorLinksCount();
   }
 
   Future<bool> _doctorDirectoryNeedsRepair({_LocalTotals? totals}) async {
     final currentTotals = totals ?? await _collectLocalTotals();
-    if (currentTotals.lpu == 0) return false;
-    final bootstrapped = await _isDoctorDirectoryBootstrapped();
-    var expectedTotal = await _doctorDirectoryExpectedTotal();
-    if (expectedTotal == null && !_isOffline()) {
-      try {
-        final remoteTotal = await _remoteApi.getDoctorsDictionaryTotal();
-        if (remoteTotal != null && remoteTotal > 0) {
-          expectedTotal = remoteTotal;
-          await _setDoctorDirectoryExpectedTotal(remoteTotal);
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync._doctorDirectoryNeedsRepair');
-      }
-    }
-    if (expectedTotal != null &&
-        expectedTotal > 0 &&
-        currentTotals.doctors < expectedTotal) {
-      return true;
-    }
-    if (!bootstrapped && expectedTotal == null) return true;
-    if (!bootstrapped && currentTotals.doctors <= 5000) return true;
-    if (currentTotals.doctors == 0) return true;
-    if (_currentRegionId() != null && currentTotals.doctors < 100) return true;
-    return await _doctorLinksCount() == 0;
-  }
-
-  String _doctorDirectoryBootstrapMetaKey() {
-    return _doctorDirectoryBootstrapKey;
-  }
-
-  String _doctorDirectoryExpectedTotalMetaKey() {
-    return _doctorDirectoryExpectedTotalKey;
-  }
-
-  Future<bool> _isDoctorDirectoryBootstrapped() async {
-    return await _db.getSyncMeta(_doctorDirectoryBootstrapMetaKey()) == '1';
-  }
-
-  Future<void> _markDoctorDirectoryBootstrapped() async {
-    await _db.setSyncMeta(_doctorDirectoryBootstrapMetaKey(), '1');
-  }
-
-  Future<int?> _doctorDirectoryExpectedTotal() async {
-    return int.tryParse(
-      await _db.getSyncMeta(_doctorDirectoryExpectedTotalMetaKey()) ?? '',
+    return _doctorDirectorySync.needsRepair(
+      localLpuCount: currentTotals.lpu,
+      localDoctorCount: currentTotals.doctors,
     );
   }
 
-  Future<void> _setDoctorDirectoryExpectedTotal(int total) async {
-    if (total <= 0) return;
-    await _db.setSyncMeta(_doctorDirectoryExpectedTotalMetaKey(), '$total');
-  }
+  Future<bool> _isDoctorDirectoryBootstrapped() =>
+      _doctorDirectorySync.isBootstrapped();
 
-  Future<int> _doctorDirectoryCursor() async {
-    return int.tryParse(
-          await _db.getSyncMeta(_doctorDirectoryCursorKey) ?? '',
-        ) ??
-        0;
-  }
+  Future<void> _markDoctorDirectoryBootstrapped() =>
+      _doctorDirectorySync.markBootstrapped();
 
-  Future<void> _setDoctorDirectoryCursor(int cursor) async {
-    if (cursor < 0) return;
-    await _db.setSyncMeta(_doctorDirectoryCursorKey, '$cursor');
-  }
-
-  Future<int> _repairDoctorDirectoryIfNeeded() async {
-    final totals = await _collectLocalTotals();
-    if (!await _doctorDirectoryNeedsRepair(totals: totals)) return 0;
-
-    final relations = await _remoteApi.getDoctorOrganisationRelations(
-      syncId: 0,
-    );
-    await _db.upsertDoctorOrganisationLinks(relations);
-    await _publishLayerProgress(
-      AppI18n.tr('syncUpdatingDataEllipsis'),
-      debug: {
-        'mode': 'layered',
-        'layer': 'doctor_relations',
-        'fetched_doctor_relations_count': relations.length,
-      },
-    );
-
-    var fetchedCount = 0;
-    // Always fetch expected_total from API so a stale cached value doesn't
-    // prevent repair when the server adds new doctors. Fall back to stored
-    // value only if the API call fails.
-    final freshTotal = await _remoteApi.getDoctorsDictionaryTotal();
-    final expectedTotal = (freshTotal != null && freshTotal > 0)
-        ? freshTotal
-        : await _doctorDirectoryExpectedTotal();
-    if (expectedTotal != null && expectedTotal > 0) {
-      await _setDoctorDirectoryExpectedTotal(expectedTotal);
-    }
-    var cursor = await _doctorDirectoryCursor();
-    if (expectedTotal != null &&
-        expectedTotal > 0 &&
-        cursor >= expectedTotal &&
-        totals.doctors < expectedTotal) {
-      cursor = 0;
-      await _setDoctorDirectoryCursor(0);
-    }
-
-    await _remoteApi.getDoctorsSyncBatched(
-      syncId: cursor,
-      batchSize: 1000,
-      collectRows: false,
-      onBatch: (pageDoctors, loaded, nextCursor) async {
-        fetchedCount = loaded;
-        await _db.upsertDoctors(pageDoctors);
-        await _setDoctorDirectoryCursor(nextCursor);
-        final progressCurrent = expectedTotal == null || expectedTotal <= 0
-            ? nextCursor
-            : nextCursor.clamp(0, expectedTotal);
-        final progressTotal = expectedTotal;
-        final percent = _progressPercent(progressCurrent, progressTotal);
-        await _publishLayerProgress(
-          percent == null
-              ? AppI18n.tr('syncUpdatingDataEllipsis')
-              : AppI18n.tr('syncUpdatingDataPct', args: {'percent': '$percent'}),
-          debug: {
-            'mode': 'layered',
-            'layer': 'doctors',
-            'fetched_doctors_count': loaded,
-            'doctor_sync_id': nextCursor,
-            'expected_doctors_total': ?expectedTotal,
-          },
-          progressCurrent: progressCurrent,
-          progressTotal: progressTotal,
-        );
-      },
-    );
-    final afterTotals = await _collectLocalTotals();
-    final latestExpectedTotal = await _doctorDirectoryExpectedTotal();
-    final latestCursor = await _doctorDirectoryCursor();
-    final hasExpectedDoctors =
-        latestExpectedTotal == null ||
-        latestExpectedTotal <= 0 ||
-        afterTotals.doctors >= latestExpectedTotal ||
-        latestCursor >= latestExpectedTotal;
-    if (hasExpectedDoctors &&
-        afterTotals.doctors > 0 &&
-        await _doctorLinksCount() > 0) {
-      await _markDoctorDirectoryBootstrapped();
-    }
-    return fetchedCount;
-  }
+  Future<int> _repairDoctorDirectoryIfNeeded() => _doctorDirectorySync.repair();
 
   // ── pushToRemote ───────────────────────────────────────────────────────────
 
-  static Map<String, dynamic> _plannedVisitToRow(PlannedVisit pv) {
-    final orgType = pv.organisationType == OrgType.pharmacy
-        ? 'pharmacy'
-        : 'lpu';
-    return {
-      'remote_id': pv.id,
-      'org_id': pv.organisationId,
-      'org_name': pv.organisationName,
-      'org_type': orgType,
-      'doctor_name': pv.doctorName,
-      'assigned_by': pv.assignedBy,
-      'city': pv.city,
-      'visit_date': pv.date.toIso8601String(),
-      'status': pv.status == VisitStatus.completed ? 'completed' : 'planned',
-    };
-  }
-
   /// Pushes all unsynced local visits to the mock remote, then marks them as
   /// synced in the local DB.
-  Future<void> pushToRemote() async {
+  Future<void> pushToRemote() => _runSingleFlight(_pushToRemote);
+
+  Future<void> _pushToRemote() async {
     if (state.activeOperation != null) return;
     if (_isOffline()) {
       final count = await _db.unsyncedCount();
@@ -1919,127 +1221,28 @@ class SyncNotifier extends StateNotifier<SyncState> {
       clearProgress: true,
     );
 
+    final queueFailures = <Map<String, dynamic>>[];
+    final failed = <String>[];
+
+    void recordQueueFailure(String type, Object error, {int? id}) {
+      final detail = _pushErrorMessage(error);
+      queueFailures.add({'type': type, 'id': ?id, 'error': detail});
+      failed.add('$type${id == null ? '' : '#$id'}: $detail');
+    }
+
     try {
-      // Repair & re-queue visits saved by older builds in the legacy
-      // talked_about_drugs format (drug_name/status string) that the server
-      // rejected and parked. Must run before collecting the push queue so the
-      // recovered visits are included in this cycle.
-      try {
-        final repaired = await _db.repairLegacyVisitDrugPayloads();
-        if (repaired > 0) {
-          logSwallowed(
-            'repaired $repaired legacy visit(s)',
-            'Sync.pushToRemote.repair',
-          );
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync.pushToRemote.repair');
-      }
-
-      // Skip visits whose backoff window has not elapsed yet so we don't hammer
-      // the server on every reconcile after a transient failure.
-      final unsyncedRows = await _db.getVisits(
-        unsyncedOnly: true,
-        dueForRetryOnly: true,
-      );
-
-      final syncedIds = <int>[];
-      final parkedIds = <int>[];
-      final failed = <String>[];
-      final responses = <Map<String, dynamic>>[];
-
-      for (final row in unsyncedRows) {
-        final visit = LocalVisit.fromMap(row);
-        try {
-          final response = await _remoteApi.pushUnsyncedVisitDebug(visit);
-          responses.add({'visit_id': visit.id, ...response});
-          if (visit.id != null) {
-            await _db.setVisitPushPayload(
-              visitId: visit.id!,
-              requestJson: jsonEncode(response['request']),
-              responseJson: jsonEncode(response['response']),
-            );
-          }
-          if (visit.id != null) syncedIds.add(visit.id!);
-        } catch (e) {
-          if (visit.id != null && isPermanentVisitPushFailure(e)) {
-            // Server rejected the payload: keep the row (field data must never
-            // be lost), park it and let the user retry/delete from sync screen.
-            if (e is RemotePushException) {
-              await _db.setVisitPushPayload(
-                visitId: visit.id!,
-                requestJson: jsonEncode(e.request),
-                responseJson: jsonEncode(e.response),
-              );
-            } else {
-              await _db.setVisitPushPayload(
-                visitId: visit.id!,
-                responseJson: jsonEncode({'error': '$e'}),
-              );
-            }
-            await _db.markVisitPushFailedPermanently(visit.id!);
-            parkedIds.add(visit.id!);
-            responses.add({
-              'visit_id': visit.id,
-              'ok': false,
-              'parked': true,
-              'error': _pushErrorMessage(e),
-            });
-            failed.add(
-              'visit#${visit.id ?? '-'}: отклонён сервером, не отправлен — требует внимания',
-            );
-            continue;
-          }
-          final requestJson = e is RemotePushException
-              ? jsonEncode(e.request)
-              : null;
-          final responseJson = e is RemotePushException
-              ? jsonEncode(e.response)
-              : jsonEncode({'error': '$e'});
-          if (visit.id != null) {
-            await _db.setVisitPushPayload(
-              visitId: visit.id!,
-              requestJson: requestJson,
-              responseJson: responseJson,
-            );
-            // Transient failure: bump attempt count + schedule backoff. After
-            // too many tries, park the visit (keep the row) so the queue does
-            // not spin forever but no field data is lost.
-            final attempts = await _db.recordVisitPushFailure(visit.id!);
-            if (attempts >= _maxPushAttempts) {
-              await _db.markVisitPushFailedPermanently(visit.id!);
-              parkedIds.add(visit.id!);
-              responses.add({
-                'visit_id': visit.id,
-                'ok': false,
-                'parked': true,
-                'error': _pushErrorMessage(e),
-              });
-              failed.add(
-                'visit#${visit.id}: не отправлен после $attempts попыток — требует внимания',
-              );
-              continue;
-            }
-          }
-          failed.add('visit#${visit.id ?? '-'}: ${_pushErrorMessage(e)}');
-          responses.add({
-            'visit_id': visit.id,
-            'ok': false,
-            if (e is RemotePushException) 'request': e.request,
-            if (e is RemotePushException) 'response': e.response,
-            'error': '$e',
-          });
+      final visitResult = await _pendingVisitPush.sync();
+      final syncedIds = visitResult.syncedIds;
+      final parkedIds = visitResult.parkedIds;
+      final responses = visitResult.responses;
+      final remaining = visitResult.remaining;
+      for (final failure in visitResult.failures) {
+        if (failure.queueFailure) {
+          recordQueueFailure(failure.type, failure.message, id: failure.id);
+        } else {
+          failed.add(failure.message);
         }
       }
-
-      if (syncedIds.isNotEmpty) {
-        await _db.markSynced(syncedIds);
-      }
-
-      final now = DateTime.now();
-      await _db.setSyncMeta('last_push_at', now.toIso8601String());
-
-      final remaining = await _db.unsyncedCount();
 
       state = state.copyWith(
         status: failed.isEmpty ? SyncStatus.success : SyncStatus.error,
@@ -2047,16 +1250,20 @@ class SyncNotifier extends StateNotifier<SyncState> {
         message: failed.isEmpty
             ? (syncedIds.isEmpty
                   ? AppI18n.tr('syncQueueSent')
-                  : AppI18n.tr('syncSentVisits', args: {
-                      'n': '${syncedIds.length}',
-                    }))
-            : AppI18n.tr('syncSentWithAttention', args: {
-                'sent': '${syncedIds.length}',
-                'parked': '${parkedIds.length}',
-                'failed': '${failed.length}',
-                'first': failed.first,
-              }),
-        lastSyncAt: now,
+                  : AppI18n.tr(
+                      'syncSentVisits',
+                      args: {'n': '${syncedIds.length}'},
+                    ))
+            : AppI18n.tr(
+                'syncSentWithAttention',
+                args: {
+                  'sent': '${syncedIds.length}',
+                  'parked': '${parkedIds.length}',
+                  'failed': '${failed.length}',
+                  'first': failed.first,
+                },
+              ),
+        lastSyncAt: visitResult.pushedAt,
         lastPostDebug: {
           'ok': failed.isEmpty,
           'synced_count': syncedIds.length,
@@ -2077,193 +1284,29 @@ class SyncNotifier extends StateNotifier<SyncState> {
               ? AppI18n.tr('syncPushVisitsDone')
               : AppI18n.tr('syncPushVisitsErrors'),
           body: failed.isEmpty
-              ? AppI18n.tr('syncSentRemaining', args: {
-                  'sent': '${syncedIds.length}',
-                  'remaining': '$remaining',
-                })
-              : AppI18n.tr('syncSentErrorsRemaining', args: {
-                  'sent': '${syncedIds.length}',
-                  'failed': '${failed.length}',
-                  'remaining': '$remaining',
-                }),
+              ? AppI18n.tr(
+                  'syncSentRemaining',
+                  args: {
+                    'sent': '${syncedIds.length}',
+                    'remaining': '$remaining',
+                  },
+                )
+              : AppI18n.tr(
+                  'syncSentErrorsRemaining',
+                  args: {
+                    'sent': '${syncedIds.length}',
+                    'failed': '${failed.length}',
+                    'remaining': '$remaining',
+                  },
+                ),
           kind: 'sync',
         );
       }
 
-      final pushCompleted = failed.isEmpty && remaining == 0;
-
-      // Flush pending favorites queue
-      try {
-        final pendingFavs = await _db.getPendingFavorites();
-        for (final row in pendingFavs) {
-          final id = row['id'] as int;
-          final entityType = row['entity_type'] as String;
-          final entityId = row['entity_id'] as int;
-          final add = row['action'] == 'add';
-          try {
-            if (entityType == 'doctor') {
-              if (add) {
-                await _remoteApi.addDoctorToFavorites(entityId);
-              } else {
-                await _remoteApi.removeDoctorFromFavorites(entityId);
-              }
-            } else {
-              if (add) {
-                await _remoteApi.addOrganizationToFavorites(entityId);
-              } else {
-                await _remoteApi.removeOrganizationFromFavorites(entityId);
-              }
-            }
-            await _db.deletePendingFavorite(id);
-          } catch (_) {
-            // Keep in queue for next sync attempt; after too many tries the
-            // row is parked (failed=1) and surfaced on the sync screen.
-            await _db.recordPendingFavoriteFailure(id);
-          }
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync.pushToRemote');
-      }
-
-      // Flush pending feedback queue
-      try {
-        final pendingFeedback = await _db.getPendingFeedback();
-        for (final row in pendingFeedback) {
-          final id = row['id'] as int;
-          final message = row['message'] as String;
-          final rawPaths = row['photo_paths'] as String? ?? '[]';
-          final photoPaths = (jsonDecode(rawPaths) as List).cast<String>();
-          try {
-            await _remoteApi.sendFeedback(
-              message: message,
-              photoPaths: photoPaths,
-            );
-            await _db.deletePendingFeedback(id);
-            for (final p in photoPaths) {
-              try {
-                File(p).deleteSync();
-              } catch (e) {
-                logSwallowed(e, 'Sync.pushToRemote');
-              }
-            }
-          } catch (_) {
-            // Keep in queue for next sync attempt; after too many tries the
-            // row is parked (failed=1) and surfaced on the sync screen.
-            await _db.recordPendingFeedbackFailure(id);
-          }
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync.pushToRemote');
-      }
-
-      // Flush pending new doctors queue
-      try {
-        final pendingDoctors = await _db.getPendingDoctors();
-        for (final row in pendingDoctors) {
-          final id = row['id'] as int;
-          final tempLocalId = row['temp_local_id'] as int;
-          final orgId = row['org_id'] as int;
-          final fullName = row['full_name'] as String;
-          final specializationId = (row['specialization_id'] as num?)?.toInt();
-          final phone = row['phone'] as String?;
-          if (specializationId == null) {
-            // Older queued rows without a specialization can't satisfy the
-            // API. Park them (don't delete) so the offline-entered doctor
-            // isn't silently lost — surfaced in the sync screen for the user
-            // to review/delete manually.
-            await _db.markPendingDoctorFailed(id);
-            continue;
-          }
-          try {
-            final remoteId = await _remoteApi.addDoctor(
-              organizationId: orgId,
-              fullName: fullName,
-              specializationId: specializationId,
-              phone: phone,
-              hobby: row['hobby'] as String?,
-              interests: row['interests'] as String?,
-              birthday: row['birthday'] as String?,
-            );
-            if (remoteId != null) {
-              await _db.replaceDoctorTempId(tempLocalId, remoteId);
-              await _db.deletePendingDoctor(id);
-            }
-          } catch (e) {
-            // Keep in queue for next sync attempt
-            logSwallowed(e, 'Sync.pushPendingDoctor#$id');
-          }
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync.pushToRemote');
-      }
-
-      // Flush pending organization updates queue
-      try {
-        final pendingOrgUpdates = await _db.getPendingOrgUpdates();
-        for (final row in pendingOrgUpdates) {
-          final id = row['id'] as int;
-          final orgId = row['org_id'] as int;
-          try {
-            await _remoteApi.updateOrganization(
-              organizationId: orgId,
-              name: row['name'] as String,
-              address: row['address'] as String,
-              phone: row['phone'] as String?,
-              city: row['city'] as String?,
-              district: row['district'] as String?,
-              inn: row['inn'] as String?,
-              category: row['category'] as String?,
-              responsiblePerson: row['responsible'] as String?,
-              latitude: (row['latitude'] as num?)?.toDouble(),
-              longitude: (row['longitude'] as num?)?.toDouble(),
-            );
-            await _db.deletePendingOrgUpdate(id);
-          } catch (e) {
-            // Keep in queue for next sync attempt
-            logSwallowed(e, 'Sync.pushPendingOrgUpdate#$id');
-          }
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync.pushToRemote');
-      }
-
-      // Flush pending new organizations queue (offline-created pharmacies).
-      try {
-        final pendingOrgs = await _db.getPendingOrganizations();
-        for (final row in pendingOrgs) {
-          final id = row['id'] as int;
-          final tempLocalId = row['temp_local_id'] as int;
-          try {
-            final remoteId = await _remoteApi.createOrganization(
-              name: row['name'] as String,
-              inn: row['inn'] as String,
-              typeId: row['type_id'] as int,
-              regionId: row['region_id'] as int,
-              areaId: (row['area_id'] as num?)?.toInt(),
-              phone: row['phone'] as String?,
-              phone2: row['phone2'] as String?,
-              phone3: row['phone3'] as String?,
-              address: row['address'] as String?,
-              categoryId: (row['category_id'] as num?)?.toInt(),
-              healthCareFacilityTypeId: (row['hcf_type_id'] as num?)?.toInt(),
-              revisionStatus: row['revision_status'] as String?,
-              responsiblePerson: row['responsible'] as String?,
-              latitude: (row['latitude'] as num?)?.toDouble(),
-              longitude: (row['longitude'] as num?)?.toDouble(),
-            );
-            if (remoteId != null) {
-              await _db.replaceOrganizationTempId(tempLocalId, remoteId);
-            }
-            // Drop the queue row on success even if the server didn't echo an
-            // id — the org was created; the next pull reconciles real data.
-            await _db.deletePendingOrganization(id);
-          } catch (e) {
-            // Keep in queue for next sync attempt.
-            logSwallowed(e, 'Sync.pushPendingOrganization#$id');
-          }
-        }
-      } catch (e) {
-        logSwallowed(e, 'Sync.pushToRemote');
+      // Flush non-visit mutation queues after visit submission.
+      final mutationResult = await _pendingMutationSync.sync();
+      for (final failure in mutationResult.failures) {
+        recordQueueFailure(failure.type, failure.message, id: failure.id);
       }
 
       // Flush pending planned-visit submissions. Rows survive transient
@@ -2272,10 +1315,32 @@ class SyncNotifier extends StateNotifier<SyncState> {
       try {
         await _pushPendingPlans();
       } catch (e) {
-        logSwallowed(e, 'Sync.pushToRemote');
+        recordQueueFailure('plans', e);
+      }
+
+      if (queueFailures.isNotEmpty) {
+        final first = queueFailures.first['error']?.toString() ?? 'unknown';
+        state = state.copyWith(
+          status: SyncStatus.error,
+          message: AppI18n.tr('syncSendError', args: {'message': first}),
+          lastPostDebug: {
+            ...?state.lastPostDebug,
+            'ok': false,
+            'queue_failed_count': queueFailures.length,
+            'queue_failures': queueFailures,
+            'message': 'POST sync has errors',
+          },
+        );
+        await _notificationsService.add(
+          title: AppI18n.tr('syncSendVisitsErrorTitle'),
+          body: first,
+          kind: 'sync',
+        );
       }
 
       state = state.copyWith(clearActiveOperation: true);
+      final pushCompleted =
+          failed.isEmpty && queueFailures.isEmpty && remaining == 0;
       if (pushCompleted) {
         _drainPendingReconcile();
       } else {
@@ -2306,7 +1371,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
     final count = await _db.unsyncedCount();
     state = state.copyWith(unsyncedCount: count);
     if (count > 0 && !_isOffline()) {
-      if (state.activeOperation != null || _isReconciling) {
+      if (state.activeOperation != null ||
+          _operationGate.isRunning ||
+          _isReconciling) {
         _reconcilePending = true;
       } else {
         unawaited(reconcileInBackground());
@@ -2322,6 +1389,12 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   Future<void> syncLaunchDeltaIfNeeded({
     Duration minInterval = const Duration(minutes: 5),
+  }) => _runSingleFlight(
+    () => _syncLaunchDeltaIfNeeded(minInterval: minInterval),
+  );
+
+  Future<void> _syncLaunchDeltaIfNeeded({
+    Duration minInterval = const Duration(minutes: 5),
   }) async {
     final now = DateTime.now();
     final totals = await _collectLocalTotals();
@@ -2332,7 +1405,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
         await refreshUnsyncedCount();
         return;
       }
-      await syncLayeredFromRemote(fullRefresh: true, pushPendingFirst: false);
+      await _syncLayeredFromRemote(fullRefresh: true, pushPendingFirst: true);
       return;
     }
     final previousActivity = _parseMetaDate(
@@ -2348,6 +1421,12 @@ class SyncNotifier extends StateNotifier<SyncState> {
       return;
     }
 
+    // Pending local writes have priority over a remote read, including when
+    // this launch path decides that the catalogue itself is still fresh.
+    // This keeps connectivity-driven/background entrypoints consistent with
+    // the explicit sync screen commands.
+    if (!await _pushPendingBeforePull(fullRefresh: false)) return;
+
     final needsDoctorRepair = await _doctorDirectoryNeedsRepair();
     final activityAfterDelta =
         previousActivity != null &&
@@ -2359,18 +1438,28 @@ class SyncNotifier extends StateNotifier<SyncState> {
       return;
     }
 
-    await syncLayeredFromRemote(pushPendingFirst: false);
+    await _syncLayeredFromRemote(pushPendingFirst: false);
   }
 
-  Future<void> ensureBootstrapFullPull() async {
+  Future<void> ensureBootstrapFullPull() =>
+      _runSingleFlight(_ensureBootstrapFullPull);
+
+  Future<void> _ensureBootstrapFullPull() async {
     final done = await _db.getSyncMeta(_fullPullBootstrapKey);
     final totals = await _collectLocalTotals();
     final needsDoctorRepair = await _doctorDirectoryNeedsRepair();
     final hasBaseDirectory = await _hasBaseDirectory(totals);
-    if (done == '1' && hasBaseDirectory && !needsDoctorRepair) return;
-    await syncLayeredFromRemote(
+    if (done == '1' && hasBaseDirectory && !needsDoctorRepair) {
+      // Bootstrap may already be complete while a visit was created offline
+      // afterwards. Keep this entrypoint useful for that case too.
+      if (!_isOffline()) {
+        await _pushPendingBeforePull(fullRefresh: false);
+      }
+      return;
+    }
+    await _syncLayeredFromRemote(
       fullRefresh: done != '1' || !hasBaseDirectory,
-      pushPendingFirst: false,
+      pushPendingFirst: true,
     );
     final afterTotals = await _collectLocalTotals();
     if (state.status == SyncStatus.success && afterTotals.organizations > 0) {
@@ -2378,7 +1467,12 @@ class SyncNotifier extends StateNotifier<SyncState> {
     }
   }
 
-  Future<void> reconcileInBackground() async {
+  Future<void> reconcileInBackground() {
+    if (_operationGate.isRunning) _reconcilePending = true;
+    return _runSingleFlight(_reconcileInBackground);
+  }
+
+  Future<void> _reconcileInBackground() async {
     if (_isReconciling) return;
     if (_isOffline()) return;
     if (state.activeOperation != null) {
@@ -2387,22 +1481,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
     }
     _isReconciling = true;
     try {
-      // Guard against "connected but no internet": skip silently if the host
-      // is not actually reachable. Pending data stays queued for next time.
-      if (!await _hasRealInternet()) return;
-      // If no token (e.g. offline login via cache), re-auth first
-      if (!_apiClient.hasToken) {
-        final ok = await _silentReauth();
-        if (!ok) return;
-      }
-      try {
-        await pushToRemote();
-      } catch (e) {
-        // Pull must continue: old invalid pending records should not block
-        // completing local reference tables such as doctors and pharmacies.
-        logSwallowed(e, 'Sync.reconcile.push');
-      }
-      await syncLaunchDeltaIfNeeded();
+      await _backgroundReconcile.run(syncLaunchDelta: _syncLaunchDeltaIfNeeded);
     } catch (e) {
       // Keep silent: background reconcile should not break UX.
       logSwallowed(e, 'Sync.reconcile');
@@ -2414,17 +1493,23 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   void _drainPendingReconcile() {
     if (!_reconcilePending) return;
-    if (_isReconciling || _isOffline() || state.activeOperation != null) return;
+    if (_isReconciling ||
+        _isOffline() ||
+        state.activeOperation != null ||
+        _operationGate.isRunning) {
+      return;
+    }
     _reconcilePending = false;
     unawaited(Future<void>.microtask(reconcileInBackground));
   }
 
   Future<bool> _hasBaseDirectory(_LocalTotals totals) async {
-    if (totals.lpu < _minimumUsableLpuDirectorySize ||
-        totals.pharmacy < _minimumUsablePharmacyDirectorySize) {
-      return false;
-    }
-    return await _db.getSyncMeta(_organizationDirectoryBootstrapKey) == '1';
+    return _diagnostics.hasBaseDirectory(
+      totals: totals,
+      bootstrapKey: _organizationDirectoryBootstrapKey,
+      minimumLpu: _minimumUsableLpuDirectorySize,
+      minimumPharmacy: _minimumUsablePharmacyDirectorySize,
+    );
   }
 }
 
@@ -2433,49 +1518,7 @@ DateTime? _parseMetaDate(String? raw) {
   return DateTime.tryParse(raw);
 }
 
-class _DeltaPullResult {
-  final int? lastSyncIdBefore;
-  final int? lastSyncIdAfter;
-  final int organizationsCount;
-  final List<Map<String, dynamic>> organizations;
-  final int doctorsCount;
-  final int drugsCount;
-
-  const _DeltaPullResult({
-    required this.lastSyncIdBefore,
-    required this.lastSyncIdAfter,
-    required this.organizationsCount,
-    required this.organizations,
-    required this.doctorsCount,
-    required this.drugsCount,
-  });
-}
-
-class _LocalTotals {
-  final int organizations;
-  final int lpu;
-  final int pharmacy;
-  final int distributor;
-  final int otherOrganizations;
-  final int doctors;
-  final int visits;
-  final int plannedVisits;
-  final int drugs;
-  final int materials;
-
-  const _LocalTotals({
-    required this.organizations,
-    required this.lpu,
-    required this.pharmacy,
-    required this.distributor,
-    required this.otherOrganizations,
-    required this.doctors,
-    required this.visits,
-    required this.plannedVisits,
-    required this.drugs,
-    required this.materials,
-  });
-}
+typedef _LocalTotals = SyncLocalTotals;
 
 class _OrgTypeCounts {
   final int lpu;
@@ -2489,26 +1532,6 @@ class _OrgTypeCounts {
     required this.distributor,
     required this.other,
   });
-}
-
-class _LiveSyncResult {
-  final int visitsCount;
-  final int plannedVisitsCount;
-  final int materialsCount;
-  final int cachedFilesCount;
-
-  const _LiveSyncResult({
-    required this.visitsCount,
-    required this.plannedVisitsCount,
-    required this.materialsCount,
-    required this.cachedFilesCount,
-  });
-
-  const _LiveSyncResult.empty()
-    : visitsCount = 0,
-      plannedVisitsCount = 0,
-      materialsCount = 0,
-      cachedFilesCount = 0;
 }
 
 String _pushErrorMessage(Object error) {

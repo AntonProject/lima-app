@@ -26,6 +26,7 @@ import '../../features/profile/screens/fav_pharmacies_screen.dart';
 import '../../features/visits/screens/history_screen.dart';
 import '../../features/visits/screens/map_screen.dart';
 import '../../features/visits/screens/new_bron_screen.dart';
+import '../../features/visits/domain/entities/pharmacy_order.dart';
 import '../../features/cart/screens/cart_screen.dart';
 import '../../features/profile/screens/fav_doctors_screen.dart';
 import '../../features/offline/screens/sync_screen.dart';
@@ -430,10 +431,17 @@ final routerProvider = Provider<GoRouter>((ref) {
                               fallbackLocation: '/visits',
                             );
                           }
+                          final routeData = state.extra;
+                          if (routeData is! PharmacyOrderRouteData) {
+                            return const _RouteNotFoundScreen(
+                              fallbackLocation: '/visits',
+                            );
+                          }
                           return NewBronScreen(
                             pharmacyId: pharmacyId,
                             pharmacyName:
                                 state.uri.queryParameters['name'] ?? '',
+                            routeData: routeData,
                           );
                         },
                       ),
@@ -447,17 +455,16 @@ final routerProvider = Provider<GoRouter>((ref) {
                             );
                           }
                           final extra = state.extra;
-                          final checkoutPayload = extra is Map<String, dynamic>
-                              ? extra
-                              : extra is Map
-                              ? Map<String, dynamic>.from(extra)
-                              : null;
+                          if (extra is! PharmacyOrderRouteData) {
+                            return const _RouteNotFoundScreen(
+                              fallbackLocation: '/cart',
+                            );
+                          }
                           return NewBronScreen(
                             pharmacyId: pharmacyId,
                             pharmacyName:
                                 state.uri.queryParameters['name'] ?? '',
-                            isCheckoutMode: true,
-                            checkoutPayload: checkoutPayload,
+                            routeData: extra,
                           );
                         },
                       ),

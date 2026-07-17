@@ -41,6 +41,20 @@ LIMA — Flutter-приложение для медицинских предст
 - `lib/core/providers/sync_provider.dart` — pull, push, delta sync, foreground reconciliation.
 - `lib/features/offline/screens/sync_screen.dart` — ручная синхронизация и диагностика.
 
+### MVVM / Clean boundaries
+
+Для новых и мигрированных сценариев используется вертикальная схема:
+
+```text
+screen/widget -> Riverpod view model -> domain use case/repository
+                                      -> data repository -> SQLite/API
+```
+
+Экран не читает SQLite/Dio и не разбирает API/SQLite maps. Typed mapping
+находится в data-слое; typed state и бизнес-правила находятся в domain или
+view model. Проверка границ выполняется в
+`test/architecture/layer_boundaries_test.dart`.
+
 ## Offline-First Data Flow
 
 ```text
@@ -124,6 +138,12 @@ flutter analyze
 
 ```sh
 flutter test
+```
+
+Проверить архитектурные границы отдельно:
+
+```sh
+flutter test test/architecture/layer_boundaries_test.dart
 ```
 
 Запустить приложение:

@@ -4,12 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import '../core/theme/app_theme.dart';
+import '../core/theme/app_icons.dart';
 import '../core/providers/connectivity_provider.dart';
 import '../core/widgets/offline_banner.dart';
+import '../core/utils/swallowed.dart';
 import 'nav_bar_layout.dart';
 
 class MainShell extends ConsumerStatefulWidget {
@@ -131,7 +132,9 @@ class _MainShellState extends ConsumerState<MainShell> {
     Uri currentUri = Uri(path: '/home');
     try {
       currentUri = GoRouterState.of(context).uri;
-    } catch (_) {}
+    } catch (error) {
+      logSwallowed(error, 'MainShell.readCurrentRoute');
+    }
     final currentPath = currentUri.path;
 
     _currentIndex = _indexFromLocation(currentPath);
@@ -174,71 +177,71 @@ class _MainShellState extends ConsumerState<MainShell> {
           ? SystemUiOverlayStyle.light
           : SystemUiOverlayStyle.dark,
       child: PopScope(
-      canPop: !isTopLevelTab,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop || !isTopLevelTab) return;
-        if (!isHome && mounted) {
-          context.go('/home');
-        }
-      },
-      child: BackButtonListener(
-        onBackButtonPressed: () async {
-          if (!_isTopLevelTab(currentUri.path) && context.canPop()) {
-            return false;
+        canPop: !isTopLevelTab,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop || !isTopLevelTab) return;
+          if (!isHome && mounted) {
+            context.go('/home');
           }
-          final target = _systemBackTarget(currentUri);
-          if (target != null && mounted) {
-            context.go(target);
-          }
-          return true;
         },
-        child: Scaffold(
-          backgroundColor: const Color(0xFFF4F7FA),
-          extendBody: true,
-          body: Stack(
-            children: [
-              Positioned.fill(child: widget.child),
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                child: OfflineBanner(visible: isOffline && isHome),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                child: OfflineBanner(
-                  visible: isOffline && !isHome && _showOfflineToast,
-                  compact: true,
-                ),
-              ),
-              if (!hideNavBar)
+        child: BackButtonListener(
+          onBackButtonPressed: () async {
+            if (!_isTopLevelTab(currentUri.path) && context.canPop()) {
+              return false;
+            }
+            final target = _systemBackTarget(currentUri);
+            if (target != null && mounted) {
+              context.go(target);
+            }
+            return true;
+          },
+          child: Scaffold(
+            backgroundColor: const Color(0xFFF4F7FA),
+            extendBody: true,
+            body: Stack(
+              children: [
+                Positioned.fill(child: widget.child),
                 Positioned(
                   left: 0,
                   right: 0,
-                  bottom: 0,
-                  child: _LimaNavBar(
-                    currentIndex: _currentIndex,
-                    onTap: (i) {
-                      if (i < _tabPaths.length) {
-                        final target = _tabPaths[i];
-                        if (target == '/visits' &&
-                            !currentPath.startsWith('/visits')) {
-                          context.go(
-                            '/visits?reset=${DateTime.now().millisecondsSinceEpoch}',
-                          );
-                          return;
-                        }
-                        context.go(target);
-                      }
-                    },
+                  top: 0,
+                  child: OfflineBanner(visible: isOffline && isHome),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: OfflineBanner(
+                    visible: isOffline && !isHome && _showOfflineToast,
+                    compact: true,
                   ),
                 ),
-            ],
+                if (!hideNavBar)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _LimaNavBar(
+                      currentIndex: _currentIndex,
+                      onTap: (i) {
+                        if (i < _tabPaths.length) {
+                          final target = _tabPaths[i];
+                          if (target == '/visits' &&
+                              !currentPath.startsWith('/visits')) {
+                            context.go(
+                              '/visits?reset=${DateTime.now().millisecondsSinceEpoch}',
+                            );
+                            return;
+                          }
+                          context.go(target);
+                        }
+                      },
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -301,16 +304,16 @@ class _LimaNavBar extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         _NavItem(
-                          icon: LucideIcons.house,
-                          activeIcon: LucideIcons.house,
+                          icon: AppIcons.home,
+                          activeIcon: AppIcons.home,
                           label: context.l10n.t('navHome'),
                           index: 0,
                           current: currentIndex,
                           onTap: onTap,
                         ),
                         _NavItem(
-                          icon: LucideIcons.calendarDays,
-                          activeIcon: LucideIcons.calendarDays,
+                          icon: AppIcons.calendar,
+                          activeIcon: AppIcons.calendar,
                           label: context.l10n.t('navPlan'),
                           index: 1,
                           current: currentIndex,
@@ -322,16 +325,16 @@ class _LimaNavBar extends StatelessWidget {
                           onTap: onTap,
                         ),
                         _NavItem(
-                          icon: LucideIcons.bookmark,
-                          activeIcon: LucideIcons.bookmark,
+                          icon: AppIcons.bookmark,
+                          activeIcon: AppIcons.bookmark,
                           label: context.l10n.t('navKnowledge'),
                           index: 3,
                           current: currentIndex,
                           onTap: onTap,
                         ),
                         _NavItem(
-                          icon: LucideIcons.user,
-                          activeIcon: LucideIcons.user,
+                          icon: AppIcons.profile,
+                          activeIcon: AppIcons.profile,
                           label: context.l10n.t('navProfile'),
                           index: 4,
                           current: currentIndex,
@@ -442,7 +445,7 @@ class _CenterNavItem extends StatelessWidget {
               ],
             ),
             child: Icon(
-              isActive ? LucideIcons.mapPin : LucideIcons.mapPin,
+              isActive ? AppIcons.location : AppIcons.location,
               color: Colors.white,
               size: 24,
             ),

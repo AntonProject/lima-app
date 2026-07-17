@@ -1,6 +1,6 @@
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/core/utils/swallowed.dart';
 
 class DashboardCounts {
   final int visitsTodayCount;
@@ -24,7 +24,9 @@ class DashboardCounts {
   });
 }
 
-final dashboardCountsProvider = FutureProvider.autoDispose<DashboardCounts>((ref) async {
+final dashboardCountsProvider = FutureProvider.autoDispose<DashboardCounts>((
+  ref,
+) async {
   final db = ref.watch(localDatabaseProvider);
   int cachedToday = 0;
   int cachedLpu = 0;
@@ -38,10 +40,12 @@ final dashboardCountsProvider = FutureProvider.autoDispose<DashboardCounts>((ref
   try {
     final stats = await db.getCachedStat('daily_stats');
     if (stats != null) {
-      final lpu = (stats['lpu'] as num?)?.toInt() ??
+      final lpu =
+          (stats['lpu'] as num?)?.toInt() ??
           (stats['total_lpu_visits'] as num?)?.toInt() ??
           0;
-      final pharmacy = (stats['pharmacy'] as num?)?.toInt() ??
+      final pharmacy =
+          (stats['pharmacy'] as num?)?.toInt() ??
           (stats['pharmacy_visits_with_orders'] as num?)?.toInt() ??
           0;
       final total = stats['total'] ?? stats['count'] ?? stats['visits_count'];
@@ -53,7 +57,9 @@ final dashboardCountsProvider = FutureProvider.autoDispose<DashboardCounts>((ref
         cachedToday = lpu + pharmacy;
       }
     }
-  } catch (_) {}
+  } catch (error) {
+    logSwallowed(error, 'DashboardCounts.remoteStatistics');
+  }
 
   final localRows = <Map<String, dynamic>>[];
   var isReliable = true;
@@ -83,11 +89,12 @@ final dashboardCountsProvider = FutureProvider.autoDispose<DashboardCounts>((ref
         .whereType<int>()
         .toSet();
     uniqueDoctors = doctorIds.length;
-  } catch (_) {
+  } catch (error) {
     // The local visits read itself failed — the zero counts below aren't a
     // genuinely empty day, they're a fallback. Surfaced via [isReliable] so
     // the UI can show "—" instead of a misleading "0".
     isReliable = false;
+    logSwallowed(error, 'DashboardCounts.localVisits');
   }
 
   // Count unique doctors from local rows only
@@ -105,7 +112,9 @@ final dashboardCountsProvider = FutureProvider.autoDispose<DashboardCounts>((ref
       }
     }
     if (doctorKeys.isNotEmpty) uniqueDoctors = doctorKeys.length;
-  } catch (_) {}
+  } catch (error) {
+    logSwallowed(error, 'DashboardCounts.uniqueDoctors');
+  }
 
   final useLocal = localToday >= cachedToday;
   return DashboardCounts(
@@ -123,4 +132,3 @@ String _safeString(Object? v, {String fallback = ''}) {
   final s = '$v'.trim();
   return s.isEmpty ? fallback : s;
 }
-

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../network/api_client.dart';
 import '../network/remote_api_service.dart';
 import 'connectivity_provider.dart';
+import '../utils/swallowed.dart';
 
 /// Cache-first small reference lists used by forms (regions, org
 /// categories, health-care facility types, doctor specializations). These
@@ -61,7 +62,9 @@ class FormDictionariesNotifier {
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
-      } catch (_) {}
+      } catch (error) {
+        logSwallowed(error, 'FormDictionariesNotifier.decodeCache:$cacheKey');
+      }
     }
     if (!_ref.read(isOfflineProvider)) {
       try {
@@ -70,7 +73,9 @@ class FormDictionariesNotifier {
           list = fresh;
           await prefs.setString(cacheKey, jsonEncode(fresh));
         }
-      } catch (_) {}
+      } catch (error) {
+        logSwallowed(error, 'FormDictionariesNotifier.fetch:$cacheKey');
+      }
     }
     return list;
   }

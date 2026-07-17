@@ -24,15 +24,22 @@ class LpuCompleteScreen extends StatelessWidget {
               boxShadow: shadowSm,
             ),
             padding: EdgeInsets.fromLTRB(
-                12, MediaQuery.of(context).padding.top + 8, 12, 10),
+              12,
+              MediaQuery.of(context).padding.top + 8,
+              12,
+              10,
+            ),
             child: Row(
               children: [
                 AppTapScale(
                   pressedScale: 0.9,
                   onTap: () =>
                       context.canPop() ? context.pop() : context.go('/visits'),
-                  child: const Icon(Icons.close_rounded,
-                      color: AppColors.primaryText, size: 22),
+                  child: const Icon(
+                    Icons.close_rounded,
+                    color: AppColors.primaryText,
+                    size: 22,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Text(
@@ -65,8 +72,11 @@ class LpuCompleteScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: const Icon(Icons.check_rounded,
-                        color: Colors.white, size: 36),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      color: Colors.white,
+                      size: 36,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -97,7 +107,10 @@ class LpuCompleteScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: shadowSm,
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
                   child: Column(
                     children: [
                       _SummaryRow(
@@ -106,20 +119,33 @@ class LpuCompleteScreen extends StatelessWidget {
                         value:
                             '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
                       ),
-                      const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
+                      const Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        color: AppColors.divider,
+                      ),
                       _SummaryRow(
                         icon: Icons.check_circle_outline_rounded,
                         label: context.l10n.t('visitEnd'),
                         value:
                             '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}',
                       ),
-                      const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
+                      const Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        color: AppColors.divider,
+                      ),
                       _SummaryRow(
                         icon: Icons.timer_outlined,
                         label: context.l10n.t('duration'),
-                        value: '${duration.inMinutes} ${context.l10n.t('minutesShort')}',
+                        value:
+                            '${duration.inMinutes} ${context.l10n.t('minutesShort')}',
                       ),
-                      const Divider(height: 1, thickness: 0.5, color: AppColors.divider),
+                      const Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        color: AppColors.divider,
+                      ),
                       _SummaryRow(
                         icon: Icons.medication_outlined,
                         label: context.l10n.t('drugsShown'),

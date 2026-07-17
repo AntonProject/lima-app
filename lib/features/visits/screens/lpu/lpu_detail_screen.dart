@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -7,14 +5,20 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/services/app_actions.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
-import 'package:lima/features/collections/data/favorites_repository.dart';
-import 'package:lima/features/visits/data/doctors_repository.dart';
-import 'package:lima/features/visits/data/organisations_repository.dart';
+import 'package:lima/core/models/models.dart';
+import 'package:lima/features/collections/providers/collections_repository_providers.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
+import 'package:lima/core/utils/swallowed.dart';
+import 'package:lima/features/visits/providers/lpu_details_provider.dart';
+import 'package:lima/features/visits/providers/organisation_details_provider.dart';
+import 'package:lima/features/visits/providers/visits_hub_provider.dart';
+import 'package:lima/features/visits/domain/entities/organisation_draft.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+part '../../widgets/lpu_detail_widgets.dart';
 
 class LpuDetailScreen extends ConsumerStatefulWidget {
   final int orgId;
@@ -33,126 +37,59 @@ class LpuDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
-  List<Map<String, dynamic>> _doctors = [];
-  Map<String, dynamic>? _org;
   final Set<int> _expandedDoctorIds = {};
-  bool _remoteDoctorsLoaded = false;
 
-  Map<String, dynamic> _rawOrg() {
-    final raw = _org?['raw_json'] as String?;
-    if (raw == null || raw.isEmpty) return const <String, dynamic>{};
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) return decoded;
-    } catch (_) {}
-    return const <String, dynamic>{};
-  }
+  Organisation? get _org =>
+      ref.read(organisationDetailsViewModelProvider(widget.orgId)).organisation;
+
+  List<Doctor> get _doctors =>
+      ref.read(lpuDetailsViewModelProvider(widget.orgId)).doctors;
+
+  Set<int> get _visitedDoctorIds =>
+      ref.read(lpuDetailsViewModelProvider(widget.orgId)).visitedDoctorIds;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _loadOrg();
-      await _loadDoctors();
+      await ref
+          .read(lpuDetailsViewModelProvider(widget.orgId).notifier)
+          .load(fetchRemote: !ref.read(isOfflineProvider));
     });
   }
 
-  Future<void> _loadOrg() async {
-    final org = await ref
-        .read(organisationsRepositoryProvider)
-        .getById(widget.orgId);
-    if (!mounted) return;
-    setState(() => _org = org);
-  }
+  Future<void> _toggleFavorite(Doctor doctor) async {
+    final doctorId = doctor.id;
+    final next = !doctor.isFavorite;
+    ref
+        .read(lpuDetailsViewModelProvider(widget.orgId).notifier)
+        .setDoctorFavorite(doctorId, next);
 
-  Future<void> _loadDoctors() async {
-    final hadVisitLabel = context.l10n.t('hadVisit');
-    final db = ref.read(doctorsRepositoryProvider);
-    var results = await db.getDoctors(
-      orgId: widget.orgId,
-      includeGlobalFallback: false,
-    );
-
-    if (!_remoteDoctorsLoaded && !ref.read(isOfflineProvider)) {
-      _remoteDoctorsLoaded = true;
-      try {
-        final remoteDoctors = await ref
-            .read(doctorsRepositoryProvider)
-            .getByOrganizationRemote(widget.orgId);
-        if (remoteDoctors.length > results.length) {
-          await db.upsertLocal(remoteDoctors);
-          await db.upsertOrganisationLinks(
-            remoteDoctors
-                .map((d) => (d['id'] as num?)?.toInt())
-                .whereType<int>()
-                .map(
-                  (doctorId) => <String, dynamic>{
-                    'doctor_id': doctorId,
-                    'organisation_id': widget.orgId,
-                  },
-                )
-                .toList(),
-          );
-          results = await db.getDoctors(
-            orgId: widget.orgId,
-            includeGlobalFallback: false,
-          );
-        }
-      } catch (_) {}
-    }
-
-    final mutableResults = results
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-
-    // Mark doctors that have been visited using local visit history
-    try {
-      final doctorIds = mutableResults
-          .map((r) => (r['id'] as num?)?.toInt())
-          .whereType<int>()
-          .toList();
-      final visitCounts = await db.getVisitCountsByDoctorIds(doctorIds);
-      for (final row in mutableResults) {
-        final id = row['id'] as int?;
-        if (id != null && (visitCounts[id] ?? 0) > 0) {
-          row['last_visit_label'] = hadVisitLabel;
-        }
-      }
-    } catch (_) {}
-
-    if (!mounted) return;
-    setState(() => _doctors = mutableResults);
-  }
-
-  Future<void> _toggleFavorite(Map<String, dynamic> doctor) async {
-    final doctorId = doctor['id'] as int?;
-    if (doctorId == null) return;
-    final current = (doctor['is_favorite'] ?? 0) == 1;
-    final next = !current;
-
-    setState(() => doctor['is_favorite'] = next ? 1 : 0);
-
-    final doctorsRepo = ref.read(doctorsRepositoryProvider);
     final favorites = ref.read(favoritesRepositoryProvider);
     var updated = await favorites.setDoctorFavoriteLocal(doctorId, next);
     if (updated == 0) {
-      await doctorsRepo.upsertLocal([
-        {
-          'id': doctorId,
-          'full_name': (doctor['full_name'] ?? doctor['name'] ?? '').toString(),
-          'specialty': (doctor['specialty'] ?? doctor['position'] ?? '')
-              .toString(),
-          'organisation_id':
-              ((doctor['organisation_id'] ?? doctor['organization_id']) is num)
-              ? ((doctor['organisation_id'] ?? doctor['organization_id'])
-                        as num)
-                    .toInt()
-              : widget.orgId,
-          'is_favorite': next ? 1 : 0,
-          'category': (doctor['category'] ?? 'C').toString(),
-          'updated_at': DateTime.now().toIso8601String(),
-        },
-      ]);
+      await ref
+          .read(doctorsDirectoryRepositoryProvider)
+          .upsertDoctorModel(
+            Doctor(
+              id: doctorId,
+              fullName: doctor.fullName,
+              specialty: doctor.specialty,
+              specializationId: doctor.specializationId,
+              organisationId: doctor.organisationId > 0
+                  ? doctor.organisationId
+                  : widget.orgId,
+              isFavorite: next,
+              category: doctor.category,
+              lastVisitLabel: doctor.lastVisitLabel,
+              phone: doctor.phone,
+              hobby: doctor.hobby,
+              interests: doctor.interests,
+              birthday: doctor.birthday,
+              updatedAt: DateTime.now().toIso8601String(),
+              rawJson: doctor.rawJson,
+            ),
+          );
       await favorites.setDoctorFavoriteLocal(doctorId, next);
     }
     try {
@@ -165,7 +102,9 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            next ? context.l10n.t('addedToFav') : context.l10n.t('removedFromFav'),
+            next
+                ? context.l10n.t('addedToFav')
+                : context.l10n.t('removedFromFav'),
           ),
         ),
       );
@@ -177,7 +116,9 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
           entityId: doctorId,
           add: next,
         );
-      } catch (_) {}
+      } catch (error) {
+        logSwallowed(error, 'LpuDetailScreen.loadDoctors');
+      }
       if (ref.read(isOfflineProvider)) {
         pulseOfflineBanner(ref);
       }
@@ -185,7 +126,9 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            next ? context.l10n.t('addedToFav') : context.l10n.t('removedFromFav'),
+            next
+                ? context.l10n.t('addedToFav')
+                : context.l10n.t('removedFromFav'),
           ),
         ),
       );
@@ -193,89 +136,37 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
   }
 
   String? _orgPhone() {
-    final direct = (_org?['phone'] as String?)?.trim();
-    if (direct != null && direct.isNotEmpty) return direct;
-    try {
-      final raw = _org?['raw_json'] as String?;
-      if (raw == null || raw.isEmpty) return null;
-      final map = jsonDecode(raw);
-      if (map is Map<String, dynamic>) {
-        final v =
-            (map['phone'] ??
-                    map['phone_1'] ??
-                    map['phone1'] ??
-                    map['phone_number'])
-                ?.toString()
-                .trim();
-        if (v != null && v.isNotEmpty) return v;
-      }
-    } catch (_) {}
-    return null;
+    return _org?.displayPhone;
   }
 
   String? _orgInn() {
-    final raw = _rawOrg();
-    final v = (raw['inn'] ?? raw['org_inn'])?.toString().trim();
-    if (v != null && v.isNotEmpty) return v;
-    return null;
+    return _org?.displayInn;
   }
 
   String? _orgResponsible() {
-    final raw = _rawOrg();
-    final v = (raw['responsible_person'] ?? raw['responsible'])
-        ?.toString()
-        .trim();
-    if (v != null && v.isNotEmpty) return v;
-    return null;
+    return _org?.displayResponsible;
   }
 
   String? _orgDistrict() {
-    final raw = _rawOrg();
-    final v = (raw['district'] ?? raw['area'] ?? raw['area_name'])
-        ?.toString()
-        .trim();
-    if (v != null && v.isNotEmpty) return v;
-    final direct = (_org?['district'] as String?)?.trim();
-    if (direct != null && direct.isNotEmpty) return direct;
-    return null;
+    return _org?.displayDistrict;
   }
 
   String? _orgCategory() {
-    final raw = _rawOrg();
-    final v = (raw['category'] ?? raw['category_name'] ?? raw['class'])
-        ?.toString()
-        .trim();
-    if (v != null && v.isNotEmpty) return v;
-    return null;
+    return _org?.displayCategory;
   }
 
   bool? _worksWithUs() {
-    final raw = _rawOrg();
-    final candidate =
-        raw['is_working_with_us'] ??
-        raw['working_with_us'] ??
-        raw['is_partner'] ??
-        raw['is_active_partner'];
-    if (candidate is bool) return candidate;
-    if (candidate is num) return candidate != 0;
-    if (candidate is String) {
-      final s = candidate.toLowerCase();
-      if (s == 'true' || s == '1') return true;
-      if (s == 'false' || s == '0') return false;
-    }
-    final visited = raw['visited'];
-    if (visited is bool) return visited;
-    return null;
+    return _org?.worksWithUs;
   }
 
   Future<void> _buildYandexRoute() async {
-    final lat = (_org?['latitude'] as num?)?.toDouble();
-    final lon = (_org?['longitude'] as num?)?.toDouble();
+    final lat = _org?.latitude;
+    final lon = _org?.longitude;
     if (lat == null || lon == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.t('orgNoCoords'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.t('orgNoCoords'))));
       return;
     }
     Position? pos;
@@ -294,26 +185,30 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     await launchUrl(webUri, mode: LaunchMode.externalApplication);
   }
 
-  Future<void> _openEditOrganizationSheet() async {
+  void _toggleDoctorExpanded(int doctorId) {
+    setState(() {
+      if (_expandedDoctorIds.contains(doctorId)) {
+        _expandedDoctorIds.remove(doctorId);
+      } else {
+        _expandedDoctorIds.add(doctorId);
+      }
+    });
+  }
 
-    final nameCtrl = TextEditingController(
-      text: (_org?['name'] as String?) ?? widget.orgName,
-    );
+  Future<void> _openEditOrganizationSheet() async {
+    final nameCtrl = TextEditingController(text: _org?.name ?? widget.orgName);
     final innCtrl = TextEditingController(text: _orgInn() ?? '');
     final phoneCtrl = TextEditingController(text: _orgPhone() ?? '');
-    final cityCtrl = TextEditingController(
-      text: (_org?['city'] as String?) ?? '',
-    );
+    final cityCtrl = TextEditingController(text: _org?.city ?? '');
     final districtCtrl = TextEditingController(text: _orgDistrict() ?? '');
-    final displayAddress = ((_org?['address'] as String?) ?? widget.orgAddress)
-        .trim();
+    final displayAddress = (_org?.address ?? widget.orgAddress).trim();
     final addressCtrl = TextEditingController(text: displayAddress);
     final categoryCtrl = TextEditingController(text: _orgCategory() ?? 'C');
     final responsibleCtrl = TextEditingController(
       text: _orgResponsible() ?? '',
     );
-    final lat = (_org?['latitude'] as num?)?.toDouble();
-    final lon = (_org?['longitude'] as num?)?.toDouble();
+    final lat = _org?.latitude;
+    final lon = _org?.longitude;
 
     final saved = await showAppSheet<bool>(
       context,
@@ -344,12 +239,16 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
             const SizedBox(height: 12),
             TextField(
               controller: nameCtrl,
-              decoration: InputDecoration(labelText: context.l10n.t('fieldName')),
+              decoration: InputDecoration(
+                labelText: context.l10n.t('fieldName'),
+              ),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: innCtrl,
-              decoration: InputDecoration(labelText: context.l10n.t('fieldInn')),
+              decoration: InputDecoration(
+                labelText: context.l10n.t('fieldInn'),
+              ),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -359,22 +258,30 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
             const SizedBox(height: 8),
             TextField(
               controller: cityCtrl,
-              decoration: InputDecoration(labelText: context.l10n.t('fieldRegion')),
+              decoration: InputDecoration(
+                labelText: context.l10n.t('fieldRegion'),
+              ),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: districtCtrl,
-              decoration: InputDecoration(labelText: context.l10n.t('fieldDistrict')),
+              decoration: InputDecoration(
+                labelText: context.l10n.t('fieldDistrict'),
+              ),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: addressCtrl,
-              decoration: InputDecoration(labelText: context.l10n.t('fieldAddress')),
+              decoration: InputDecoration(
+                labelText: context.l10n.t('fieldAddress'),
+              ),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: categoryCtrl,
-              decoration: InputDecoration(labelText: context.l10n.t('category')),
+              decoration: InputDecoration(
+                labelText: context.l10n.t('category'),
+              ),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -417,7 +324,6 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     );
     if (saved != true) return;
 
-    final orgs = ref.read(organisationsRepositoryProvider);
     final name = nameCtrl.text.trim();
     final address = addressCtrl.text.trim();
     final phone = phoneCtrl.text.trim();
@@ -427,9 +333,8 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     final category = categoryCtrl.text.trim();
     final responsible = responsibleCtrl.text.trim();
 
-    // Сначала сохраняем локально — UI реагирует мгновенно
-    await orgs.updateLocal(
-      id: widget.orgId,
+    final draft = OrganisationUpdateDraft(
+      organisationId: widget.orgId,
       name: name,
       address: address,
       city: city,
@@ -440,9 +345,14 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
       phone: phone,
       latitude: lat,
       longitude: lon,
-      updatedAt: DateTime.now().toIso8601String(),
     );
-    await _loadOrg();
+    final orgs = ref.read(organisationsDirectoryRepositoryProvider);
+
+    // Сначала сохраняем локально — UI реагирует мгновенно.
+    await orgs.updateLocalOrganisation(draft);
+    await ref
+        .read(organisationDetailsViewModelProvider(widget.orgId).notifier)
+        .load();
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
@@ -450,560 +360,12 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
 
     // Отправляем в API в фоне; при ошибке кладём в очередь
     try {
-      await orgs.updateRemote(
-        organizationId: widget.orgId,
-        name: name,
-        address: address,
-        phone: phone,
-        city: city,
-        district: district,
-        inn: inn,
-        category: category,
-        responsiblePerson: responsible,
-        latitude: lat,
-        longitude: lon,
-      );
+      await orgs.updateRemoteOrganisation(draft);
     } catch (_) {
-      await orgs.enqueuePendingOrgUpdate(
-        orgId: widget.orgId,
-        name: name,
-        address: address,
-        phone: phone,
-        city: city,
-        district: district,
-        inn: inn,
-        category: category,
-        responsible: responsible,
-        latitude: lat,
-        longitude: lon,
-      );
+      await orgs.enqueueOrganisationUpdate(draft);
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    final hasPhone = (_orgPhone() ?? '').trim().isNotEmpty;
-    final phone = _orgPhone();
-    final inn = _orgInn();
-    final responsible = _orgResponsible();
-    final category = _orgCategory();
-    final worksWithUs = _worksWithUs();
-    final displayAddress = ((_org?['address'] as String?) ?? widget.orgAddress)
-        .trim();
-    final ctaBottom = LimaNavBarLayout.ctaBottomOffset(context);
-
-    return Scaffold(
-      backgroundColor: AppColors.primaryBg,
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              // ── AppBar ────────────────────────────────────────────────────
-              AppCenteredHeader(title: context.l10n.t('lpu'), onBack: () => context.pop()),
-
-              Expanded(
-                child: ListView(
-                  padding: EdgeInsets.fromLTRB(16, 12, 16, ctaBottom + 56),
-                  children: [
-                    // ── Org header card ────────────────────────────────────────
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.secondaryBg,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: shadowSm,
-                      ),
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: AppColors.iconBgBlue,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(
-                              Icons.home_work_rounded,
-                              color: AppColors.primary,
-                              size: 26,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  widget.orgName,
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.primaryText,
-                                  ),
-                                ),
-                                if ((category != null && category.isNotEmpty) ||
-                                    worksWithUs != null) ...[
-                                  const SizedBox(height: 8),
-                                  // Category + status sit below the name and wrap
-                                  // so a long org name never pushes the status
-                                  // badge to float beside the middle of the text.
-                                  Wrap(
-                                    spacing: 6,
-                                    runSpacing: 6,
-                                    children: [
-                                      if (category != null &&
-                                          category.isNotEmpty)
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 3,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: AppColors.iconBgLight,
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            category,
-                                            style: GoogleFonts.manrope(
-                                              fontSize: 11,
-                                              color: AppColors.secondaryText,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                      if (worksWithUs != null)
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 4,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: worksWithUs == true
-                                                ? const Color(0xFFDDF5E6)
-                                                : const Color(0xFFFFEEF0),
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            worksWithUs == true
-                                                ? context.l10n.t('worksWithUs')
-                                                : context.l10n.t(
-                                                    'notWorksWithUs',
-                                                  ),
-                                            style: GoogleFonts.manrope(
-                                              fontSize: 12,
-                                              color: worksWithUs == true
-                                                  ? const Color(0xFF2AA65A)
-                                                  : AppColors.error,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-
-                    // ── Info ───────────────────────────────────────────────────
-                    SectionLabel(text: context.l10n.t('informationCaps')),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.secondaryBg,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: shadowSm,
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Column(
-                        children: [
-                          if ((_org?['city'] as String? ?? '').isNotEmpty)
-                            InfoRow(
-                              label: context.l10n.t('region'),
-                              value: _org!['city'] as String,
-                            ),
-                          if (displayAddress.isNotEmpty)
-                            InfoRow(label: context.l10n.t('address'), value: displayAddress),
-                          if (phone != null && phone.isNotEmpty)
-                            InfoRow(
-                              label: context.l10n.t('phone'),
-                              value: phone,
-                              isLink: true,
-                              onTap: () => launchPhone(phone),
-                            ),
-                          if (inn != null && inn.isNotEmpty)
-                            InfoRow(label: context.l10n.t('inn'), value: inn),
-                          if (responsible != null && responsible.isNotEmpty)
-                            InfoRow(label: context.l10n.t('responsible'), value: responsible),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // ── Call / Route / Edit ───────────────────────────────────
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _ActionBtn(
-                            icon: Icons.call_rounded,
-                            label: context.l10n.t('call'),
-                            onTap: hasPhone
-                                ? () async {
-                                    if (phone == null || phone.isEmpty) return;
-                                    await launchPhone(phone);
-                                  }
-                                : null,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _ActionBtn(
-                            icon: Icons.near_me_rounded,
-                            label: context.l10n.t('route'),
-                            onTap: _buildYandexRoute,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _ActionBtn(
-                            icon: Icons.edit_rounded,
-                            label: context.l10n.t('edit'),
-                            onTap: _openEditOrganizationSheet,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-
-                    // ── History ────────────────────────────────────────────────
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.secondaryBg,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: shadowSm,
-                      ),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: () => context.push(
-                          Uri(
-                            path: '/visits/history',
-                            queryParameters: {
-                              'type': 'lpu',
-                              'orgId': '${widget.orgId}',
-                              'openFirst': '1',
-                            },
-                          ).toString(),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: AppColors.iconBgBlue,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: const Icon(
-                                  Icons.access_time_filled_rounded,
-                                  color: AppColors.primary,
-                                  size: 20,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  context.l10n.t('visitHistory'),
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              const Icon(
-                                Icons.chevron_right_rounded,
-                                color: AppColors.hintText,
-                                size: 21,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // ── Doctors ────────────────────────────────────────────────
-                    Row(
-                      children: [
-                        SectionLabel(text: context.l10n.t('doctorsCaps')),
-                        const Spacer(),
-                        Text(
-                          '${_doctors.length}',
-                          style: GoogleFonts.manrope(
-                            fontSize: 13,
-                            color: AppColors.secondaryText,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_doctors.isEmpty)
-                      Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.secondaryBg,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: shadowSm,
-                        ),
-                        child: ListTile(
-                          title: Text(
-                            context.l10n.t('doctorsNotFound'),
-                            style: GoogleFonts.manrope(
-                              color: AppColors.secondaryText,
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      Column(
-                        children: _doctors.map((d) {
-                          final isFavorite = (d['is_favorite'] ?? 0) == 1;
-                          final name = d['full_name'] as String? ?? '';
-                          final specialty = d['specialty'] as String? ?? '';
-                          final doctorId = (d['id'] as int?) ?? -1;
-                          final expanded = _expandedDoctorIds.contains(
-                            doctorId,
-                          );
-                          final category =
-                              '${context.l10n.t('category')} ${d['category'] ?? 'C'}';
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFDDE3EB),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: AppColors.divider,
-                                  width: 1,
-                                ),
-                              ),
-                              child: Container(
-                                margin: const EdgeInsets.only(left: 6),
-                                decoration: BoxDecoration(
-                                  color: AppColors.secondaryBg,
-                                  borderRadius: BorderRadius.circular(14),
-                                  boxShadow: shadowSm,
-                                ),
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(14),
-                                  onTap: () {
-                                    setState(() {
-                                      if (expanded) {
-                                        _expandedDoctorIds.remove(doctorId);
-                                      } else {
-                                        _expandedDoctorIds.add(doctorId);
-                                      }
-                                    });
-                                  },
-                                  child: Column(
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          14,
-                                          14,
-                                          12,
-                                          14,
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            Expanded(
-                                              child: Text(
-                                                name,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: GoogleFonts.manrope(
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ),
-                                            GestureDetector(
-                                              onTap: () => _toggleFavorite(d),
-                                              child: Icon(
-                                                isFavorite
-                                                    ? Icons.bookmark_rounded
-                                                    : Icons
-                                                          .bookmark_border_rounded,
-                                                color: AppColors.primary,
-                                                size: 21,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Icon(
-                                              expanded
-                                                  ? Icons
-                                                        .keyboard_arrow_down_rounded
-                                                  : Icons.chevron_right_rounded,
-                                              color: AppColors.hintText,
-                                              size: 21,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      if (expanded) ...[
-                                        const Divider(
-                                          height: 1,
-                                          color: AppColors.divider,
-                                        ),
-                                        Padding(
-                                          padding: const EdgeInsets.fromLTRB(
-                                            14,
-                                            12,
-                                            12,
-                                            14,
-                                          ),
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 10,
-                                                      vertical: 6,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color: AppColors.iconBgBlue,
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                ),
-                                                child: Text(
-                                                  category,
-                                                  style: GoogleFonts.manrope(
-                                                    fontSize: 12,
-                                                    color:
-                                                        AppColors.secondaryText,
-                                                    fontWeight: FontWeight.w500,
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(height: 12),
-                                              Row(
-                                                children: [
-                                                  const Icon(
-                                                    Icons.work_outline_rounded,
-                                                    color: AppColors.hintText,
-                                                    size: 18,
-                                                  ),
-                                                  const SizedBox(width: 8),
-                                                  Expanded(
-                                                    child: Text(
-                                                      specialty.isEmpty
-                                                          ? '—'
-                                                          : specialty,
-                                                      style:
-                                                          GoogleFonts.manrope(
-                                                            fontSize: 14,
-                                                            color: AppColors
-                                                                .secondaryText,
-                                                          ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: ctaBottom,
-            child: ElevatedButton(
-              onPressed: () => context.push(
-                Uri(
-                  path: '/visits/lpu/detail/${widget.orgId}/doctors',
-                  queryParameters: {'name': widget.orgName},
-                ).toString(),
-              ),
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: Text(context.l10n.t('startVisit')),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActionBtn extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-
-  const _ActionBtn({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 52,
-        decoration: BoxDecoration(
-          color: AppColors.secondaryBg,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: shadowSm,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              color: onTap == null ? AppColors.hintText : AppColors.primary,
-              size: 22,
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: GoogleFonts.manrope(
-                fontSize: 11,
-                color: onTap == null
-                    ? AppColors.hintText
-                    : AppColors.primaryText,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => _buildDetailScaffold(context);
 }

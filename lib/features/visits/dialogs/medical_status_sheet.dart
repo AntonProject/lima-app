@@ -3,8 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
-
-enum DrugStatus { familiarPrescribes, familiarNotPrescribes, unfamiliar, other }
+import '../domain/entities/visit_interaction.dart';
 
 Future<DrugStatus?> showMedicalStatusSheet(
   BuildContext context, {

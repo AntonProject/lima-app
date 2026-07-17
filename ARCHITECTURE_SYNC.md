@@ -9,6 +9,13 @@
   - `lib/core/db/local_database.dart`
   - `lib/core/network/remote_api_service.dart`
   - `lib/core/providers/sync_provider.dart`
+  - `lib/core/services/doctor_directory_sync_service.dart`
+  - `lib/core/services/delta_pull_service.dart`
+  - `lib/core/services/organization_directory_pull_service.dart`
+  - `lib/core/services/full_seed_sync_service.dart`
+  - `lib/core/services/live_data_refresh_service.dart`
+  - `lib/core/services/sync_diagnostics_service.dart`
+  - `lib/core/services/background_reconcile_service.dart`
   - `lib/core/providers/app_collections_provider.dart`
   - `lib/features/offline/screens/sync_screen.dart`
 - Подробный workflow агентской веб-версии:
@@ -28,6 +35,45 @@
 - `visits.remote_id` — ID на сервере
 - `visits.is_synced` — 0/1
 - `*_updated_at` — используется для дельты (если endpoint поддерживает)
+
+Repair справочника врачей, cursor, связи врач–ЛПУ и проверка полноты вынесены в
+`DoctorDirectorySyncService`. `SyncNotifier` передает сервису только callback
+прогресса и сохраняет orchestration порядка `push -> pull`.
+
+Очередь запланированных визитов вынесена в `PendingPlanSyncService`: сервис
+собирает payload, вызывает `/api/visits/plans`, сохраняет `remote_id` и
+различает удаление 4xx-записей и повтор сетевых/5xx ошибок. `SyncNotifier`
+только запускает этот сервис из push-before-pull и reconcile flow.
+
+Очереди избранного, feedback, новых врачей и организаций вынесены в
+`PendingMutationSyncService`. Он возвращает типизированные ошибки очереди, а
+notifier объединяет их с результатом отправки визитов в один отчёт.
+
+Отправка локальных визитов и их retry/backoff/parking вынесены в
+`PendingVisitPushService`. Сервис сохраняет request/response диагностику и
+возвращает IDs отправленных и припаркованных визитов без зависимости от UI.
+
+`DeltaPullService` выбирает максимальный cursor из `sync_meta` и локальных
+таблиц, получает организации, врачей, связи и препараты по `sync_id`, делает
+upsert в SQLite и только после этого сохраняет новый cursor.
+
+`OrganizationDirectoryPullService` обслуживает layered pull: выбирает полный
+справочник или delta организаций по решению notifier и сохраняет результат в
+SQLite до публикации итогового состояния.
+
+`FullSeedSyncService` владеет полным seed: получает `RemoteSeedBundle`, не
+принимает пустой справочник за успешную загрузку и передаёт снимок в
+`replaceRemoteSnapshotPreservingUnsynced()`. Поэтому локальная очередь офлайн-
+изменений не теряется при full refresh.
+
+`LiveDataRefreshService` обновляет изменяемые данные после seed: историю визитов,
+планы, избранное, материалы, статистику и небольшие справочники. Каждый слой
+best-effort и записывается локально независимо от остальных.
+
+`SyncDiagnosticsService` предоставляет typed локальные итоги, число связей
+врач–ЛПУ и проверку готовности базового каталога. `SyncNotifier` больше не
+содержит SQL для этих проверок. `BackgroundReconcileService` отдельно выполняет
+проверку реального соединения и silent reauth перед launch/background delta.
 
 ## 3) API методы, используемые приложением
 
@@ -85,7 +131,8 @@
 ## 4) Как работает синхронизация
 
 ### 4.1 Pull (данные с сервера -> локальная БД)
-Реализация: `SyncNotifier.pullFromRemote()`
+Оркестрация: `SyncNotifier.pullFromRemote()`; операции seed/live/directory
+делегируются соответствующим sync services.
 
 Перед любой ручной загрузкой приложение сначала пытается отправить локальную очередь `is_synced = 0`. Если очередь не отправилась, загрузка справочников откладывается, чтобы не маскировать ошибку локальных записей долгим pull.
 
@@ -111,8 +158,23 @@
 
 4. Записывается `sync_meta.last_pull_at`.
 
+### 4.1.1 Локальный источник для экранов
+
+После записи результата pull экран не ждёт завершения всей синхронизации:
+списки организаций, врачей, препаратов, материалов и визитов читаются из
+SQLite через feature repository. Фоновая синхронизация публикует typed
+`SyncDataChange`, после чего соответствующий view model перечитывает только
+свой локальный набор. Повторный вход на экран не должен делать сетевой запрос
+для обычного каталога.
+
+Для doctor-directory используется cursor `doctor_directory_sync_id` и
+`/dict/doctors/sync?batch_size=1000`; очередная пачка добавляется в SQLite, а не
+заменяет уже загруженных врачей. При обрыве процесса следующий запуск
+продолжает pull с сохранённого cursor.
+
 ### 4.2 Push (локальные изменения -> сервер)
-Реализация: `SyncNotifier.pushToRemote()`
+Оркестрация: `SyncNotifier.pushToRemote()`; отправка очередей делегируется
+pending-* services.
 
 - Берутся `visits where is_synced = 0`
 - Каждый визит отправляется отдельно через `pushUnsyncedVisit()`: ЛПУ, бронь аптеки, остатки и фармкружки идут в `Visits/add`.
@@ -172,6 +234,16 @@
 
 - Не все endpoint’ы гарантированно одинаково доступны на каждом домене/стенде.
 - Для части сценариев нужен подтверждённый production-compatible base URL API.
+
+## 9) Архитектурные границы
+
+- `features/*/domain` содержит typed entities, repository contracts и use cases;
+  он не зависит от Flutter, Dio, SQLite или Riverpod.
+- `features/*/data` владеет DTO/row mapping, JSON и API/SQLite adapters.
+- `features/*/presentation` получает typed state через Riverpod view model.
+- Для новых экранов запрещены прямые импорты `LocalDatabase`, `ApiClient`,
+  `RemoteApiService` и raw JSON mapping; текущий набор мигрированных экранов
+  проверяется архитектурным тестом.
 
 ---
 

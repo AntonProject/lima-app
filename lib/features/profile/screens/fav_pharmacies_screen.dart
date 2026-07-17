@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lima/features/collections/data/favorites_repository.dart';
+import 'package:lima/features/collections/providers/collections_repository_providers.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/core/models/models.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -21,7 +22,7 @@ class FavPharmaciesScreen extends ConsumerStatefulWidget {
 class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
   String _query = '';
   bool _loading = true;
-  List<Map<String, dynamic>> _pharmacies = [];
+  List<Organisation> _pharmacies = [];
   DateTime? _lastSyncSeenAt;
 
   @override
@@ -32,7 +33,7 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
 
   Future<void> _load() async {
     final repo = ref.read(favoritesRepositoryProvider);
-    final pharmacies = await repo.getFavoriteOrgsLocal(type: 'pharmacy');
+    final pharmacies = await repo.getFavoriteOrgModelsLocal(type: 'pharmacy');
     if (!mounted) return;
     setState(() {
       _pharmacies = pharmacies;
@@ -57,9 +58,8 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
     final filtered = _pharmacies.where((pharmacy) {
       final query = _query.toLowerCase();
       if (query.isEmpty) return true;
-      final name = (pharmacy['name'] as String? ?? '').toLowerCase();
-      final address = (pharmacy['address'] as String? ?? '').toLowerCase();
-      return name.contains(query) || address.contains(query);
+      return pharmacy.name.toLowerCase().contains(query) ||
+          pharmacy.address.toLowerCase().contains(query);
     }).toList();
 
     return Scaffold(
@@ -135,9 +135,9 @@ class _FavPharmaciesScreenState extends ConsumerState<FavPharmaciesScreen> {
                     itemCount: filtered.length,
                     itemBuilder: (_, index) {
                       final pharmacy = filtered[index];
-                      final pharmacyId = pharmacy['id'] as int;
-                      final name = (pharmacy['name'] as String?) ?? '';
-                      final address = (pharmacy['address'] as String?) ?? '';
+                      final pharmacyId = pharmacy.id;
+                      final name = pharmacy.name;
+                      final address = pharmacy.address;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: AppTapScale(

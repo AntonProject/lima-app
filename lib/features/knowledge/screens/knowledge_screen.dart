@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/core/models/models.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import 'package:lima/core/services/app_actions.dart';
-import 'package:lima/features/knowledge/data/drugs_repository.dart';
+import '../providers/knowledge_repository_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 
 class KnowledgeScreen extends ConsumerStatefulWidget {
@@ -18,7 +19,7 @@ class KnowledgeScreen extends ConsumerStatefulWidget {
 
 class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
   String _query = '';
-  List<Map<String, dynamic>> _drugs = [];
+  List<Drug> _drugs = [];
   bool _loading = true;
 
   @override
@@ -29,10 +30,10 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final db = ref.read(drugsRepositoryProvider);
+    final repository = ref.read(knowledgeRepositoryProvider);
 
     // Show local data immediately
-    final localResults = await db.getDrugs(
+    final localResults = await repository.getKnowledgeDrugs(
       query: _query.isEmpty ? null : _query,
       onlyWithPositivePrice: false,
       onlyWithDocuments: true,
@@ -115,12 +116,10 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
                     itemCount: _drugs.length,
                     itemBuilder: (_, i) {
                       final drug = _drugs[i];
-                      final drugId = drug['id'] as int;
-                      final drugName = drug['name'] as String;
-                      final documentsCount =
-                          drug['documents_count'] as int? ?? 0;
-                      final manufacturer =
-                          ((drug['manufacturer'] as String?) ?? '').trim();
+                      final drugId = drug.id;
+                      final drugName = drug.name;
+                      final documentsCount = drug.documentsCount;
+                      final manufacturer = drug.manufacturer.trim();
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: AppTapScale(
@@ -192,7 +191,10 @@ class _KnowledgeScreenState extends ConsumerState<KnowledgeScreen> {
                                             ),
                                             const SizedBox(width: 4),
                                             Text(
-                                              context.l10n.plural(documentsCount, 'documents'),
+                                              context.l10n.plural(
+                                                documentsCount,
+                                                'documents',
+                                              ),
                                               style: GoogleFonts.manrope(
                                                 color: AppColors.primary,
                                                 fontSize: 10,

@@ -8,6 +8,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../../core/config/env_config.dart';
 import '../../../core/i18n/app_i18n.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/swallowed.dart';
 
 /// Result of picking a point on the Yandex map.
 class MapPickResult {
@@ -42,10 +43,7 @@ class _YandexMapPickerState extends State<YandexMapPicker> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
-      ..addJavaScriptChannel(
-        'PointChannel',
-        onMessageReceived: _onPointMessage,
-      )
+      ..addJavaScriptChannel('PointChannel', onMessageReceived: _onPointMessage)
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageFinished: (_) {
@@ -56,10 +54,7 @@ class _YandexMapPickerState extends State<YandexMapPicker> {
       // baseUrl = the web domain the Yandex key is registered for, so the
       // map/geocoder requests carry a matching referer/origin and aren't
       // rejected by the key's domain restriction.
-      ..loadHtmlString(
-        _html(widget.initial),
-        baseUrl: 'https://agent.lima.uz',
-      );
+      ..loadHtmlString(_html(widget.initial), baseUrl: 'https://agent.lima.uz');
   }
 
   void _onPointMessage(JavaScriptMessage message) {
@@ -73,7 +68,9 @@ class _YandexMapPickerState extends State<YandexMapPicker> {
         _center = LatLng(lat, lng);
         _address = addr;
       });
-    } catch (_) {}
+    } catch (error) {
+      logSwallowed(error, 'YandexMapPicker.message');
+    }
   }
 
   String _html(LatLng c) {
@@ -154,8 +151,7 @@ class _YandexMapPickerState extends State<YandexMapPicker> {
       body: Stack(
         children: [
           WebViewWidget(controller: _controller),
-          if (_loading)
-            const Center(child: CircularProgressIndicator()),
+          if (_loading) const Center(child: CircularProgressIndicator()),
           // Address preview chip at the top.
           Positioned(
             top: MediaQuery.of(context).padding.top + 12,
@@ -199,10 +195,8 @@ class _YandexMapPickerState extends State<YandexMapPicker> {
               const SizedBox(width: 10),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: () => Navigator.pop(
-                    context,
-                    MapPickResult(_center, _address),
-                  ),
+                  onPressed: () =>
+                      Navigator.pop(context, MapPickResult(_center, _address)),
                   style: ElevatedButton.styleFrom(
                     minimumSize: const Size(0, 48),
                   ),

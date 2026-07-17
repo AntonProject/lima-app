@@ -234,7 +234,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   context.l10n.t('loginLabel'),
                                   style: GoogleFonts.manrope(
                                     fontSize: 13,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w700,
                                     color: AppColors.primaryText,
                                   ),
                                 ),
@@ -257,7 +257,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   context.l10n.t('password'),
                                   style: GoogleFonts.manrope(
                                     fontSize: 13,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w700,
                                     color: AppColors.primaryText,
                                   ),
                                 ),
@@ -358,7 +358,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                           style: GoogleFonts.manrope(
                                             color: Colors.white,
                                             fontSize: 16,
-                                            fontWeight: FontWeight.w800,
+                                            fontWeight: FontWeight.w700,
                                           ),
                                         ),
                                 ),

@@ -23,6 +23,12 @@ Riverpod providers and screens
 Local writes -> SQLite first -> push unsynced rows to API -> mark as synced
 ```
 
+Экраны работают со snapshot локальной БД через feature repositories и typed
+view models. Pull не является условием отображения: уже сохранённые записи
+показываются сразу, а `SyncDataChange` обновляет только затронутый экран.
+Сетевой pull может добавлять пачки в фоне; он не должен очищать справочники при
+обычном delta/bootstrap запуске.
+
 Ключевые файлы:
 
 - `lib/core/db/local_database.dart` — схема, миграции, seed/upsert helpers, локальные запросы.
@@ -204,6 +210,8 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 - `doctor_directory_sync_id`
 - `doctor_directory_expected_total`
 - `full_pull_bootstrap_v3_done`
+- `doctor_directory_sync_id`
+- `doctor_directory_expected_total`
 - `owner_user_id`
 - `owner_login`
 - `owner_role`

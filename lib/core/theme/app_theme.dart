@@ -31,7 +31,7 @@ class AppColors {
 
 class AppTheme {
   static ThemeData get light {
-    final base = ThemeData(useMaterial3: true);
+    final base = ThemeData(useMaterial3: true, fontFamily: 'Manrope');
     final manropeBase = base.copyWith(
       textTheme: GoogleFonts.manropeTextTheme(base.textTheme),
     );

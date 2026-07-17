@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:lima/core/db/local_database.dart';
+import 'package:lima/core/utils/swallowed.dart';
 
 /// Downloads drug material files to local storage so they are available offline.
 /// Stores the local file path in `drug_materials.cached_path`.
@@ -11,8 +12,8 @@ class MaterialCacheService {
   final String? _authToken;
 
   MaterialCacheService({required Dio dio, String? authToken})
-      : _dio = dio,
-        _authToken = authToken;
+    : _dio = dio,
+      _authToken = authToken;
 
   /// Downloads all materials that don't yet have a cached local file.
   /// Safe to call multiple times — skips already-cached files.
@@ -59,7 +60,11 @@ class MaterialCacheService {
       } catch (_) {
         // Non-fatal: file stays un-cached, will retry next sync
         if (await file.exists()) {
-          try { await file.delete(); } catch (_) {}
+          try {
+            await file.delete();
+          } catch (error) {
+            logSwallowed(error, 'MaterialCacheService.deletePartialFile');
+          }
         }
       }
     }
@@ -83,13 +88,16 @@ class MaterialCacheService {
   }
 
   static String _safeFileName(int id, String url) {
-    final ext = url.contains('.') ? '.${url.split('.').last.split('?').first}' : '.pdf';
+    final ext = url.contains('.')
+        ? '.${url.split('.').last.split('?').first}'
+        : '.pdf';
     return 'material_$id$ext';
   }
 
   String _resolveApiUrl(String rawPath) {
     final base = Uri.parse(_dio.options.baseUrl);
-    final origin = '${base.scheme}://${base.host}${base.hasPort ? ':${base.port}' : ''}';
+    final origin =
+        '${base.scheme}://${base.host}${base.hasPort ? ':${base.port}' : ''}';
     if (rawPath.startsWith('/api/')) return '$origin$rawPath';
     if (rawPath.startsWith('/')) return '$origin/api$rawPath';
     return '$origin/api/$rawPath';

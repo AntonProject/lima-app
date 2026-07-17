@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/app_icons.dart';
 import '../../../core/widgets/app_widgets.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/core/dialogs/feedback_dialog.dart';
@@ -16,28 +15,24 @@ import 'package:lima/core/providers/locale_provider.dart';
 import 'package:lima/core/providers/dashboard_counts_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
 import 'package:lima/core/services/in_app_notifications_service.dart';
-import 'package:lima/core/db/local_database.dart';
-import 'package:lima/features/visits/data/visits_repository.dart';
+import 'package:lima/features/offline/domain/entities/sync_data_change.dart';
+import 'package:lima/features/home/domain/repositories/home_repository.dart';
+import 'package:lima/features/home/presentation/view_models/home_recent_visits_view_model.dart';
+import 'package:lima/features/home/providers/home_repository_provider.dart';
+import 'package:lima/features/home/providers/home_recent_visits_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/core/utils/swallowed.dart';
+
+part '../widgets/home_screen_widgets.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
-  /// Loads recent visits from the local DB into the static cache so the
+  /// Loads recent visits from the local repository into the warm cache so the
   /// home screen renders instantly on first navigation after the splash.
-  static Future<void> preload(LocalDatabase db) async {
-    try {
-      final dbRows = await db.getVisits().timeout(
-        const Duration(seconds: 6),
-        onTimeout: () => const <Map<String, dynamic>>[],
-      );
-      _HomeScreenState._cachedRecentVisits = _HomeScreenState._processVisitRows(
-        dbRows,
-      );
-    } catch (_) {
-      // Best-effort prewarm — home will retry via its own _loadRecentVisits().
-    }
+  static Future<void> preload(HomeRepository repository) async {
+    await HomeRecentVisitsViewModel.preload(repository);
   }
 
   @override
@@ -46,31 +41,25 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen>
     with WidgetsBindingObserver {
-  static List<_RecentVisitVm> _cachedRecentVisits = const [];
-
-  bool _loadingRecent = false;
-  bool _loadingRecentInFlight = false;
-  List<_RecentVisitVm> _recentVisits = const [];
   String? _lastRefreshToken;
   DateTime? _lastSyncSeenAt;
-  StreamSubscription<Set<String>>? _dbChangesSub;
+  StreamSubscription<SyncDataChange>? _dbChangesSub;
 
   @override
   void initState() {
     super.initState();
-    _recentVisits = _cachedRecentVisits;
     WidgetsBinding.instance.addObserver(this);
-    _dbChangesSub = ref.read(visitsRepositoryProvider).changes.listen((tables) {
+    _dbChangesSub = ref.read(homeRepositoryProvider).changes.listen((change) {
       if (!mounted) return;
-      if (tables.contains('visits')) {
-        _loadRecentVisits();
+      if (change.containsAny(const [SyncDataTable.visits])) {
+        ref.read(homeRecentVisitsProvider.notifier).load();
         ref.invalidate(dashboardCountsProvider);
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(appCollectionsProvider.notifier).clearExpiredCartItems();
     });
-    _loadRecentVisits();
+    ref.read(homeRecentVisitsProvider.notifier).load();
   }
 
   @override
@@ -86,11 +75,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     String? token;
     try {
       token = GoRouterState.of(context).uri.queryParameters['refresh'];
-    } catch (_) {}
+    } catch (error) {
+      logSwallowed(error, 'HomeScreen.routeRefreshToken');
+    }
     if (token != null && token != _lastRefreshToken) {
       _lastRefreshToken = token;
       ref.invalidate(dashboardCountsProvider);
-      _loadRecentVisits();
+      ref.read(homeRecentVisitsProvider.notifier).load();
     }
   }
 
@@ -99,78 +90,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (state == AppLifecycleState.resumed) {
       ref.invalidate(dashboardCountsProvider);
       ref.read(appCollectionsProvider.notifier).clearExpiredCartItems();
-      _loadRecentVisits();
+      ref.read(homeRecentVisitsProvider.notifier).load();
       if (!ref.read(isOfflineProvider)) {
         ref.read(syncProvider.notifier).reconcileInBackground();
       }
     }
-  }
-
-  Future<void> _loadRecentVisits() async {
-    if (_loadingRecentInFlight) return;
-    _loadingRecentInFlight = true;
-    final shouldShowLoader = _recentVisits.isEmpty;
-    if (shouldShowLoader && mounted) {
-      setState(() => _loadingRecent = true);
-    }
-    try {
-      final visitsRepo = ref.read(visitsRepositoryProvider);
-      final dbRows = await visitsRepo.getVisits().timeout(
-        const Duration(seconds: 6),
-        onTimeout: () => const <Map<String, dynamic>>[],
-      );
-      final dbNext = _processVisitRows(dbRows);
-      if (mounted) {
-        setState(() {
-          _recentVisits = dbNext;
-          _cachedRecentVisits = dbNext;
-          _loadingRecent = false;
-        });
-      }
-    } finally {
-      _loadingRecentInFlight = false;
-      if (mounted && !shouldShowLoader) {
-        setState(() => _loadingRecent = false);
-      }
-    }
-  }
-
-  static List<_RecentVisitVm> _processVisitRows(
-    List<Map<String, dynamic>> dbRows,
-  ) {
-    final rows = dbRows.map((e) => Map<String, dynamic>.from(e)).toList();
-    final dedup = <String, Map<String, dynamic>>{};
-    for (final row in rows) {
-      final rid = _safeStr(row['remote_id']);
-      final type = _safeStr(row['visit_type'], fallback: 'lpu');
-      final created = _safeStr(
-        row['created_at'] ?? row['visit_date'] ?? row['date'],
-      );
-      final key = rid.isNotEmpty ? '${rid}_$type' : '${type}_$created';
-      final prev = dedup[key];
-      if (prev == null) {
-        dedup[key] = row;
-        continue;
-      }
-      final prevDt = _tryDate(
-        _safeStr(prev['created_at'] ?? prev['visit_date'] ?? prev['date']),
-      );
-      final curDt = _tryDate(created);
-      if (curDt.isAfter(prevDt)) {
-        dedup[key] = row;
-      }
-    }
-    final uniqueRows = dedup.values.toList();
-    uniqueRows.sort((a, b) {
-      final ad = _tryDate(
-        (a['date'] ?? a['visit_date'] ?? a['created_at'])?.toString(),
-      );
-      final bd = _tryDate(
-        (b['date'] ?? b['visit_date'] ?? b['created_at'])?.toString(),
-      );
-      return bd.compareTo(ad);
-    });
-    return uniqueRows.take(10).map(_RecentVisitVm.fromMap).toList();
   }
 
   PopupMenuItem<String> _langMenuItem(
@@ -195,7 +119,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ),
           const Spacer(),
           if (current == value)
-            const Icon(LucideIcons.check, size: 16, color: AppColors.primary),
+            Icon(AppIcons.check, size: 16, color: AppColors.primary),
         ],
       ),
     );
@@ -205,6 +129,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget build(BuildContext context) {
     debugPrint('[HOME] build start');
     final user = ref.watch(authProvider).user;
+    final recentVisitsState = ref.watch(homeRecentVisitsProvider);
+    final recentVisits = recentVisitsState.visits;
     final syncState = ref.watch(syncProvider);
     final collections = ref.watch(appCollectionsProvider);
     final dashboardCounts = ref.watch(dashboardCountsProvider).valueOrNull;
@@ -227,7 +153,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           nextAt.millisecondsSinceEpoch != prevAt.millisecondsSinceEpoch) {
         _lastSyncSeenAt = nextAt;
         ref.invalidate(dashboardCountsProvider);
-        _loadRecentVisits();
+        ref.read(homeRecentVisitsProvider.notifier).load();
       }
     });
     debugPrint('[HOME] build, user=${user?.fullName}');
@@ -357,11 +283,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           clipBehavior: Clip.none,
                           alignment: Alignment.center,
                           children: [
-                            const Icon(
-                              LucideIcons.bell,
-                              color: Colors.white,
-                              size: 19,
-                            ),
+                            Icon(AppIcons.bell, color: Colors.white, size: 19),
                             if (unreadNotifications > 0)
                               Positioned(
                                 top: 6,
@@ -430,7 +352,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                     )
                                   : context.l10n.t('dataUnavailable'),
                               iconBg: AppColors.iconBgBlue,
-                              icon: LucideIcons.calendarDays,
+                              icon: AppIcons.calendar,
                               iconColor: AppColors.primary,
                               onTap: () =>
                                   context.push('/visits/history?range=today'),
@@ -446,7 +368,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                               ),
                               subtitle: 'UZS ${context.l10n.t('forToday')}',
                               iconBg: AppColors.iconBgGreen,
-                              icon: LucideIcons.badgeDollarSign,
+                              icon: AppIcons.sales,
                               iconColor: AppColors.success,
                             ),
                           ),
@@ -471,7 +393,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                               title: context.l10n.t('favoriteDoctors'),
                               subtitle: context.l10n.t('quickAccess'),
                               iconBg: AppColors.iconBgPurple,
-                              icon: LucideIcons.user,
+                              icon: AppIcons.profile,
                               iconColor: AppColors.primary,
                               onTap: () => context.push('/profile/fav-doctors'),
                             ),
@@ -484,7 +406,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                   ? '${collections.cartCount} ${context.l10n.t('items')}'
                                   : '0 ${context.l10n.t('orders')}',
                               iconBg: AppColors.iconBgOrange,
-                              icon: LucideIcons.shoppingCart,
+                              icon: AppIcons.cart,
                               iconColor: AppColors.accent,
                               badgeCount: collections.cartCount > 0
                                   ? collections.cartCount
@@ -500,7 +422,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         pressedScale: 0.97,
                         child: ElevatedButton.icon(
                           onPressed: null,
-                          icon: const Icon(LucideIcons.mapPin, size: 16),
+                          icon: Icon(AppIcons.location, size: 16),
                           label: Text(context.l10n.t('startWork')),
                           style: ElevatedButton.styleFrom(
                             minimumSize: const Size(double.infinity, 44),
@@ -519,7 +441,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         pressedScale: 0.97,
                         child: OutlinedButton.icon(
                           onPressed: null,
-                          icon: const Icon(LucideIcons.send, size: 18),
+                          icon: Icon(AppIcons.send, size: 18),
                           label: Text(context.l10n.t('feedback')),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(double.infinity, 44),
@@ -565,8 +487,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         ],
                       ),
                       const SizedBox(height: 8),
-                      if (_recentVisits.isNotEmpty)
-                        ..._recentVisits.map(
+                      if (recentVisits.isNotEmpty)
+                        ...recentVisits.map(
                           (v) => Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: _VisitItem(
@@ -616,7 +538,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                             ),
                           ),
                         )
-                      else if (_loadingRecent)
+                      else if (recentVisitsState.isLoading)
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 8),
                           child: Center(
@@ -625,7 +547,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         )
                       else
                         EmptyState(
-                          icon: LucideIcons.calendarX2,
+                          icon: AppIcons.calendarX,
                           title: context.l10n.t('noVisitsPlanned'),
                         ),
                       const SizedBox(height: 12),
@@ -660,8 +582,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                 ),
                                 child: Icon(
                                   syncState.unsyncedCount > 0
-                                      ? LucideIcons.circleAlert
-                                      : LucideIcons.cloud,
+                                      ? AppIcons.alert
+                                      : AppIcons.cloud,
                                   color: syncState.unsyncedCount > 0
                                       ? AppColors.accent
                                       : AppColors.success,
@@ -677,7 +599,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                       context.l10n.t('offlineMode'),
                                       style: GoogleFonts.manrope(
                                         fontSize: 13,
-                                        fontWeight: FontWeight.w800,
+                                        fontWeight: FontWeight.w700,
                                         color: AppColors.primaryText,
                                       ),
                                       maxLines: 1,
@@ -726,230 +648,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 }
 
-DateTime _tryDate(String? source) {
-  if (source == null || source.isEmpty) {
-    return DateTime.fromMillisecondsSinceEpoch(0);
-  }
-  final direct = DateTime.tryParse(source);
-  if (direct != null) return direct;
-  final m = RegExp(
-    r'^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$',
-  ).firstMatch(source.trim());
-  if (m == null) return DateTime.fromMillisecondsSinceEpoch(0);
-  final day = int.tryParse(m.group(1)!);
-  final month = int.tryParse(m.group(2)!);
-  final year = int.tryParse(m.group(3)!);
-  final hour = int.tryParse(m.group(4) ?? '0') ?? 0;
-  final minute = int.tryParse(m.group(5) ?? '0') ?? 0;
-  final second = int.tryParse(m.group(6) ?? '0') ?? 0;
-  if (day == null || month == null || year == null) {
-    return DateTime.fromMillisecondsSinceEpoch(0);
-  }
-  return DateTime(year, month, day, hour, minute, second);
-}
-
-String _safeStr(Object? value, {String fallback = ''}) {
-  if (value == null) return fallback;
-  final s = value.toString();
-  if (s.isEmpty || s == 'null') return fallback;
-  return s;
-}
-
-class _RecentVisitVm {
-  final String id;
-  final String name;
-  final int? dateDay;
-  final int? dateMonthIdx;
-  final String timeLabel;
-  final String statusLabel;
-  final String statusKey;
-  final String type;
-  final String subType;
-  final String pharmacistsFio;
-  final int participantsCount;
-  final String firstDrugName;
-
-  const _RecentVisitVm({
-    required this.id,
-    required this.name,
-    this.dateDay,
-    this.dateMonthIdx,
-    required this.timeLabel,
-    required this.statusLabel,
-    required this.statusKey,
-    required this.type,
-    required this.subType,
-    required this.pharmacistsFio,
-    required this.participantsCount,
-    this.firstDrugName = '',
-  });
-
-  factory _RecentVisitVm.fromMap(Map<String, dynamic> row) {
-    final dt = _tryDate(
-      _safeStr(row['date'] ?? row['visit_date'] ?? row['created_at']),
-    );
-    String resolvedId = _safeStr(row['remote_id'] ?? row['visit_id']);
-    final responseRaw = _safeStr(row['last_push_response_json']);
-    if ((resolvedId.isEmpty || resolvedId == 'null') &&
-        responseRaw.isNotEmpty) {
-      try {
-        final parsed = jsonDecode(responseRaw);
-        if (parsed is int) {
-          resolvedId = '$parsed';
-        } else if (parsed is String && int.tryParse(parsed) != null) {
-          resolvedId = parsed;
-        } else if (parsed is Map) {
-          final map = Map<String, dynamic>.from(parsed);
-          final rid = map['id'] ?? map['visit_id'];
-          resolvedId = _safeStr(rid, fallback: resolvedId);
-        }
-      } catch (_) {}
-    }
-
-    final rawJson = _safeStr(row['raw_json']);
-    Map<String, dynamic> rawMap = const <String, dynamic>{};
-    if (rawJson.isNotEmpty) {
-      try {
-        final parsed = jsonDecode(rawJson);
-        if (parsed is Map) {
-          rawMap = Map<String, dynamic>.from(parsed);
-        }
-      } catch (_) {}
-    }
-    final orgTypeId = int.tryParse(
-      _safeStr(
-        row['organization_type_id'] ??
-            row['type_id'] ??
-            rawMap['organization_type_id'] ??
-            rawMap['type_id'],
-      ),
-    );
-    final orgTypeRaw = _safeStr(
-      row['organization_type'] ??
-          row['org_type'] ??
-          rawMap['organization_type'] ??
-          rawMap['org_type'],
-    ).toLowerCase();
-    final visitTypeRaw = _safeStr(
-      row['visit_type'] ??
-          row['type'] ??
-          rawMap['visit_type'] ??
-          rawMap['type'],
-      fallback: 'lpu',
-    ).toLowerCase();
-    final type = () {
-      if (visitTypeRaw == '4' ||
-          visitTypeRaw == '3' ||
-          visitTypeRaw == 'stock' ||
-          visitTypeRaw == 'remnant') {
-        return 'stock';
-      }
-      if (orgTypeId == 1 ||
-          orgTypeRaw.contains('pharm') ||
-          orgTypeRaw.contains('аптек') ||
-          orgTypeRaw == 'pharmacy') {
-        return 'pharmacy';
-      }
-      if (orgTypeId != null || orgTypeRaw.isNotEmpty) return 'lpu';
-      if (visitTypeRaw == '1' ||
-          visitTypeRaw == 'order' ||
-          visitTypeRaw == 'circle' ||
-          visitTypeRaw == 'pharmacy' ||
-          visitTypeRaw == 'apteka' ||
-          visitTypeRaw == 'аптека') {
-        return 'pharmacy';
-      }
-      return 'lpu';
-    }();
-    final subType = visitTypeRaw == 'circle' ? 'circle' : '';
-    final pharmacistsFio = _safeStr(
-      rawMap['pharmacists_fio'] ??
-          rawMap['pharmacists'] ??
-          rawMap['pharmacist_names'],
-      fallback: '—',
-    );
-    final participantsCount =
-        int.tryParse(
-          _safeStr(rawMap['participants_count'] ?? rawMap['participants']),
-        ) ??
-        0;
-    String firstDrugName = '';
-    try {
-      final itemsRaw =
-          rawMap['items'] ?? rawMap['drugs'] ?? rawMap['order_items'];
-      if (itemsRaw is List && itemsRaw.isNotEmpty) {
-        final first = itemsRaw.first;
-        if (first is Map) {
-          firstDrugName = _safeStr(
-            first['drug_name'] ?? first['name'] ?? first['title'],
-          );
-        }
-      }
-    } catch (_) {}
-
-    final completeFlag = _safeStr(rawMap['complete']).toLowerCase();
-    final statusRaw = _safeStr(
-      row['status_name'] ??
-          row['status'] ??
-          row['visit_status'] ??
-          rawMap['status_name'] ??
-          rawMap['status'] ??
-          rawMap['visit_status'],
-    ).toLowerCase();
-    final normalizedStatusRaw = (completeFlag == 'true' || completeFlag == '1')
-        ? 'completed'
-        : statusRaw;
-    final statusKey = _statusKeyFromRaw(normalizedStatusRaw);
-    return _RecentVisitVm(
-      id: resolvedId,
-      name: _safeStr(row['organization_name'] ?? row['org_name']),
-      dateDay: dt.day,
-      dateMonthIdx: dt.month,
-      timeLabel:
-          '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
-      statusLabel: _statusLabelFromKey(statusKey),
-      statusKey: statusKey,
-      type: type,
-      subType: subType,
-      pharmacistsFio: pharmacistsFio,
-      participantsCount: participantsCount,
-      firstDrugName: firstDrugName,
-    );
-  }
-
-  static String _statusKeyFromRaw(String raw) {
-    if (raw.contains('completed') ||
-        raw.contains('done') ||
-        raw.contains('провед')) {
-      return 'completed';
-    }
-    if (raw.contains('cancel') || raw.contains('отмен')) {
-      return 'cancelled';
-    }
-    if (raw.contains('process') ||
-        raw.contains('in_progress') ||
-        raw.contains('progress')) {
-      return 'in_progress';
-    }
-    if (raw == '1') return 'completed';
-    if (raw == '0') return 'planned';
-    return 'planned';
-  }
-
-  static String _statusLabelFromKey(String key) {
-    switch (key) {
-      case 'completed':
-        return 'Проведено';
-      case 'in_progress':
-        return 'В процессе';
-      case 'cancelled':
-        return 'Отменено';
-      default:
-        return 'План';
-    }
-  }
-}
-
 String _l10nStatus(BuildContext context, String key) {
   switch (key) {
     case 'completed':
@@ -969,452 +667,4 @@ String _localeCode(Locale locale) {
   }
   if (locale.languageCode == 'uz') return 'uz_latn';
   return locale.languageCode;
-}
-
-/// Shared fixed height for the home activity / quick-action cards so both
-/// rows line up. Content is single-line (counts, short labels) and ellipsized.
-// 84 (not 82): the stacked title/value/subtitle text needs ~82px and font
-// ascent/descent rounding pushed it 1px over, causing a RenderFlex overflow.
-const double _homeCardHeight = 84;
-
-class _ActivityCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final String subtitle;
-  final Color iconBg;
-  final IconData icon;
-  final Color iconColor;
-  final VoidCallback? onTap;
-
-  const _ActivityCard({
-    required this.title,
-    required this.value,
-    required this.subtitle,
-    required this.iconBg,
-    required this.icon,
-    required this.iconColor,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AppTapScale(
-      onTap: onTap,
-      pressedScale: 0.95,
-      child: Container(
-        height: _homeCardHeight,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: AppColors.secondaryBg,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: shadowSm,
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Text block: title → value → subtitle stacked on the left.
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    // Nudge the title baseline up to the icon's top edge.
-                    padding: const EdgeInsets.only(top: 1),
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.manrope(
-                        fontSize: 11,
-                        height: 1.25,
-                        color: AppColors.secondaryText,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.manrope(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                      height: 1.25,
-                      color: AppColors.primaryText,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.manrope(
-                      fontSize: 11,
-                      height: 1.25,
-                      color: AppColors.secondaryText,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Icon pinned to the top-right of the whole text block.
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: iconBg,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(icon, color: iconColor, size: 17),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickCard extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final Color iconBg;
-  final IconData icon;
-  final Color iconColor;
-  final VoidCallback onTap;
-  final int? badgeCount;
-
-  const _QuickCard({
-    required this.title,
-    required this.subtitle,
-    required this.iconBg,
-    required this.icon,
-    required this.iconColor,
-    required this.onTap,
-    this.badgeCount,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AppTapScale(
-      onTap: onTap,
-      pressedScale: 0.95,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: AppColors.secondaryBg,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: shadowSm,
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Icon (with optional badge) on the left.
-            SizedBox(
-              width: 36,
-              height: 36,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: iconBg,
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: Icon(icon, color: iconColor, size: 20),
-                  ),
-                  if ((badgeCount ?? 0) > 0)
-                    Positioned(
-                      top: -4,
-                      right: -4,
-                      child: Container(
-                        width: 16,
-                        height: 16,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFEF3340),
-                          shape: BoxShape.circle,
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          '${badgeCount!}',
-                          style: GoogleFonts.manrope(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Title + subtitle aligned to the icon's top/bottom edges (with a
-            // 2px inset), matching the profile stat cards.
-            Expanded(
-              child: SizedBox(
-                height: 36,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        title,
-                        style: GoogleFonts.manrope(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          height: 1.0,
-                          color: AppColors.primaryText,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        subtitle.isNotEmpty ? subtitle : '',
-                        style: GoogleFonts.manrope(
-                          fontSize: 11,
-                          height: 1.0,
-                          color: AppColors.secondaryText,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _VisitItem extends StatelessWidget {
-  final String name;
-  final String id;
-  final String date;
-  final String time;
-  final String status;
-  final String statusKey;
-  final String type;
-  final String subType;
-  final String pharmacistsFio;
-  final int participantsCount;
-  final String firstDrugName;
-  final VoidCallback onTap;
-
-  const _VisitItem({
-    required this.name,
-    required this.id,
-    required this.date,
-    required this.time,
-    required this.status,
-    required this.statusKey,
-    required this.type,
-    required this.subType,
-    required this.pharmacistsFio,
-    required this.participantsCount,
-    required this.onTap,
-    this.firstDrugName = '',
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isLpu = type == 'lpu';
-    final isStock = type == 'stock';
-    final isCircle = type == 'pharmacy' && subType == 'circle';
-    final localizedStatus = switch (statusKey) {
-      'completed' => context.l10n.t('conducted'),
-      'in_progress' => context.l10n.t('visitStatusInProgress'),
-      'cancelled' => context.l10n.t('cancelled'),
-      _ => context.l10n.t('visitStatusPlanned'),
-    };
-    final (statusBg, statusFg) = switch (statusKey) {
-      'completed' => (const Color(0xFFEFF2F7), const Color(0xFF77839A)),
-      'in_progress' => (const Color(0xFFFAF1DF), const Color(0xFFC89B3C)),
-      'cancelled' => (const Color(0xFFFCE7E7), const Color(0xFFE35D5B)),
-      _ => (const Color(0xFFEAF0FF), AppColors.primary),
-    };
-    return AppTapScale(
-      onTap: onTap,
-      pressedScale: 0.95,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppColors.secondaryBg,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: shadowSm,
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: isLpu
-                    ? AppColors.iconBgBlue
-                    : (isStock
-                          ? const Color(0xFFFFF3DB)
-                          : isCircle
-                          ? const Color(0xFFDDF5E6)
-                          : AppColors.iconBgGreen),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                isLpu
-                    ? LucideIcons.building2
-                    : (isStock
-                          ? LucideIcons.packageCheck
-                          : isCircle
-                          ? LucideIcons.circlePlus
-                          : LucideIcons.pill),
-                color: isLpu
-                    ? AppColors.primary
-                    : (isStock
-                          ? const Color(0xFFE3A335)
-                          : isCircle
-                          ? const Color(0xFF2AA65A)
-                          : AppColors.success),
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Name gets the full first line; the id + status badge move
-                  // down to the date row so long names aren't truncated early.
-                  Text(
-                    name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.manrope(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.primaryText,
-                    ),
-                  ),
-                  if (!isLpu && !isCircle && firstDrugName.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      firstDrugName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.manrope(
-                        fontSize: 12,
-                        color: AppColors.secondaryText,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 2),
-                  if (isCircle && pharmacistsFio != '—')
-                    Row(
-                      children: [
-                        Text(
-                          '$date  ',
-                          style: GoogleFonts.manrope(
-                            fontSize: 12,
-                            color: AppColors.secondaryText,
-                          ),
-                        ),
-                        const Icon(
-                          LucideIcons.users,
-                          size: 13,
-                          color: Color(0xFF2AA65A),
-                        ),
-                        const SizedBox(width: 3),
-                        Expanded(
-                          child: RichText(
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            text: TextSpan(
-                              style: GoogleFonts.manrope(fontSize: 12),
-                              children: [
-                                TextSpan(
-                                  text: pharmacistsFio,
-                                  style: const TextStyle(
-                                    color: Color(0xFF2AA65A),
-                                  ),
-                                ),
-                                if (participantsCount > 0)
-                                  TextSpan(
-                                    text:
-                                        ' (${context.l10n.t('participantsN', args: {'count': '$participantsCount'})})',
-                                    style: const TextStyle(
-                                      color: Color(0xFF8390A3),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    )
-                  else
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '$date  $time',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.manrope(
-                              fontSize: 12,
-                              color: AppColors.secondaryText,
-                            ),
-                          ),
-                        ),
-                        if (id.isNotEmpty) ...[
-                          const SizedBox(width: 8),
-                          Text(
-                            id,
-                            style: GoogleFonts.manrope(
-                              fontSize: 11,
-                              color: AppColors.secondaryText,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusBg,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            localizedStatus,
-                            style: GoogleFonts.manrope(
-                              fontSize: 10,
-                              color: statusFg,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 4),
-            const Icon(
-              LucideIcons.chevronRight,
-              color: AppColors.hintText,
-              size: 20,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
 import 'core/network/api_client.dart';
@@ -10,6 +11,7 @@ import 'core/services/local_notifications_service.dart';
 void main() async {
   debugPrint('[MAIN] start');
   WidgetsFlutterBinding.ensureInitialized();
+  GoogleFonts.config.allowRuntimeFetching = false;
   debugPrint('[MAIN] binding done');
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,

@@ -1,20 +1,18 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lima/core/auth/credentials_storage.dart';
-import 'package:lima/core/config/env_config.dart';
-import 'package:lima/core/network/api_client.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
-import 'package:lima/core/db/local_database.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/features/home/screens/home_screen.dart';
+import 'package:lima/features/home/providers/home_repository_provider.dart';
 import 'package:lima/features/visits/screens/visits_hub_screen.dart';
+import 'package:lima/features/visits/providers/visits_hub_provider.dart';
+import '../providers/splash_bootstrap_provider.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
@@ -92,18 +90,18 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         _step = 'splashInitDb';
         _progress = 0.1;
       });
-      final db = ref.read(localDatabaseProvider);
-      await db.init();
+      final bootstrap = ref.read(splashBootstrapRepositoryProvider);
+      await bootstrap.initializeDatabase();
       debugPrint('[SPLASH] db.init() done');
       await Future.delayed(const Duration(milliseconds: 300));
 
       // ── Auth check ────────────────────────────────────────────────────────────
-      final hasToken = ref.read(apiClientProvider).hasToken;
-      final savedCreds = await ref.read(credentialsStorageProvider).load();
+      final hasToken = bootstrap.hasApiToken;
+      final savedCreds = await bootstrap.loadCredentials();
       final hasOfflineSession =
           savedCreds != null &&
-          await db.hasUsableOfflineSessionForLogin(savedCreds.login);
-      final isOnline = await _checkOnline();
+          await bootstrap.hasOfflineSessionFor(savedCreds.login);
+      final isOnline = await bootstrap.hasRealInternet();
 
       if (!hasToken) {
         if (!isOnline) {
@@ -196,9 +194,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       // splash MUST yield to /home within the budget. Anything still running
       // continues in the background. First run (empty DB) gets a longer
       // budget + full refresh so essential data is actually present on home.
-      final dbRef = ref.read(localDatabaseProvider);
-      final existingOrgs = await dbRef.getOrganisations();
-      final isFirstRun = existingOrgs.isEmpty;
+      final isFirstRun = !(await bootstrap.hasLocalOrganizations());
       final budget = isFirstRun ? _firstRunBudget : _warmBudget;
       debugPrint(
         '[SPLASH] step 2: parallel sync (firstRun=$isFirstRun, budget=${budget.inSeconds}s)',
@@ -256,8 +252,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       // Best-effort prewarm with its own 5s cap — never block past the budget.
       try {
         await Future.wait([
-          HomeScreen.preload(dbRef),
-          VisitsHubScreen.preload(dbRef),
+          HomeScreen.preload(ref.read(homeRepositoryProvider)),
+          VisitsHubScreen.preload(
+            ref.read(organisationsDirectoryRepositoryProvider),
+          ),
         ]).timeout(const Duration(seconds: 5));
       } catch (e) {
         debugPrint('[SPLASH] preload skipped: $e');
@@ -266,11 +264,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     } catch (e, st) {
       debugPrint('[SPLASH] ERROR: $e');
       debugPrint('[SPLASH] STACK: $st');
-      final db = ref.read(localDatabaseProvider);
-      final savedCreds = await ref.read(credentialsStorageProvider).load();
+      final bootstrap = ref.read(splashBootstrapRepositoryProvider);
+      final savedCreds = await bootstrap.loadCredentials();
       final hasOfflineSession =
           savedCreds != null &&
-          await db.hasUsableOfflineSessionForLogin(savedCreds.login);
+          await bootstrap.hasOfflineSessionFor(savedCreds.login);
       if (hasOfflineSession) {
         debugPrint(
           '[SPLASH] sync failed, but owned local data exists -> continue offline',
@@ -313,17 +311,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     _safeGo('/home');
     debugPrint('[SPLASH] DONE');
     _loading = false;
-  }
-
-  Future<bool> _checkOnline() async {
-    try {
-      final result = await InternetAddress.lookup(
-        EnvConfig.connectivityHost,
-      ).timeout(const Duration(seconds: 5));
-      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
-    } catch (_) {
-      return false;
-    }
   }
 
   /// Attempts silent re-auth. Returns true if token was obtained successfully.
@@ -423,9 +410,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                       // syncProvider.message: the latter is set inside the
                       // notifier without a BuildContext and is Russian-only.
                       ref.watch(syncProvider);
-                      final stepText = _step.isEmpty ? '' : context.l10n.t(_step);
-                      final base =
-                          stepText.replaceFirst(RegExp(r'[.…]+\s*$'), '');
+                      final stepText = _step.isEmpty
+                          ? ''
+                          : context.l10n.t(_step);
+                      final base = stepText.replaceFirst(
+                        RegExp(r'[.…]+\s*$'),
+                        '',
+                      );
                       // Reserve space for 3 dots so the centered text doesn't
                       // shift left/right as dots animate. Hidden dots are
                       // rendered transparent.

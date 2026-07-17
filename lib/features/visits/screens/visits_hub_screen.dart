@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,34 +7,30 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
-import 'package:lima/core/models/models.dart';
-import 'package:lima/features/auth/providers/auth_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
-import '../../../core/db/local_database.dart';
-import '../data/organisations_repository.dart';
+import '../../offline/domain/entities/sync_data_change.dart';
+import '../domain/repositories/organisations_directory_repository.dart';
+import '../presentation/view_models/visits_hub_view_model.dart';
+import '../providers/visits_hub_provider.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
+
+part '../widgets/visits_hub_widgets.dart';
 
 class VisitsHubScreen extends ConsumerStatefulWidget {
   const VisitsHubScreen({super.key});
 
-  /// Loads LPU + pharmacy lists from the local DB into the static cache so
-  /// the screen renders instantly on first navigation. Safe to call multiple
-  /// times — re-reads to pick up server-side updates.
-  static Future<void> preload(LocalDatabase db) async {
+  /// Warms the local directory query before the visits tab is opened.
+  static Future<void> preload(
+    OrganisationsDirectoryRepository repository,
+  ) async {
     try {
-      final rows = await Future.wait([
-        db.getOrganisations(type: 'lpu'),
-        db.getOrganisations(type: 'pharmacy'),
+      await Future.wait([
+        repository.getLocalModels(type: 'lpu'),
+        repository.getLocalModels(type: 'pharmacy'),
       ]).timeout(const Duration(seconds: 8));
-      _VisitsHubScreenState._cachedLpuRows = rows[0]
-          .map((row) => Map<String, dynamic>.from(row))
-          .toList();
-      _VisitsHubScreenState._cachedPharmacyRows = rows[1]
-          .map((row) => Map<String, dynamic>.from(row))
-          .toList();
     } catch (_) {
-      // Best-effort prewarm — UI will retry via its own _load() on init.
+      // Best-effort prewarm — the view model retries from the local database.
     }
   }
 
@@ -44,53 +39,31 @@ class VisitsHubScreen extends ConsumerStatefulWidget {
 }
 
 class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
-  static List<Map<String, dynamic>>? _cachedLpuRows;
-  static List<Map<String, dynamic>>? _cachedPharmacyRows;
-
-  bool _isLpu = true;
-  String _query = '';
-  bool _allRegions = false;
-  List<Map<String, dynamic>> _orgs = [];
-  List<Map<String, dynamic>> _lpuCache = [];
-  List<Map<String, dynamic>> _pharmacyCache = [];
-  Map<int, double> _nearbyDistances = {};
-  bool _nearbyMode = false;
-  bool _localCacheLoaded = false;
-  bool _isFindingNearby = false;
-  Position? _lastNearbyPosition;
   String? _lastResetToken;
-  int _loadGeneration = 0;
-  StreamSubscription<Set<String>>? _dbChangesSub;
+  StreamSubscription<SyncDataChange>? _dbChangesSub;
   final TextEditingController _searchCtrl = TextEditingController();
-
-  // Remote search (mirrors the web's /dict/organizations/find): when online we
-  // also query the server so freshly-created orgs and INN lookups work without
-  // waiting for a full directory resync. Debounced; offline falls back to the
-  // local cache only.
-  Timer? _remoteSearchDebounce;
-  int _remoteSearchGeneration = 0;
-  bool _isRemoteSearching = false;
-  // Server-found orgs not yet in the local cache, keyed by id, merged into the
-  // displayed list for the current query.
-  final Map<int, Map<String, dynamic>> _remoteSearchResults = {};
 
   @override
   void initState() {
     super.initState();
-    _hydrateLocalCache();
-    _dbChangesSub = ref.read(organisationsRepositoryProvider).changes.listen((tables) {
-      if (!mounted || !tables.contains('organisations')) return;
-      _load();
-    });
+    _dbChangesSub = ref
+        .read(organisationsDirectoryRepositoryProvider)
+        .changes
+        .listen((change) {
+          if (!mounted ||
+              !change.containsAny(const [SyncDataTable.organisations])) {
+            return;
+          }
+          ref.read(visitsHubViewModelProvider.notifier).onRepositoryChanged();
+        });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _load();
+      if (mounted) ref.read(visitsHubViewModelProvider.notifier).load();
     });
   }
 
   @override
   void dispose() {
     _dbChangesSub?.cancel();
-    _remoteSearchDebounce?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -103,233 +76,32 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
     _lastResetToken = resetToken;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _resetToDefault();
+      _searchCtrl.clear();
+      ref.read(visitsHubViewModelProvider.notifier).resetToDefault();
     });
-  }
-
-  void _resetToDefault() {
-    setState(() {
-      _isLpu = true;
-      _query = '';
-      _allRegions = false;
-      _nearbyMode = false;
-      _nearbyDistances = {};
-      _lastNearbyPosition = null;
-      _orgs = _localCacheLoaded ? _buildOrgList() : [];
-    });
-    _searchCtrl.clear();
-    if (!_localCacheLoaded) _load();
-  }
-
-  Future<void> _load() async {
-    final generation = ++_loadGeneration;
-    final repo = ref.read(organisationsRepositoryProvider);
-    final rows =
-        await Future.wait([
-          repo.getLocal(type: 'lpu'),
-          repo.getLocal(type: 'pharmacy'),
-        ]).timeout(
-          const Duration(seconds: 6),
-          onTimeout: () => const <List<Map<String, dynamic>>>[
-            <Map<String, dynamic>>[],
-            <Map<String, dynamic>>[],
-          ],
-        );
-    final lpu = rows[0];
-    final pharmacies = rows[1];
-    if (!mounted || generation != _loadGeneration) return;
-    final lpuRows = _cloneRows(lpu);
-    final pharmacyRows = _cloneRows(pharmacies);
-    _cachedLpuRows = _cloneRows(lpuRows);
-    _cachedPharmacyRows = _cloneRows(pharmacyRows);
-    setState(() {
-      _lpuCache = lpuRows;
-      _pharmacyCache = pharmacyRows;
-      _localCacheLoaded = true;
-      _orgs = _buildOrgList();
-    });
-  }
-
-  void _hydrateLocalCache() {
-    final lpuRows = _cachedLpuRows;
-    final pharmacyRows = _cachedPharmacyRows;
-    if (lpuRows == null || pharmacyRows == null) return;
-    if (lpuRows.isEmpty && pharmacyRows.isEmpty) return;
-    _lpuCache = _cloneRows(lpuRows);
-    _pharmacyCache = _cloneRows(pharmacyRows);
-    _localCacheLoaded = true;
-    _orgs = _buildOrgList();
-  }
-
-  static List<Map<String, dynamic>> _cloneRows(
-    List<Map<String, dynamic>> rows,
-  ) {
-    return rows.map((row) => Map<String, dynamic>.from(row)).toList();
-  }
-
-  List<Map<String, dynamic>> _buildOrgList() {
-    final user = ref.read(authProvider).user;
-    final query = _query.trim().toLowerCase();
-    var orgs = (_isLpu ? _lpuCache : _pharmacyCache)
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-    if (query.isNotEmpty) {
-      orgs = orgs.where((o) {
-        final haystack = [
-          o['name'],
-          o['address'],
-          o['city'],
-          o['inn'],
-        ].whereType<Object>().join(' ').toLowerCase();
-        return haystack.contains(query);
-      }).toList();
-    }
-    if (!_allRegions) {
-      orgs = orgs.where((o) => _belongsToUserRegion(o, user)).toList();
-    }
-    // Merge in server-found orgs (online search) that aren't in the local cache
-    // — e.g. freshly-created orgs or INN matches. They're already filtered by
-    // the server (query + type + global), so we add any not already present.
-    if (_remoteSearchResults.isNotEmpty && query.isNotEmpty) {
-      final presentIds = orgs
-          .map((o) => (o['id'] as num?)?.toInt())
-          .whereType<int>()
-          .toSet();
-      for (final entry in _remoteSearchResults.entries) {
-        if (presentIds.contains(entry.key)) continue;
-        final o = Map<String, dynamic>.from(entry.value);
-        if (!_allRegions && !_belongsToUserRegion(o, user)) continue;
-        orgs.add(o);
-      }
-    }
-    orgs.sort((a, b) {
-      final aId = (a['id'] as num?)?.toInt() ?? 0;
-      final bId = (b['id'] as num?)?.toInt() ?? 0;
-      final ad = _nearbyMode ? _nearbyDistances[aId] : null;
-      final bd = _nearbyMode ? _nearbyDistances[bId] : null;
-      if (ad != null || bd != null) {
-        return (ad ?? double.infinity).compareTo(bd ?? double.infinity);
-      }
-      final an = (a['name']?.toString() ?? '').toLowerCase();
-      final bn = (b['name']?.toString() ?? '').toLowerCase();
-      return an.compareTo(bn);
-    });
-    if (_nearbyMode && _nearbyDistances.isNotEmpty) {
-      orgs.removeWhere(
-        (o) => !_nearbyDistances.containsKey((o['id'] as num?)?.toInt() ?? 0),
-      );
-    }
-    for (final org in orgs) {
-      final id = (org['id'] as num?)?.toInt() ?? 0;
-      final distance = _nearbyDistances[id];
-      if (distance != null) org['distance_m'] = distance;
-    }
-    return orgs;
-  }
-
-  void _onTabChange(bool isLpu) {
-    if (_isLpu == isLpu) return;
-    setState(() {
-      _isLpu = isLpu;
-      _nearbyMode = false;
-      _nearbyDistances = {};
-      _lastNearbyPosition = null;
-      _orgs = _buildOrgList();
-    });
-    if (!_localCacheLoaded) _load();
   }
 
   void _handleHorizontalSwipe(DragEndDetails details) {
     final velocity = details.primaryVelocity ?? 0;
     if (velocity.abs() < 150) return;
-
-    if (velocity < 0 && _isLpu) {
-      _onTabChange(false);
-    } else if (velocity > 0 && !_isLpu) {
-      _onTabChange(true);
+    final isLpu = ref.read(visitsHubViewModelProvider).isLpu;
+    if (velocity < 0 && isLpu) {
+      ref.read(visitsHubViewModelProvider.notifier).setTab(false);
+    } else if (velocity > 0 && !isLpu) {
+      ref.read(visitsHubViewModelProvider.notifier).setTab(true);
     }
   }
 
-  void _onQueryChange(String q) {
-    setState(() {
-      _query = q;
-      // A new query invalidates previous server results.
-      _remoteSearchResults.clear();
-      if (!_nearbyMode) _orgs = _buildOrgList();
-    });
-    final pos = _lastNearbyPosition;
-    if (_nearbyMode && pos != null) {
-      _loadNearbyForPosition(pos);
-    }
-    _scheduleRemoteSearch(q);
+  void _onQueryChange(String query) {
+    ref.read(visitsHubViewModelProvider.notifier).setQuery(query);
   }
 
-  /// Debounced server-side search. Online only — offline keeps the local cache.
-  void _scheduleRemoteSearch(String q) {
-    _remoteSearchDebounce?.cancel();
-    final query = q.trim();
-    // Server search adds value for non-trivial queries (names, INN). Short
-    // fragments stay local to avoid hammering the API on every keystroke.
-    if (query.length < 3) {
-      if (_isRemoteSearching) setState(() => _isRemoteSearching = false);
-      return;
-    }
-    _remoteSearchDebounce = Timer(const Duration(milliseconds: 350), () {
-      _runRemoteSearch(query);
-    });
-  }
-
-  Future<void> _runRemoteSearch(String query) async {
-    final generation = ++_remoteSearchGeneration;
-    final wantLpu = _isLpu;
-    if (mounted) setState(() => _isRemoteSearching = true);
-    try {
-      final repo = ref.read(organisationsRepositoryProvider);
-      final results = await repo.search(
-        query: query,
-        // type_id: 1 = pharmacy, 2 = LPU (matches the web's find call).
-        typeIds: wantLpu ? const [2] : const [1],
-        global: _allRegions,
-      );
-      // Ignore stale responses (query changed / tab switched mid-flight).
-      if (!mounted ||
-          generation != _remoteSearchGeneration ||
-          query != _query.trim() ||
-          wantLpu != _isLpu) {
-        return;
-      }
-      // Persist found orgs locally so freshly-created ones survive and the next
-      // search/visit can use them offline too.
-      if (results.isNotEmpty) {
-        await ref.read(organisationsRepositoryProvider).upsertLocal(results);
-      }
-      if (!mounted || generation != _remoteSearchGeneration) return;
-      setState(() {
-        _isRemoteSearching = false;
-        _remoteSearchResults.clear();
-        for (final o in results) {
-          final id = (o['id'] as num?)?.toInt();
-          if (id != null) _remoteSearchResults[id] = o;
-        }
-        if (!_nearbyMode) _orgs = _buildOrgList();
-      });
-    } catch (_) {
-      // Offline / API error — local results already shown, nothing more to do.
-      if (mounted && generation == _remoteSearchGeneration) {
-        setState(() => _isRemoteSearching = false);
-      }
-    }
+  void _onTabChange(bool isLpu) {
+    ref.read(visitsHubViewModelProvider.notifier).setTab(isLpu);
   }
 
   void _toggleAllRegions(bool value) {
-    setState(() {
-      _allRegions = value;
-      if (!_nearbyMode) _orgs = _buildOrgList();
-    });
-    final pos = _lastNearbyPosition;
-    if (_nearbyMode && pos != null) {
-      _loadNearbyForPosition(pos);
-    }
+    ref.read(visitsHubViewModelProvider.notifier).setAllRegions(value);
   }
 
   Future<Position?> _requestCurrentPosition() async {
@@ -364,90 +136,33 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
   }
 
   Future<void> _findNearby() async {
-    if (_isFindingNearby) return;
-    setState(() => _isFindingNearby = true);
+    final viewModel = ref.read(visitsHubViewModelProvider.notifier);
+    if (ref.read(visitsHubViewModelProvider).isFindingNearby) return;
+    viewModel.beginNearbySearch();
     try {
       final pos = await _requestCurrentPosition();
       if (pos == null) return;
-      await _loadNearbyForPosition(pos);
+      final hasCoordinates = await viewModel.applyNearby(
+        NearbyCoordinates(latitude: pos.latitude, longitude: pos.longitude),
+      );
+      if (!hasCoordinates && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.t('noCoordsNearby'))),
+        );
+      }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.t('dataLoadError'))));
     } finally {
-      if (mounted) setState(() => _isFindingNearby = false);
-    }
-  }
-
-  Future<void> _loadNearbyForPosition(Position pos) async {
-    if (!_localCacheLoaded) {
-      await _load();
-      if (!mounted) return;
-    }
-    final user = ref.read(authProvider).user;
-    final query = _query.trim().toLowerCase();
-    var rows = (_isLpu ? _lpuCache : _pharmacyCache)
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-    if (query.isNotEmpty) {
-      rows = rows.where((o) {
-        final haystack = [
-          o['name'],
-          o['address'],
-          o['city'],
-          o['inn'],
-        ].whereType<Object>().join(' ').toLowerCase();
-        return haystack.contains(query);
-      }).toList();
-    }
-    final filteredRows = !_allRegions
-        ? rows.where((o) => _belongsToUserRegion(o, user)).toList()
-        : rows;
-
-    final map = <int, double>{};
-    final orgs = <Map<String, dynamic>>[];
-    for (final row in filteredRows) {
-      final id = row['id'] as int? ?? 0;
-      final lat = (row['latitude'] as num?)?.toDouble();
-      final lon = (row['longitude'] as num?)?.toDouble();
-      final item = Map<String, dynamic>.from(row);
-      if (lat != null && lon != null) {
-        final distance = Geolocator.distanceBetween(
-          pos.latitude,
-          pos.longitude,
-          lat,
-          lon,
-        );
-        map[id] = distance;
-        item['distance_m'] = distance;
-      }
-      orgs.add(item);
-    }
-    orgs.sort((a, b) {
-      final aId = a['id'] as int? ?? 0;
-      final bId = b['id'] as int? ?? 0;
-      final ad = map[aId] ?? double.infinity;
-      final bd = map[bId] ?? double.infinity;
-      return ad.compareTo(bd);
-    });
-
-    if (!mounted) return;
-    setState(() {
-      _lastNearbyPosition = pos;
-      _nearbyMode = map.isNotEmpty;
-      _nearbyDistances = map;
-      _orgs = orgs;
-    });
-    if (map.isEmpty && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(context.l10n.t('noCoordsNearby'))));
+      if (mounted) viewModel.endNearbySearch();
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final hubState = ref.watch(visitsHubViewModelProvider);
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
       body: Stack(
@@ -482,7 +197,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                       ),
                       const SizedBox(height: 12),
                       _SegmentedTypeSelector(
-                        isLpu: _isLpu,
+                        isLpu: hubState.isLpu,
                         onChanged: _onTabChange,
                       ),
                       const SizedBox(height: 12),
@@ -495,14 +210,14 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                                 controller: _searchCtrl,
                                 onChanged: _onQueryChange,
                                 decoration: InputDecoration(
-                                  hintText: _isLpu
+                                  hintText: hubState.isLpu
                                       ? context.l10n.t('searchLpu')
                                       : context.l10n.t('searchPharmacy'),
                                   prefixIcon: const Icon(
                                     Icons.search_rounded,
                                     color: AppColors.hintText,
                                   ),
-                                  suffixIcon: _query.isNotEmpty
+                                  suffixIcon: hubState.query.isNotEmpty
                                       ? IconButton(
                                           icon: const Icon(
                                             Icons.close_rounded,
@@ -510,14 +225,8 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                                             size: 18,
                                           ),
                                           onPressed: () {
-                                            setState(() => _query = '');
                                             _searchCtrl.clear();
-                                            final pos = _lastNearbyPosition;
-                                            if (_nearbyMode && pos != null) {
-                                              _loadNearbyForPosition(pos);
-                                            } else {
-                                              _load();
-                                            }
+                                            _onQueryChange('');
                                           },
                                         )
                                       : null,
@@ -531,11 +240,15 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                               pressedScale: 0.92,
                               onTap: () async {
                                 final created = await context.push<bool>(
-                                  _isLpu
+                                  hubState.isLpu
                                       ? '/visits/lpu/add'
                                       : '/visits/pharmacy/add',
                                 );
-                                if (created == true && mounted) _load();
+                                if (created == true && mounted) {
+                                  ref
+                                      .read(visitsHubViewModelProvider.notifier)
+                                      .load();
+                                }
                               },
                               child: Container(
                                 width: 52,
@@ -556,7 +269,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                       const SizedBox(height: 8),
                       GestureDetector(
                         onTap: () {
-                          _toggleAllRegions(!_allRegions);
+                          _toggleAllRegions(!hubState.allRegions);
                         },
                         child: Row(
                           children: [
@@ -564,7 +277,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                               width: 20,
                               height: 20,
                               child: Checkbox(
-                                value: _allRegions,
+                                value: hubState.allRegions,
                                 onChanged: (v) {
                                   _toggleAllRegions(v ?? false);
                                 },
@@ -589,18 +302,19 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
 
                 // List
                 Expanded(
-                  child: !_localCacheLoaded
+                  child: !hubState.localCacheLoaded
                       ? const Center(
                           child: CircularProgressIndicator(
                             color: AppColors.primary,
                           ),
                         )
-                      : _orgs.isEmpty
+                      : hubState.organisations.isEmpty
                       ? EmptyState(
-                          icon: (!_nearbyMode && _query.isEmpty)
+                          icon: (!hubState.nearbyMode && hubState.query.isEmpty)
                               ? LucideIcons.mapPin
                               : Icons.search_off_rounded,
-                          title: (!_nearbyMode && _query.isEmpty)
+                          title:
+                              (!hubState.nearbyMode && hubState.query.isEmpty)
                               ? context.l10n.t('findNearbyHint')
                               : context.l10n.t('nothingFound'),
                         )
@@ -611,35 +325,32 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                             AppUi.screenHorizontal,
                             LimaNavBarLayout.scrollBottomPadding(context) + 24,
                           ),
-                          itemCount: _orgs.length,
+                          itemCount: hubState.organisations.length,
                           itemBuilder: (_, i) {
-                            final org = _orgs[i];
+                            final org = hubState.organisations[i];
                             return OrgCard(
-                              name: org['name'] as String,
-                              address: org['address'] as String,
-                              isPharmacy: !_isLpu,
-                              distanceMeters: _nearbyMode
-                                  ? _nearbyDistances[org['id'] as int? ?? 0]
+                              name: org.name,
+                              address: org.address,
+                              isPharmacy: !hubState.isLpu,
+                              distanceMeters: hubState.nearbyMode
+                                  ? hubState.nearbyDistances[org.id]
                                   : null,
                               onTap: () {
-                                if (_isLpu) {
+                                if (hubState.isLpu) {
                                   context.push(
                                     Uri(
-                                      path: '/visits/lpu/detail/${org['id']}',
+                                      path: '/visits/lpu/detail/${org.id}',
                                       queryParameters: {
-                                        'name': org['name'] as String,
-                                        'address': org['address'] as String,
+                                        'name': org.name,
+                                        'address': org.address,
                                       },
                                     ).toString(),
                                   );
                                 } else {
                                   context.push(
                                     Uri(
-                                      path:
-                                          '/visits/pharmacy/detail/${org['id']}',
-                                      queryParameters: {
-                                        'name': org['name'] as String,
-                                      },
+                                      path: '/visits/pharmacy/detail/${org.id}',
+                                      queryParameters: {'name': org.name},
                                     ).toString(),
                                   );
                                 }
@@ -661,7 +372,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 AppTapScale(
-                  onTap: _isFindingNearby ? null : _findNearby,
+                  onTap: hubState.isFindingNearby ? null : _findNearby,
                   pressedScale: 0.97,
                   child: Container(
                     height: AppUi.buttonHeight,
@@ -674,7 +385,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        if (_isFindingNearby)
+                        if (hubState.isFindingNearby)
                           const SizedBox(
                             width: 16,
                             height: 16,
@@ -691,7 +402,7 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
                           ),
                         const SizedBox(width: 8),
                         Text(
-                          _isFindingNearby
+                          hubState.isFindingNearby
                               ? context.l10n.t('searching')
                               : context.l10n.t('findNearby'),
                           style: GoogleFonts.manrope(
@@ -709,153 +420,6 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  bool _belongsToUserRegion(Map<String, dynamic> org, UserModel? user) {
-    final userRegionId = user?.regionId;
-    final orgRegionId = _orgRegionId(org);
-    if (userRegionId != null && orgRegionId != null) {
-      return userRegionId == orgRegionId;
-    }
-    return _sameRegion(org['city']?.toString(), user?.city);
-  }
-
-  int? _orgRegionId(Map<String, dynamic> org) {
-    final direct = org['region_id'];
-    if (direct is num) return direct.toInt();
-    if (direct is String) return int.tryParse(direct);
-    final raw = org['raw_json'] as String?;
-    if (raw == null || raw.isEmpty) return null;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      final map = Map<String, dynamic>.from(decoded);
-      final rawRegion = map['region_id'] ?? map['regionId'];
-      if (rawRegion is num) return rawRegion.toInt();
-      if (rawRegion is String) return int.tryParse(rawRegion);
-      final region = map['region'];
-      if (region is Map) {
-        final id = region['id'] ?? region['region_id'];
-        if (id is num) return id.toInt();
-        if (id is String) return int.tryParse(id);
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  bool _sameRegion(String? orgCity, String? userCity) {
-    final a = _normalizeRegion(orgCity);
-    final b = _normalizeRegion(userCity);
-    if (a.isEmpty || b.isEmpty) return false;
-    return a == b || a.contains(b) || b.contains(a);
-  }
-
-  String _normalizeRegion(String? value) {
-    if (value == null) return '';
-    final v = value
-        .toLowerCase()
-        .replaceAll('г.', '')
-        .replaceAll('город', '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-    return v;
-  }
-}
-
-class _TabBtn extends StatelessWidget {
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-
-  const _TabBtn({
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: SizedBox(
-          height: 34,
-          child: Center(
-            child: Text(
-              label,
-              style: GoogleFonts.manrope(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: active ? Colors.white : AppColors.secondaryText,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SegmentedTypeSelector extends StatelessWidget {
-  final bool isLpu;
-  final ValueChanged<bool> onChanged;
-
-  const _SegmentedTypeSelector({required this.isLpu, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final segmentWidth = (constraints.maxWidth - 8) / 2;
-        return Container(
-          height: 42,
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: AppColors.primaryBg,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Stack(
-            children: [
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
-                left: isLpu ? 0 : segmentWidth,
-                top: 0,
-                width: segmentWidth,
-                height: 34,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: shadowSm,
-                  ),
-                ),
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: _TabBtn(
-                      label: context.l10n.t('lpu'),
-                      active: isLpu,
-                      onTap: () => onChanged(true),
-                    ),
-                  ),
-                  Expanded(
-                    child: _TabBtn(
-                      label: context.l10n.t('pharmacies'),
-                      active: !isLpu,
-                      onTap: () => onChanged(false),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }

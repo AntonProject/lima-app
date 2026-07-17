@@ -68,6 +68,21 @@ flutter:
   assets:
     - assets/images/
     - assets/docs/
+    - assets/fonts/Manrope-Regular.ttf
+    - assets/fonts/Manrope-Medium.ttf
+    - assets/fonts/Manrope-SemiBold.ttf
+    - assets/fonts/Manrope-Bold.ttf
+  fonts:
+    - family: Manrope
+      fonts:
+        - asset: assets/fonts/Manrope-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Manrope-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Manrope-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Manrope-Bold.ttf
+          weight: 700
 
 flutter_launcher_icons:
   android: true

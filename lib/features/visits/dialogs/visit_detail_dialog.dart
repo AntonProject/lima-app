@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
-import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/features/visits/dialogs/payment_type_dialog.dart';
-import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/services/specification_export_service.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/features/visits/models/history_records.dart';
+import 'package:lima/features/visits/providers/pharmacy_order_provider.dart';
 
 Future<void> showVisitDetailDialog(
   BuildContext context, {
@@ -113,7 +112,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
     try {
       final companyId = ref.read(authProvider).user?.companyId;
       final supported = await ref
-          .read(remoteApiServiceProvider)
+          .read(pharmacyOrderRepositoryProvider)
           .supportsWholesaleOrders(companyId: companyId);
       if (!mounted) return;
       setState(() => _allowWholesale = supported);
@@ -1169,35 +1168,18 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
   }
 
   List<_OrderItemVm> _extractOrderItems() {
-    try {
-      final raw = jsonDecode(visit.rawJson);
-      if (raw is! Map) return _fallbackOrderItems();
-      final map = Map<String, dynamic>.from(raw);
-      final drugs = map['drugs'];
-      if (drugs is! List || drugs.isEmpty) return _fallbackOrderItems();
-      final out = <_OrderItemVm>[];
-      for (final item in drugs) {
-        if (item is! Map) continue;
-        final m = Map<String, dynamic>.from(item);
-        final name = '${m['drug_name'] ?? m['name'] ?? '—'}';
-        final qty =
-            (m['package'] as num?)?.toInt() ??
-            (m['quantity'] as num?)?.toInt() ??
-            1;
-        final serial = '${m['serial_no'] ?? m['serial_number'] ?? '—'}';
-        final direct =
-            (m['total_sum'] as num?)?.toDouble() ??
-            (m['sum'] as num?)?.toDouble() ??
-            (m['amount'] as num?)?.toDouble();
-        final salePrice =
-            (m['sale_price'] as num?)?.toDouble() ??
-            (m['price'] as num?)?.toDouble() ??
-            0;
-        final sum = direct ?? (salePrice * qty);
-        out.add(_OrderItemVm(name: name, qty: qty, serial: serial, sum: sum));
-      }
-      if (out.isNotEmpty) return out;
-    } catch (_) {}
+    if (visit.orderItems.isNotEmpty) {
+      return visit.orderItems
+          .map(
+            (item) => _OrderItemVm(
+              name: item.name,
+              qty: item.quantity,
+              serial: item.serialNumber,
+              sum: item.total,
+            ),
+          )
+          .toList(growable: false);
+    }
     return _fallbackOrderItems();
   }
 

@@ -4,9 +4,10 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/models/models.dart';
 import '../../../core/widgets/app_widgets.dart';
-import 'package:lima/features/knowledge/data/drugs_repository.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
+import '../providers/knowledge_repository_provider.dart';
 
 class DrugDetailScreen extends ConsumerStatefulWidget {
   final int drugId;
@@ -18,8 +19,8 @@ class DrugDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _DrugDetailScreenState extends ConsumerState<DrugDetailScreen> {
-  Map<String, dynamic>? _drug;
-  List<Map<String, dynamic>> _materials = [];
+  Drug? _drug;
+  List<DrugMaterial> _materials = [];
   bool _loading = true;
   int _tab = 0; // 0 docs, 1 info
 
@@ -30,10 +31,9 @@ class _DrugDetailScreenState extends ConsumerState<DrugDetailScreen> {
   }
 
   Future<void> _load() async {
-    final db = ref.read(drugsRepositoryProvider);
-    final drugs = await db.getDrugs();
-    final drug = drugs.where((d) => d['id'] == widget.drugId).firstOrNull;
-    final materials = await db.getDrugMaterials(widget.drugId);
+    final repository = ref.read(knowledgeRepositoryProvider);
+    final drug = await repository.getDrugModel(widget.drugId);
+    final materials = await repository.getDrugMaterialModels(widget.drugId);
     if (!mounted) return;
     setState(() {
       _drug = drug;
@@ -57,11 +57,10 @@ class _DrugDetailScreenState extends ConsumerState<DrugDetailScreen> {
       );
     }
 
-    final name = (_drug!['name'] as String?) ?? '';
-    final manufacturer =
-        ((_drug!['manufacturer'] as String?) ?? '').trim().isEmpty
+    final name = _drug!.name;
+    final manufacturer = _drug!.manufacturer.trim().isEmpty
         ? '—'
-        : ((_drug!['manufacturer'] as String?) ?? '').trim();
+        : _drug!.manufacturer.trim();
 
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
@@ -224,7 +223,7 @@ class _TopTab extends StatelessWidget {
 
 class _DocumentsTab extends StatelessWidget {
   final int drugId;
-  final List<Map<String, dynamic>> materials;
+  final List<DrugMaterial> materials;
 
   const _DocumentsTab({required this.drugId, required this.materials});
 
@@ -241,8 +240,8 @@ class _DocumentsTab extends StatelessWidget {
       itemCount: materials.length,
       itemBuilder: (_, i) {
         final m = materials[i];
-        final title = (m['title'] as String?) ?? context.l10n.t('document');
-        final uploaded = (m['uploaded_at'] as String?) ?? '';
+        final title = m.title.isEmpty ? context.l10n.t('document') : m.title;
+        final uploaded = m.uploadedAt ?? '';
         final dateLabel = uploaded.length >= 10
             ? '${uploaded.substring(8, 10)}.${uploaded.substring(5, 7)}.${uploaded.substring(0, 4)}'
             : '';
