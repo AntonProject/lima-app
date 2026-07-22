@@ -122,6 +122,22 @@ class RemoteApiService {
     return _extractMap(response.data);
   }
 
+  Future<Map<String, dynamic>> getMyPlan({required int year}) async {
+    final response = await _api.dio.get(
+      '/api/planning/my-plan',
+      queryParameters: {'year': year},
+    );
+    dynamic data = response.data;
+    if (data is String) {
+      final trimmed = data.trim();
+      if (trimmed.startsWith('<')) {
+        throw const FormatException('Expected JSON but received HTML');
+      }
+      data = jsonDecode(trimmed);
+    }
+    return _extractMap(data);
+  }
+
   Future<RemoteSeedBundle> fetchOfflineSeed({
     int? regionId,
     int? companyId,

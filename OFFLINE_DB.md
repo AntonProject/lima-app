@@ -53,7 +53,7 @@ view models. Pull не является условием отображения:
 - `planned_visits` — запланированные визиты с сервера.
 - `day_types` — справочник типов рабочего дня.
 - `managers` — кеш/справочник менеджеров.
-- `cached_stats` — кеш статистики/dashboard.
+- `cached_stats` — кеш статистики/dashboard и пользовательского годового плана.
 - `pending_doctors` — врачи, созданные локально и ожидающие отправки на API.
 - `pending_org_updates` — локальные изменения организаций, ожидающие отправки на API.
 
@@ -261,6 +261,10 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 | `key` | TEXT PK | Ключ статистики. |
 | `value` | TEXT | JSON/string значение. |
 | `updated_at` | TEXT | Время обновления кеша. |
+
+Годовой план хранится под ключом `my_plan_{userId}_{year}`. Экран сначала
+читает этот JSON из SQLite, затем обновляет его через API без очистки уже
+отображённых данных.
 
 ### `pending_doctors`
 

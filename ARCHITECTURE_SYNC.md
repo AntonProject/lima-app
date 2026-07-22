@@ -109,6 +109,13 @@ best-effort и записывается локально независимо о
 - `POST /api/workday/start`
 - `POST /api/workday/end`
 
+### Личный план продаж
+- `GET /api/planning/my-plan?year={YYYY}` — годовой план/факт и
+  помесячная детализация препаратов для текущего пользователя. Ответ может
+  прийти как `text/plain`, поэтому строковое тело дополнительно декодируется
+  как JSON. Последний успешный ответ хранится локально по пользователю и году,
+  чтобы таскбар и экран «Мой план» были доступны без сети.
+
 ### Favorites / doctors / organizations
 - Doctors favorites:
   - `POST /Doctors/favorites/add` (fallback `/api/...`)

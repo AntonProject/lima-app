@@ -23,6 +23,7 @@ void main() {
     'lib/features/visits/screens/pharmacy/pharma_circle_screen.dart',
     'lib/features/visits/screens/pharmacy/pharmacy_stock_screen.dart',
     'lib/features/visits/screens/lpu/lpu_detail_screen.dart',
+    'lib/features/plan/screens/my_plan_screen.dart',
   ];
 
   test(

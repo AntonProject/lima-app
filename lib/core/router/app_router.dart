@@ -7,6 +7,7 @@ import '../../features/auth/providers/auth_provider.dart';
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/home/screens/home_screen.dart';
 import '../../features/plan/screens/plan_screen.dart';
+import '../../features/plan/screens/my_plan_screen.dart';
 import '../../features/visits/screens/visits_hub_screen.dart';
 import '../../features/visits/screens/add_pharmacy_screen.dart';
 import '../../features/visits/screens/lpu/lpu_detail_screen.dart';
@@ -214,6 +215,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _) => const _SystemBackFallback(
           fallbackLocation: '/home',
           child: NotificationsScreen(),
+        ),
+      ),
+      GoRoute(
+        path: '/my-plan',
+        builder: (_, _) => const _SystemBackFallback(
+          fallbackLocation: '/home',
+          child: MyPlanScreen(),
         ),
       ),
 

@@ -42,5 +42,7 @@ class AppIcons {
   static const IconData back = LucideIcons.arrowLeft;
   static const IconData logout = LucideIcons.logOut;
   static const IconData chevronRight = LucideIcons.chevronRight;
+  static const IconData chevronDown = LucideIcons.chevronDown;
+  static const IconData clipboard = LucideIcons.clipboardList;
   static const IconData plus = LucideIcons.plus;
 }
