@@ -10,6 +10,7 @@ import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/features/home/screens/home_screen.dart';
 import 'package:lima/features/home/providers/home_repository_provider.dart';
+import 'package:lima/features/plan/providers/my_plan_provider.dart';
 import 'package:lima/features/visits/screens/visits_hub_screen.dart';
 import 'package:lima/features/visits/providers/visits_hub_provider.dart';
 import '../providers/splash_bootstrap_provider.dart';
@@ -122,6 +123,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
               _loading = false;
               return;
             }
+            unawaited(_startPlanPreload());
             await Future.delayed(const Duration(milliseconds: 250));
             if (!mounted) return;
             debugPrint('[SPLASH] navigating to /home (offline)');
@@ -167,6 +169,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
               _loading = false;
               return;
             }
+            unawaited(_startPlanPreload());
             await Future.delayed(const Duration(milliseconds: 250));
             if (!mounted) return;
             debugPrint('[SPLASH] navigating to /home (offline fallback)');
@@ -206,6 +209,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       final syncNotifier = ref.read(syncProvider.notifier);
       // Kick off doctors concurrently — fire-and-forget, never awaited here.
       syncNotifier.syncDoctorsInBackground();
+      final currentYearPlan = _startPlanPreload();
 
       final budgetTimer = Stopwatch()..start();
       // Animate progress bar from 0.35 → 0.9 over the budget so the user sees
@@ -256,6 +260,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           VisitsHubScreen.preload(
             ref.read(organisationsDirectoryRepositoryProvider),
           ),
+          currentYearPlan,
         ]).timeout(const Duration(seconds: 5));
       } catch (e) {
         debugPrint('[SPLASH] preload skipped: $e');
@@ -282,6 +287,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           _loading = false;
           return;
         }
+        unawaited(_startPlanPreload());
         _trySilentReauthBackground();
         if (!mounted) return;
         _safeGo('/home');
@@ -325,6 +331,21 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   /// Fire-and-forget background reauth (used when going offline with local data).
   void _trySilentReauthBackground() {
     ref.read(authProvider.notifier).silentReauth().ignore();
+  }
+
+  Future<void> _startPlanPreload() {
+    final currentYear = DateTime.now().year;
+    final currentYearLoad = ref
+        .read(myPlanProvider(currentYear).notifier)
+        .load();
+
+    // The current year is awaited by the splash preload budget. Adjacent
+    // years are useful when the user switches the year chips, but must never
+    // delay navigation to the home screen.
+    for (final year in [currentYear - 1, currentYear + 1]) {
+      unawaited(ref.read(myPlanProvider(year).notifier).load());
+    }
+    return currentYearLoad;
   }
 
   Future<void> _exitToLogin() async {

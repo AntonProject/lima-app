@@ -36,6 +36,11 @@ class _MyPlanScreenState extends ConsumerState<MyPlanScreen> {
       appBar: AppBar(
         toolbarHeight: 76,
         leadingWidth: 56,
+        backgroundColor: AppColors.secondaryBg,
+        surfaceTintColor: Colors.transparent,
+        shadowColor: const Color(0x14000000),
+        elevation: 2,
+        scrolledUnderElevation: 2,
         leading: IconButton(
           tooltip: MaterialLocalizations.of(context).backButtonTooltip,
           onPressed: () {
