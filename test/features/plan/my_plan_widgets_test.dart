@@ -16,12 +16,7 @@ void main() {
 
     await tester.pumpWidget(
       _TestApp(
-        child: PlanTaskbar(
-          plan: plan,
-          expanded: false,
-          pullOffset: 0,
-          onHintTap: () {},
-        ),
+        child: PlanTaskbar(plan: plan, expanded: false, onHintTap: () {}),
       ),
     );
 
@@ -31,12 +26,7 @@ void main() {
 
     await tester.pumpWidget(
       _TestApp(
-        child: PlanTaskbar(
-          plan: plan,
-          expanded: true,
-          pullOffset: 0,
-          onHintTap: () {},
-        ),
+        child: PlanTaskbar(plan: plan, expanded: true, onHintTap: () {}),
       ),
     );
     await tester.pumpAndSettle();
@@ -56,12 +46,7 @@ void main() {
     var taps = 0;
     await tester.pumpWidget(
       _TestApp(
-        child: PlanTaskbar(
-          plan: plan,
-          expanded: true,
-          pullOffset: 0,
-          onHintTap: () => taps++,
-        ),
+        child: PlanTaskbar(plan: plan, expanded: true, onHintTap: () => taps++),
       ),
     );
     await tester.pumpAndSettle();

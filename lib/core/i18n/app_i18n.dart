@@ -127,7 +127,7 @@ class AppI18n {
       'noPlanDataForYear': 'Нет данных за год',
       'activeTask': 'Активная задача',
       'planOf': 'из',
-      'pullToRevealPlan': 'потяни вниз чтобы увидеть активную задачу',
+      'pullToRevealPlan': 'потяни вниз, чтобы увидеть активную задачу',
       'viewAllPlan': 'Смотреть все',
       'millionShort': 'млн',
       'billionShort': 'млрд',

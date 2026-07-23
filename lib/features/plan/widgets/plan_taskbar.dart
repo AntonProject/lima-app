@@ -7,17 +7,19 @@ import '../../../core/widgets/app_widgets.dart';
 import '../domain/entities/my_plan.dart';
 import 'plan_progress_widgets.dart';
 
+/// Compatibility composition used by widget previews and tests.
+///
+/// On the home screen [PlanTaskbarPanel] is rendered inside the blue sliver
+/// app bar while [PlanTaskbarHint] remains directly below it.
 class PlanTaskbar extends StatelessWidget {
   final MyPlanProgress plan;
   final bool expanded;
-  final double pullOffset;
   final VoidCallback onHintTap;
 
   const PlanTaskbar({
     super.key,
     required this.plan,
     required this.expanded,
-    required this.pullOffset,
     required this.onHintTap,
   });
 
@@ -26,107 +28,81 @@ class PlanTaskbar extends StatelessWidget {
     final task = plan.activeTask(DateTime.now());
     if (task == null) return const SizedBox.shrink();
 
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      alignment: Alignment.topCenter,
-      child: Transform.translate(
-        offset: Offset(0, pullOffset),
-        child: expanded
-            ? _ExpandedTaskbar(task: task, onHintTap: onHintTap)
-            : _CollapsedTaskbar(onTap: onHintTap),
-      ),
+    return Column(
+      children: [
+        if (expanded)
+          Container(
+            color: AppColors.primary,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: PlanTaskbarPanel(task: task, onTap: onHintTap),
+          ),
+        PlanTaskbarHint(expanded: expanded, onTap: onHintTap),
+      ],
     );
   }
 }
 
-class _CollapsedTaskbar extends StatelessWidget {
+/// Active-plan content that belongs to the blue home sliver app bar.
+class PlanTaskbarPanel extends StatelessWidget {
+  static const double height = 112;
+
+  final MyPlanActiveTask task;
   final VoidCallback onTap;
 
-  const _CollapsedTaskbar({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.primaryBg,
-      child: InkWell(
-        onTap: onTap,
-        child: SizedBox(
-          height: 42,
-          child: Center(
-            child: Text(
-              '↓ ${context.l10n.t('pullToRevealPlan')} ↓',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.manrope(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: const Color(0xFF9EABC4),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ExpandedTaskbar extends StatelessWidget {
-  final MyPlanActiveTask task;
-  final VoidCallback onHintTap;
-
-  const _ExpandedTaskbar({required this.task, required this.onHintTap});
+  const PlanTaskbarPanel({super.key, required this.task, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final percent = task.month.completionPercentCount;
-    return Column(
-      children: [
-        Container(
-          color: AppColors.primary,
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: context.l10n.t('activeTask'),
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          TextSpan(
-                            text:
-                                ' · ${localizedPlanMonth(context, DateTime.now().month)}',
-                          ),
-                        ],
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.manrope(
-                        fontSize: 12,
-                        color: Colors.white,
-                      ),
+
+    return SizedBox(
+      height: height,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(0, 8, 0, 10),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: context.l10n.t('activeTask'),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        TextSpan(
+                          text:
+                              ' · ${localizedPlanMonth(context, DateTime.now().month)}',
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${task.index + 1} ${context.l10n.t('planOf')} ${task.total}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.manrope(
-                      fontSize: 11,
-                      color: Colors.white.withValues(alpha: 0.75),
+                      fontSize: 12,
+                      color: Colors.white,
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              AppTapScale(
-                onTap: onHintTap,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${task.index + 1} ${context.l10n.t('planOf')} ${task.total}',
+                  style: GoogleFonts.manrope(
+                    fontSize: 11,
+                    color: Colors.white.withValues(alpha: 0.75),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: AppTapScale(
+                onTap: onTap,
                 pressedScale: 0.98,
                 child: Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  padding: const EdgeInsets.fromLTRB(12, 9, 12, 8),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(10),
@@ -159,7 +135,7 @@ class _ExpandedTaskbar extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 5),
+                      const SizedBox(height: 4),
                       Text(
                         '${formatPlanInt(context, task.month.factCount)} / '
                         '${formatPlanInt(context, task.month.planCount)} '
@@ -169,35 +145,60 @@ class _ExpandedTaskbar extends StatelessWidget {
                           color: const Color(0xFF9EABC4),
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const Spacer(),
                       PlanProgressBar(value: percent, height: 5),
                     ],
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-        Material(
-          color: AppColors.primaryBg,
-          child: InkWell(
-            onTap: onHintTap,
-            child: SizedBox(
-              height: 42,
-              child: Center(
-                child: Text(
-                  '↓ ${context.l10n.t('viewAllPlan')} ↓',
-                  style: GoogleFonts.manrope(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    color: const Color(0xFF9EABC4),
-                  ),
+      ),
+    );
+  }
+}
+
+/// Stationary action label directly below the home sliver app bar.
+class PlanTaskbarHint extends StatelessWidget {
+  final bool expanded;
+  final VoidCallback onTap;
+
+  const PlanTaskbarHint({
+    super.key,
+    required this.expanded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.primaryBg,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: 42,
+          child: Center(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              child: Text(
+                expanded
+                    ? '↓ ${context.l10n.t('viewAllPlan')} ↓'
+                    : '↓ ${context.l10n.t('pullToRevealPlan')} ↓',
+                key: ValueKey(expanded),
+                textAlign: TextAlign.center,
+                style: GoogleFonts.manrope(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: const Color(0xFF9EABC4),
                 ),
               ),
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
