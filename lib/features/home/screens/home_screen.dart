@@ -224,7 +224,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         physics: const ClampingScrollPhysics(),
         slivers: [
           SliverAppBar(
-            pinned: true,
+            pinned: false,
+            floating: true,
+            snap: true,
             primary: false,
             automaticallyImplyLeading: false,
             toolbarHeight: collapsedHeaderHeight,
