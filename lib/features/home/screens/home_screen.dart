@@ -42,24 +42,22 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
-  static const _planPullThreshold = 56.0;
-
+    with WidgetsBindingObserver {
   String? _lastRefreshToken;
   DateTime? _lastSyncSeenAt;
   StreamSubscription<SyncDataChange>? _dbChangesSub;
-  final ScrollController _scrollController = ScrollController();
-  late final AnimationController _planExpansionController;
-  bool _planExpanded = false;
-  double? _planGestureStartY;
-  double _planGestureDelta = 0;
+  late final ScrollController _scrollController;
+  bool _planInitialPositionApplied = false;
 
   @override
   void initState() {
     super.initState();
-    _planExpansionController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 260),
+    final now = DateTime.now();
+    final hasActivePlan =
+        ref.read(myPlanProvider(now.year)).plan?.activeTask(now) != null;
+    _planInitialPositionApplied = hasActivePlan;
+    _scrollController = ScrollController(
+      initialScrollOffset: hasActivePlan ? PlanTaskbarPanel.height : 0,
     );
     WidgetsBinding.instance.addObserver(this);
     _dbChangesSub = ref.read(homeRepositoryProvider).changes.listen((change) {
@@ -78,7 +76,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   void dispose() {
     _dbChangesSub?.cancel();
-    _planExpansionController.dispose();
     _scrollController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -115,84 +112,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
   }
 
-  void _onPlanPointerDown(PointerDownEvent event, {required bool enabled}) {
-    if (!enabled ||
-        !_scrollController.hasClients ||
-        _scrollController.position.pixels > 0.5) {
-      _planGestureStartY = null;
+  bool get _isPlanFullyExpanded =>
+      _scrollController.hasClients && _scrollController.position.pixels <= 0.5;
+
+  void _ensureInitialPlanPosition({required bool hasActivePlan}) {
+    if (!hasActivePlan) {
+      _planInitialPositionApplied = false;
       return;
     }
-    _planGestureStartY = event.position.dy;
-    _planGestureDelta = 0;
-    _planExpansionController.stop();
-  }
-
-  void _onPlanPointerMove(PointerMoveEvent event) {
-    final startY = _planGestureStartY;
-    if (startY == null) return;
-    _planGestureDelta = event.position.dy - startY;
-
-    if (!_planExpanded && _planGestureDelta > 0) {
-      _planExpansionController.value = (_planGestureDelta / _planPullThreshold)
-          .clamp(0.0, 1.0);
-    } else if (_planExpanded && _planGestureDelta < 0) {
-      _planExpansionController.value =
-          (1 + (_planGestureDelta / _planPullThreshold)).clamp(0.0, 1.0);
-    }
-  }
-
-  void _onPlanPointerEnd() {
-    if (_planGestureStartY == null) return;
-    final shouldExpand =
-        !_planExpanded && _planGestureDelta >= _planPullThreshold;
-    final shouldCollapse =
-        _planExpanded && _planGestureDelta <= -_planPullThreshold;
-    _planGestureStartY = null;
-    _planGestureDelta = 0;
-
-    if (shouldExpand) {
-      _setPlanExpanded(true);
-      return;
-    }
-    if (shouldCollapse) {
-      if (_scrollController.hasClients) _scrollController.jumpTo(0);
-      _setPlanExpanded(false);
-      return;
-    }
-
-    if (_planExpanded) {
-      _planExpansionController.forward();
-    } else {
-      _planExpansionController.reverse();
-    }
-  }
-
-  void _cancelPlanPointer() {
-    _planGestureStartY = null;
-    _planGestureDelta = 0;
-    if (_planExpanded) {
-      _planExpansionController.forward();
-    } else {
-      _planExpansionController.reverse();
-    }
-  }
-
-  void _setPlanExpanded(bool value) {
-    if (_planExpanded == value) return;
-    setState(() => _planExpanded = value);
-    if (value) {
-      _planExpansionController.forward();
-    } else {
-      _planExpansionController.reverse();
-    }
+    if (_planInitialPositionApplied) return;
+    _planInitialPositionApplied = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      if (_scrollController.position.pixels > 0.5) return;
+      final target = PlanTaskbarPanel.height.clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      _scrollController.jumpTo(target);
+    });
   }
 
   void _advancePlanTaskbar() {
-    if (_planExpanded) {
+    if (_isPlanFullyExpanded) {
       context.push('/my-plan');
       return;
     }
-    _setPlanExpanded(true);
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   PopupMenuItem<String> _langMenuItem(
@@ -260,48 +211,45 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     });
     debugPrint('[HOME] build, user=${user?.fullName}');
 
+    _ensureInitialPlanPosition(hasActivePlan: hasActivePlan);
+    final safeTop = MediaQuery.paddingOf(context).top;
+    final collapsedHeaderHeight = safeTop + 62;
+    final expandedHeaderHeight =
+        collapsedHeaderHeight + (hasActivePlan ? PlanTaskbarPanel.height : 0);
+
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
-      body: AnimatedBuilder(
-        animation: _planExpansionController,
-        builder: (context, _) {
-          final expansion = hasActivePlan
-              ? Curves.easeOutCubic.transform(_planExpansionController.value)
-              : 0.0;
-          final safeTop = MediaQuery.paddingOf(context).top;
-          final headerHeight =
-              safeTop + 62 + (PlanTaskbarPanel.height * expansion);
-          final bottomRadius = 20 * (1 - expansion);
+      body: CustomScrollView(
+        controller: _scrollController,
+        physics: const ClampingScrollPhysics(),
+        slivers: [
+          SliverAppBar(
+            pinned: true,
+            primary: false,
+            automaticallyImplyLeading: false,
+            toolbarHeight: collapsedHeaderHeight,
+            collapsedHeight: collapsedHeaderHeight,
+            expandedHeight: expandedHeaderHeight,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            backgroundColor: Colors.transparent,
+            surfaceTintColor: Colors.transparent,
+            clipBehavior: Clip.hardEdge,
+            flexibleSpace: LayoutBuilder(
+              builder: (context, constraints) {
+                final expansion = hasActivePlan
+                    ? ((constraints.maxHeight - collapsedHeaderHeight) /
+                              PlanTaskbarPanel.height)
+                          .clamp(0.0, 1.0)
+                    : 0.0;
+                final bottomRadius = 20 * (1 - expansion);
 
-          return Listener(
-            onPointerDown: (event) =>
-                _onPlanPointerDown(event, enabled: hasActivePlan),
-            onPointerMove: _onPlanPointerMove,
-            onPointerUp: (_) => _onPlanPointerEnd(),
-            onPointerCancel: (_) => _cancelPlanPointer(),
-            child: CustomScrollView(
-              controller: _scrollController,
-              physics: const ClampingScrollPhysics(),
-              slivers: [
-                SliverAppBar(
-                  pinned: true,
-                  primary: false,
-                  automaticallyImplyLeading: false,
-                  toolbarHeight: headerHeight,
-                  collapsedHeight: headerHeight,
-                  expandedHeight: headerHeight,
-                  elevation: 0,
-                  scrolledUnderElevation: 0,
-                  backgroundColor: AppColors.primary,
-                  surfaceTintColor: Colors.transparent,
-                  clipBehavior: Clip.hardEdge,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(bottomRadius),
-                      bottomRight: Radius.circular(bottomRadius),
-                    ),
+                return ClipRRect(
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(bottomRadius),
+                    bottomRight: Radius.circular(bottomRadius),
                   ),
-                  flexibleSpace: Container(
+                  child: Container(
                     color: AppColors.primary,
                     padding: EdgeInsets.fromLTRB(12, safeTop + 10, 12, 8),
                     child: Column(
@@ -479,359 +427,349 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       ],
                     ),
                   ),
+                );
+              },
+            ),
+          ),
+          if (hasActivePlan)
+            SliverToBoxAdapter(
+              child: AnimatedBuilder(
+                animation: _scrollController,
+                builder: (context, _) => PlanTaskbarHint(
+                  expanded: _isPlanFullyExpanded,
+                  onTap: _advancePlanTaskbar,
                 ),
-                if (hasActivePlan)
-                  SliverToBoxAdapter(
-                    child: PlanTaskbarHint(
-                      expanded: _planExpanded,
-                      onTap: _advancePlanTaskbar,
-                    ),
-                  ),
-                SliverPadding(
-                  padding: EdgeInsets.only(
-                    bottom: LimaNavBarLayout.scrollBottomPadding(context),
-                  ),
-                  sliver: SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        12,
-                        hasActivePlan ? 0 : 10,
-                        12,
-                        0,
+              ),
+            ),
+          SliverPadding(
+            padding: EdgeInsets.only(
+              bottom: LimaNavBarLayout.scrollBottomPadding(context),
+            ),
+            sliver: SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(12, hasActivePlan ? 0 : 10, 12, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppTapScale(
+                      onTap: () => context.go('/visits'),
+                      pressedScale: 0.97,
+                      child: ElevatedButton.icon(
+                        onPressed: null,
+                        icon: Icon(AppIcons.location, size: 16),
+                        label: Text(context.l10n.t('startWork')),
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 44),
+                          disabledBackgroundColor: AppColors.primary,
+                          disabledForegroundColor: Colors.white,
+                          textStyle: GoogleFonts.manrope(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          AppTapScale(
-                            onTap: () => context.go('/visits'),
-                            pressedScale: 0.97,
-                            child: ElevatedButton.icon(
-                              onPressed: null,
-                              icon: Icon(AppIcons.location, size: 16),
-                              label: Text(context.l10n.t('startWork')),
-                              style: ElevatedButton.styleFrom(
-                                minimumSize: const Size(double.infinity, 44),
-                                disabledBackgroundColor: AppColors.primary,
-                                disabledForegroundColor: Colors.white,
-                                textStyle: GoogleFonts.manrope(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
+                    ),
+                    const SizedBox(height: 14),
+                    // ── Activity section ───────────────────────────────────────
+                    Text(
+                      context.l10n.t('myActivityToday'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _ActivityCard(
+                            title: context.l10n.t('visitsToday'),
+                            value: dashboardCountsReliable
+                                ? '${dashboardCounts?.visitsTodayCount ?? 0}'
+                                : '—',
+                            subtitle: dashboardCountsReliable
+                                ? context.l10n.t(
+                                    'lpuStats',
+                                    args: {
+                                      'lpu':
+                                          '${dashboardCounts?.lpuTodayCount ?? 0}',
+                                      'pharmacy':
+                                          '${dashboardCounts?.pharmacyTodayCount ?? 0}',
+                                    },
+                                  )
+                                : context.l10n.t('dataUnavailable'),
+                            iconBg: AppColors.iconBgBlue,
+                            icon: AppIcons.calendar,
+                            iconColor: AppColors.primary,
+                            onTap: () =>
+                                context.push('/visits/history?range=today'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _ActivityCard(
+                            title: context.l10n.t('sales'),
+                            value: formatUzs(
+                              user?.salesAmount ?? 0,
+                              short: true,
                             ),
+                            subtitle: 'UZS ${context.l10n.t('forToday')}',
+                            iconBg: AppColors.iconBgGreen,
+                            icon: AppIcons.sales,
+                            iconColor: AppColors.success,
                           ),
-                          const SizedBox(height: 14),
-                          // ── Activity section ───────────────────────────────────────
-                          Text(
-                            context.l10n.t('myActivityToday'),
-                            style: GoogleFonts.manrope(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _ActivityCard(
-                                  title: context.l10n.t('visitsToday'),
-                                  value: dashboardCountsReliable
-                                      ? '${dashboardCounts?.visitsTodayCount ?? 0}'
-                                      : '—',
-                                  subtitle: dashboardCountsReliable
-                                      ? context.l10n.t(
-                                          'lpuStats',
-                                          args: {
-                                            'lpu':
-                                                '${dashboardCounts?.lpuTodayCount ?? 0}',
-                                            'pharmacy':
-                                                '${dashboardCounts?.pharmacyTodayCount ?? 0}',
-                                          },
-                                        )
-                                      : context.l10n.t('dataUnavailable'),
-                                  iconBg: AppColors.iconBgBlue,
-                                  icon: AppIcons.calendar,
-                                  iconColor: AppColors.primary,
-                                  onTap: () => context.push(
-                                    '/visits/history?range=today',
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _ActivityCard(
-                                  title: context.l10n.t('sales'),
-                                  value: formatUzs(
-                                    user?.salesAmount ?? 0,
-                                    short: true,
-                                  ),
-                                  subtitle: 'UZS ${context.l10n.t('forToday')}',
-                                  iconBg: AppColors.iconBgGreen,
-                                  icon: AppIcons.sales,
-                                  iconColor: AppColors.success,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
 
-                          // ── Quick actions ──────────────────────────────────────────
-                          Text(
-                            context.l10n.t('quickActions'),
-                            style: GoogleFonts.manrope(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black,
-                            ),
+                    // ── Quick actions ──────────────────────────────────────────
+                    Text(
+                      context.l10n.t('quickActions'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _QuickCard(
+                            title: context.l10n.t('favoriteDoctors'),
+                            subtitle: context.l10n.t('quickAccess'),
+                            iconBg: AppColors.iconBgPurple,
+                            icon: AppIcons.profile,
+                            iconColor: AppColors.primary,
+                            onTap: () => context.push('/profile/fav-doctors'),
                           ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _QuickCard(
-                                  title: context.l10n.t('favoriteDoctors'),
-                                  subtitle: context.l10n.t('quickAccess'),
-                                  iconBg: AppColors.iconBgPurple,
-                                  icon: AppIcons.profile,
-                                  iconColor: AppColors.primary,
-                                  onTap: () =>
-                                      context.push('/profile/fav-doctors'),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _QuickCard(
-                                  title: context.l10n.t('cart'),
-                                  subtitle: collections.cartCount > 0
-                                      ? '${collections.cartCount} ${context.l10n.t('items')}'
-                                      : '0 ${context.l10n.t('orders')}',
-                                  iconBg: AppColors.iconBgOrange,
-                                  icon: AppIcons.cart,
-                                  iconColor: AppColors.accent,
-                                  badgeCount: collections.cartCount > 0
-                                      ? collections.cartCount
-                                      : null,
-                                  onTap: () => context.push('/basket'),
-                                ),
-                              ),
-                            ],
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _QuickCard(
+                            title: context.l10n.t('cart'),
+                            subtitle: collections.cartCount > 0
+                                ? '${collections.cartCount} ${context.l10n.t('items')}'
+                                : '0 ${context.l10n.t('orders')}',
+                            iconBg: AppColors.iconBgOrange,
+                            icon: AppIcons.cart,
+                            iconColor: AppColors.accent,
+                            badgeCount: collections.cartCount > 0
+                                ? collections.cartCount
+                                : null,
+                            onTap: () => context.push('/basket'),
                           ),
-                          const SizedBox(height: 8),
-                          AppTapScale(
-                            onTap: () => showFeedbackDialog(context),
-                            pressedScale: 0.97,
-                            child: OutlinedButton.icon(
-                              onPressed: null,
-                              icon: Icon(AppIcons.send, size: 18),
-                              label: Text(context.l10n.t('feedback')),
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size(double.infinity, 44),
-                                backgroundColor: Colors.white,
-                                disabledBackgroundColor: Colors.white,
-                                disabledForegroundColor: AppColors.primary,
-                                side: const BorderSide(
-                                  color: AppColors.primary,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                textStyle: GoogleFonts.manrope(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    AppTapScale(
+                      onTap: () => showFeedbackDialog(context),
+                      pressedScale: 0.97,
+                      child: OutlinedButton.icon(
+                        onPressed: null,
+                        icon: Icon(AppIcons.send, size: 18),
+                        label: Text(context.l10n.t('feedback')),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 44),
+                          backgroundColor: Colors.white,
+                          disabledBackgroundColor: Colors.white,
+                          disabledForegroundColor: AppColors.primary,
+                          side: const BorderSide(color: AppColors.primary),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          const SizedBox(height: 12),
+                          textStyle: GoogleFonts.manrope(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
 
-                          // ── Recent visits ──────────────────────────────────────────
-                          Row(
-                            children: [
-                              Text(
-                                context.l10n.t('recentVisits'),
-                                style: GoogleFonts.manrope(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.black,
-                                ),
-                              ),
-                              const Spacer(),
-                              GestureDetector(
-                                onTap: () => context.push('/visits/history'),
-                                child: Text(
-                                  context.l10n.t('viewAll'),
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 12,
-                                    color: AppColors.primary,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ],
+                    // ── Recent visits ──────────────────────────────────────────
+                    Row(
+                      children: [
+                        Text(
+                          context.l10n.t('recentVisits'),
+                          style: GoogleFonts.manrope(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black,
                           ),
-                          const SizedBox(height: 8),
-                          if (recentVisits.isNotEmpty)
-                            ...recentVisits.map(
-                              (v) => Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: _VisitItem(
-                                  name: v.name.isEmpty
-                                      ? context.l10n.t('visit')
-                                      : v.name,
-                                  id: v.id.isEmpty ? '' : '#${v.id}',
-                                  date: () {
-                                    if (v.dateDay == null ||
-                                        v.dateMonthIdx == null) {
-                                      return '';
-                                    }
-                                    final months = [
-                                      context.l10n.t('monthJan'),
-                                      context.l10n.t('monthFeb'),
-                                      context.l10n.t('monthMar'),
-                                      context.l10n.t('monthApr'),
-                                      context.l10n.t('monthMay'),
-                                      context.l10n.t('monthJun'),
-                                      context.l10n.t('monthJul'),
-                                      context.l10n.t('monthAug'),
-                                      context.l10n.t('monthSep'),
-                                      context.l10n.t('monthOct'),
-                                      context.l10n.t('monthNov'),
-                                      context.l10n.t('monthDec'),
-                                    ];
-                                    return '${v.dateDay} ${months[(v.dateMonthIdx! - 1).clamp(0, 11)]}';
-                                  }(),
-                                  time: v.timeLabel,
-                                  status: _l10nStatus(context, v.statusKey),
-                                  statusKey: v.statusKey,
-                                  type: v.type,
-                                  subType: v.subType,
-                                  pharmacistsFio: v.pharmacistsFio,
-                                  participantsCount: v.participantsCount,
-                                  firstDrugName: v.firstDrugName,
-                                  onTap: () => context.push(
-                                    Uri(
-                                      path: '/visits/history',
-                                      queryParameters: {
-                                        if (v.id.isNotEmpty) 'visitId': v.id,
-                                        'type': v.type,
-                                        'openFirst': '1',
-                                      },
-                                    ).toString(),
-                                  ),
-                                ),
-                              ),
-                            )
-                          else if (recentVisitsState.isLoading)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 8),
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            )
-                          else
-                            EmptyState(
-                              icon: AppIcons.calendarX,
-                              title: context.l10n.t('noVisitsPlanned'),
-                            ),
-                          const SizedBox(height: 12),
-                          Text(
-                            context.l10n.t('offlineAndSync'),
+                        ),
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: () => context.push('/visits/history'),
+                          child: Text(
+                            context.l10n.t('viewAll'),
                             style: GoogleFonts.manrope(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black,
+                              fontSize: 12,
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          GestureDetector(
-                            onTap: () => context.push('/sync'),
-                            child: Container(
-                              padding: const EdgeInsets.all(14),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (recentVisits.isNotEmpty)
+                      ...recentVisits.map(
+                        (v) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _VisitItem(
+                            name: v.name.isEmpty
+                                ? context.l10n.t('visit')
+                                : v.name,
+                            id: v.id.isEmpty ? '' : '#${v.id}',
+                            date: () {
+                              if (v.dateDay == null || v.dateMonthIdx == null) {
+                                return '';
+                              }
+                              final months = [
+                                context.l10n.t('monthJan'),
+                                context.l10n.t('monthFeb'),
+                                context.l10n.t('monthMar'),
+                                context.l10n.t('monthApr'),
+                                context.l10n.t('monthMay'),
+                                context.l10n.t('monthJun'),
+                                context.l10n.t('monthJul'),
+                                context.l10n.t('monthAug'),
+                                context.l10n.t('monthSep'),
+                                context.l10n.t('monthOct'),
+                                context.l10n.t('monthNov'),
+                                context.l10n.t('monthDec'),
+                              ];
+                              return '${v.dateDay} ${months[(v.dateMonthIdx! - 1).clamp(0, 11)]}';
+                            }(),
+                            time: v.timeLabel,
+                            status: _l10nStatus(context, v.statusKey),
+                            statusKey: v.statusKey,
+                            type: v.type,
+                            subType: v.subType,
+                            pharmacistsFio: v.pharmacistsFio,
+                            participantsCount: v.participantsCount,
+                            firstDrugName: v.firstDrugName,
+                            onTap: () => context.push(
+                              Uri(
+                                path: '/visits/history',
+                                queryParameters: {
+                                  if (v.id.isNotEmpty) 'visitId': v.id,
+                                  'type': v.type,
+                                  'openFirst': '1',
+                                },
+                              ).toString(),
+                            ),
+                          ),
+                        ),
+                      )
+                    else if (recentVisitsState.isLoading)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    else
+                      EmptyState(
+                        icon: AppIcons.calendarX,
+                        title: context.l10n.t('noVisitsPlanned'),
+                      ),
+                    const SizedBox(height: 12),
+                    Text(
+                      context.l10n.t('offlineAndSync'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    GestureDetector(
+                      onTap: () => context.push('/sync'),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: AppColors.secondaryBg,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: shadowSm,
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 40,
                               decoration: BoxDecoration(
-                                color: AppColors.secondaryBg,
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: shadowSm,
+                                color: syncState.unsyncedCount > 0
+                                    ? const Color(0xFFFFF3E0)
+                                    : AppColors.iconBgGreen,
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                              child: Row(
+                              child: Icon(
+                                syncState.unsyncedCount > 0
+                                    ? AppIcons.alert
+                                    : AppIcons.cloud,
+                                color: syncState.unsyncedCount > 0
+                                    ? AppColors.accent
+                                    : AppColors.success,
+                                size: 22,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Container(
-                                    width: 40,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      color: syncState.unsyncedCount > 0
-                                          ? const Color(0xFFFFF3E0)
-                                          : AppColors.iconBgGreen,
-                                      borderRadius: BorderRadius.circular(10),
+                                  Text(
+                                    context.l10n.t('offlineMode'),
+                                    style: GoogleFonts.manrope(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.primaryText,
                                     ),
-                                    child: Icon(
-                                      syncState.unsyncedCount > 0
-                                          ? AppIcons.alert
-                                          : AppIcons.cloud,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text(
+                                    syncState.unsyncedCount > 0
+                                        ? context.l10n.t(
+                                            'notSyncedShort',
+                                            args: {
+                                              'count':
+                                                  '${syncState.unsyncedCount}',
+                                            },
+                                          )
+                                        : context.l10n.t('syncedShort'),
+                                    style: GoogleFonts.manrope(
+                                      fontSize: 11,
                                       color: syncState.unsyncedCount > 0
                                           ? AppColors.accent
                                           : AppColors.success,
-                                      size: 22,
                                     ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          context.l10n.t('offlineMode'),
-                                          style: GoogleFonts.manrope(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w700,
-                                            color: AppColors.primaryText,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        Text(
-                                          syncState.unsyncedCount > 0
-                                              ? context.l10n.t(
-                                                  'notSyncedShort',
-                                                  args: {
-                                                    'count':
-                                                        '${syncState.unsyncedCount}',
-                                                  },
-                                                )
-                                              : context.l10n.t('syncedShort'),
-                                          style: GoogleFonts.manrope(
-                                            fontSize: 11,
-                                            color: syncState.unsyncedCount > 0
-                                                ? AppColors.accent
-                                                : AppColors.success,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const Icon(
-                                    Icons.chevron_right_rounded,
-                                    color: AppColors.hintText,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ],
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 24),
-                        ],
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              color: AppColors.hintText,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
+                    const SizedBox(height: 24),
+                  ],
                 ),
-              ],
+              ),
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }
