@@ -12,7 +12,7 @@ class EnvConfig {
 
   /// Единственный переключатель окружения.
   /// `false` = прод (по умолчанию), `true` = dev (только для теста).
-  static const bool _useDev = true;
+  static const bool _useDev = false;
 
   static const String _prodHost = 'crm.lima.uz';
   static const String _devHost = 'dev.lima.uz';
