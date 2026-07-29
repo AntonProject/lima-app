@@ -669,6 +669,7 @@ class PlanCreateVisitSheetState extends ConsumerState<PlanCreateVisitSheet> {
         organisationName: org.name,
         organisationId: orgId,
         organisationType: _isLpu ? OrgType.lpu : OrgType.pharmacy,
+        doctorIds: List.unmodifiable(doctorIds),
         doctorName: doctorNamesCsv.isEmpty ? null : doctorNamesCsv,
         assignedBy: userName,
         city: org.city ?? '',

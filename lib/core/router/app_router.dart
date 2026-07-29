@@ -253,6 +253,15 @@ final routerProvider = Provider<GoRouter>((ref) {
           final preselect = int.tryParse(
             state.uri.queryParameters['preselect'] ?? '',
           );
+          final preselectedDoctorIds =
+              state.uri.queryParameters['doctorIds']
+                  ?.split(',')
+                  .map(int.tryParse)
+                  .whereType<int>()
+                  .where((id) => id > 0)
+                  .toSet()
+                  .toList(growable: false) ??
+              const <int>[];
           return _SystemBackFallback(
             fallbackLocation: _routeLocation('/visits/lpu/detail/$orgId', {
               'name': orgName,
@@ -261,6 +270,8 @@ final routerProvider = Provider<GoRouter>((ref) {
               orgId: orgId,
               orgName: orgName,
               preselectedDoctorId: preselect,
+              preselectedDoctorIds: preselectedDoctorIds,
+              visitFormat: state.uri.queryParameters['visitFormat'],
             ),
           );
         },
@@ -285,6 +296,7 @@ final routerProvider = Provider<GoRouter>((ref) {
                   doctorName: state.uri.queryParameters['doctorName'] ?? '',
                   orgName: orgName,
                   doctorIds: state.uri.queryParameters['doctorIds'],
+                  visitFormat: state.uri.queryParameters['visitFormat'],
                   visitId: int.tryParse(
                     state.uri.queryParameters['visitId'] ?? '',
                   ),

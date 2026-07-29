@@ -11,6 +11,7 @@ class PlannedVisitRecord {
   final String organisationName;
   final int? organisationId;
   final String organisationType;
+  final List<int> doctorIds;
   final String? doctorName;
   final String assignedBy;
   final String? city;
@@ -25,6 +26,7 @@ class PlannedVisitRecord {
     required this.organisationName,
     this.organisationId,
     required this.organisationType,
+    this.doctorIds = const <int>[],
     this.doctorName,
     required this.assignedBy,
     this.city,
@@ -43,6 +45,7 @@ class PlannedVisitRecord {
     organisationType: organisationType == 'pharmacy'
         ? OrgType.pharmacy
         : OrgType.lpu,
+    doctorIds: doctorIds,
     doctorName: doctorName,
     assignedBy: assignedBy,
     city: city,

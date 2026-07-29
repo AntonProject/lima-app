@@ -22,12 +22,16 @@ class LpuDoctorSelectScreen extends ConsumerStatefulWidget {
   /// open so the user lands on the doctor-select step with a pre-selected
   /// doctor — matching the web flow.
   final int? preselectedDoctorId;
+  final List<int> preselectedDoctorIds;
+  final String? visitFormat;
 
   const LpuDoctorSelectScreen({
     super.key,
     required this.orgId,
     required this.orgName,
     this.preselectedDoctorId,
+    this.preselectedDoctorIds = const <int>[],
+    this.visitFormat,
   });
 
   @override
@@ -53,6 +57,13 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
 
   bool get _canContinue => _selection.canContinue;
 
+  List<int> get _initialDoctorIds => {
+    ...widget.preselectedDoctorIds.where((id) => id > 0),
+    ...<int?>[
+      widget.preselectedDoctorId,
+    ].whereType<int>().where((id) => id > 0),
+  }.toList(growable: false);
+
   String get _visitModeTitle {
     if (_selection.mode == LpuVisitMode.manager &&
         _selection.selectedManager != null) {
@@ -73,30 +84,36 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
   @override
   void initState() {
     super.initState();
-    final preselect = widget.preselectedDoctorId;
-    if (preselect != null) {
-      ref
-          .read(lpuDoctorSelectViewModelProvider(widget.orgId).notifier)
-          .selectDoctor('$preselect');
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadDoctors());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final preselected = _initialDoctorIds;
+      if (preselected.isNotEmpty) {
+        ref
+            .read(lpuDoctorSelectViewModelProvider(widget.orgId).notifier)
+            .setSelectedDoctors(preselected.map((id) => '$id'));
+      }
+      _loadDoctors();
+    });
   }
 
   /// Ensures the preselected doctor (from a favourite) appears in the shared
   /// list even when it is not linked locally yet.
-  Future<void> _ensurePreselectedDoctorLoaded() async {
-    final preselect = widget.preselectedDoctorId;
-    if (preselect == null || _selection.query.isNotEmpty) return;
-    await ref
-        .read(lpuDetailsViewModelProvider(widget.orgId).notifier)
-        .ensureDoctorLoaded(preselect);
+  Future<void> _ensurePreselectedDoctorsLoaded() async {
+    final preselected = _initialDoctorIds;
+    if (preselected.isEmpty || _selection.query.isNotEmpty) return;
+    final notifier = ref.read(
+      lpuDetailsViewModelProvider(widget.orgId).notifier,
+    );
+    for (final doctorId in preselected) {
+      await notifier.ensureDoctorLoaded(doctorId);
+    }
   }
 
   Future<void> _loadDoctors() async {
     await ref
         .read(lpuDetailsViewModelProvider(widget.orgId).notifier)
         .load(fetchRemote: !ref.read(isOfflineProvider));
-    await _ensurePreselectedDoctorLoaded();
+    await _ensurePreselectedDoctorsLoaded();
   }
 
   String _categoryLabel(Doctor d) {
@@ -594,6 +611,8 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
                               'orgName': widget.orgName,
                               'doctorIds': selectedIds.join(','),
                               'managerName': ?selection.selectedManager,
+                              if (widget.visitFormat != null)
+                                'visitFormat': widget.visitFormat!,
                             },
                           ).toString(),
                         );

@@ -83,6 +83,32 @@ int? _toInt(dynamic value) {
   return null;
 }
 
+List<int> _doctorIdsFromJson(Map<String, dynamic> json) {
+  final ids = <int>{};
+
+  void addId(Object? value) {
+    final id = _toInt(value);
+    if (id != null && id > 0) ids.add(id);
+  }
+
+  final rawIds = json['doctor_ids'] ?? json['doctorIds'];
+  if (rawIds is List) {
+    for (final value in rawIds) {
+      addId(value);
+    }
+  }
+  addId(json['doctor_id']);
+
+  final doctors = json['doctors'];
+  if (doctors is List) {
+    for (final doctor in doctors.whereType<Map>()) {
+      addId(doctor['id'] ?? doctor['doctor_id']);
+    }
+  }
+
+  return List<int>.unmodifiable(ids);
+}
+
 double? _toDouble(dynamic value) {
   if (value is num) return value.toDouble();
   if (value is String) return double.tryParse(value);
@@ -597,6 +623,7 @@ class PlannedVisit {
   final String organisationName;
   final int? organisationId;
   final OrgType? organisationType;
+  final List<int> doctorIds;
   final String? doctorName;
   final String assignedBy;
   final String? city;
@@ -611,6 +638,7 @@ class PlannedVisit {
     required this.organisationName,
     this.organisationId,
     this.organisationType,
+    this.doctorIds = const <int>[],
     this.doctorName,
     required this.assignedBy,
     this.city,
@@ -629,6 +657,7 @@ class PlannedVisit {
         : ((json['organisation_type'] as String) == 'pharmacy'
               ? OrgType.pharmacy
               : OrgType.lpu),
+    doctorIds: _doctorIdsFromJson(json),
     doctorName: json['doctor_name'] as String?,
     assignedBy: json['assigned_by'] as String,
     city: json['city'] as String?,

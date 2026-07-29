@@ -351,6 +351,61 @@ class RemoteApiService {
   }
 
   /// Maps a raw planned-visit API object to a flat row for [planned_visits] table.
+  static List<int> _plannedDoctorIds(Map<String, dynamic> plan) {
+    final ids = <int>{};
+
+    void addId(Object? value) {
+      final id = _toInt(value);
+      if (id != null && id > 0) ids.add(id);
+    }
+
+    final rawIds = plan['doctor_ids'] ?? plan['doctorIds'];
+    if (rawIds is List) {
+      for (final value in rawIds) {
+        addId(value);
+      }
+    }
+    addId(plan['doctor_id']);
+
+    final doctors = plan['doctors'];
+    if (doctors is List) {
+      for (final doctor in doctors.whereType<Map>()) {
+        addId(doctor['id'] ?? doctor['doctor_id']);
+      }
+    }
+
+    final doctor = plan['doctor'];
+    if (doctor is Map) addId(doctor['id'] ?? doctor['doctor_id']);
+
+    return List<int>.unmodifiable(ids);
+  }
+
+  static String? _plannedDoctorNames(Map<String, dynamic> plan) {
+    final names = <String>{};
+
+    void addName(Object? value) {
+      final name = _toString(value)?.trim();
+      if (name != null && name.isNotEmpty) names.add(name);
+    }
+
+    final doctors = plan['doctors'];
+    if (doctors is List) {
+      for (final doctor in doctors.whereType<Map>()) {
+        addName(doctor['doctor_name'] ?? doctor['full_name'] ?? doctor['name']);
+      }
+    }
+
+    final doctor = plan['doctor'];
+    if (doctor is Map) {
+      addName(doctor['doctor_name'] ?? doctor['full_name'] ?? doctor['name']);
+    }
+
+    if (names.isEmpty) {
+      addName(plan['doctor_name'] ?? plan['doctor_full_name']);
+    }
+    return names.isEmpty ? null : names.join(', ');
+  }
+
   static Map<String, dynamic>? mapPlannedVisitToLocal(dynamic raw) {
     if (raw is! Map) return null;
     final m = Map<String, dynamic>.from(raw);
@@ -387,21 +442,8 @@ class RemoteApiService {
         : 'lpu';
 
     // Doctors: nested array (GET) or flat field (older endpoints)
-    final doctorsArr = m['doctors'];
-    String? doctorNamesCsv;
-    if (doctorsArr is List && doctorsArr.isNotEmpty) {
-      doctorNamesCsv = doctorsArr
-          .whereType<Map>()
-          .map(
-            (d) =>
-                _toString(d['doctor_name'] ?? d['full_name'] ?? d['name']) ??
-                '',
-          )
-          .where((s) => s.isNotEmpty)
-          .join(', ');
-      if (doctorNamesCsv.isEmpty) doctorNamesCsv = null;
-    }
-    doctorNamesCsv ??= _toString(m['doctor_name'] ?? m['doctor_full_name']);
+    final doctorIds = _plannedDoctorIds(m);
+    final doctorNamesCsv = _plannedDoctorNames(m);
 
     final assignedBy =
         _toString(
@@ -447,7 +489,7 @@ class RemoteApiService {
       ),
       'org_name': orgName,
       'org_type': orgType,
-      'doctor_id': null,
+      'doctor_id': doctorIds.isEmpty ? null : doctorIds.first,
       'doctor_name': (doctorNamesCsv?.isEmpty ?? true) ? null : doctorNamesCsv,
       'assigned_by': assignedBy,
       'city': city,
@@ -3786,35 +3828,31 @@ class RemoteApiService {
   static PlannedVisit? _mapPlannedVisit(dynamic raw) {
     if (raw is! Map) return null;
     final m = Map<String, dynamic>.from(raw);
-
-    final id = _toInt(m['id'] ?? m['visit_id']);
-    final orgName = _toString(
-      m['organization_name'] ?? m['organisation_name'] ?? m['org_name'],
-    );
-    if (id == null || orgName == null || orgName.isEmpty) return null;
-
-    final orgTypeId = _toInt(m['organization_type_id'] ?? m['type_id']);
-    final orgTypeRaw = _toString(
-      m['organization_type'] ?? m['org_type'],
-    )?.toLowerCase();
-    final orgType = orgTypeId == 1 || orgTypeRaw == 'pharmacy'
-        ? OrgType.pharmacy
-        : OrgType.lpu;
+    final local = mapPlannedVisitToLocal(m);
+    if (local == null) return null;
+    final id = _toInt(local['remote_id']);
+    final orgName = _toString(local['org_name']);
+    if (id == null || orgName == null) return null;
 
     return PlannedVisit(
       id: id,
       organisationName: orgName,
-      organisationId: _toInt(m['organization_id'] ?? m['org_id']),
-      organisationType: orgType,
-      doctorName: _toString(m['doctor_name']),
-      assignedBy: _toString(m['assigned_by'] ?? m['manager_name']) ?? '',
-      city: _toString(m['city']),
+      organisationId: _toInt(local['org_id']),
+      organisationType: local['org_type'] == 'pharmacy'
+          ? OrgType.pharmacy
+          : OrgType.lpu,
+      doctorIds: _plannedDoctorIds(m),
+      doctorName: _toString(local['doctor_name']),
+      assignedBy: _toString(local['assigned_by']) ?? '',
+      city: _toString(local['city']),
+      district: _toString(local['district']),
       date:
-          DateTime.tryParse(_toString(m['date'] ?? m['start_date']) ?? '') ??
+          DateTime.tryParse(_toString(local['visit_date']) ?? '') ??
           DateTime.now(),
-      status: (_toBool(m['complete']) ?? false)
+      status: local['status'] == 'completed'
           ? VisitStatus.completed
           : VisitStatus.planned,
+      visitFormat: _toString(local['visit_format']),
     );
   }
 

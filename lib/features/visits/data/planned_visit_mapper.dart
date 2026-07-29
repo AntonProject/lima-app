@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../../plan/domain/entities/planned_visit_draft.dart';
 
 class PlannedVisitMapper {
@@ -15,6 +17,10 @@ class PlannedVisitMapper {
     'visit_date': draft.visitDate.toIso8601String(),
     'status': 'planned',
     'comment': draft.comment,
+    'raw_json': jsonEncode({
+      'doctor_ids': draft.doctorIds,
+      'visit_format_id': draft.visitFormatId,
+    }),
     'visit_format': draft.visitFormat,
   };
 }

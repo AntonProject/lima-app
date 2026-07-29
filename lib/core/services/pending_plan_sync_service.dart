@@ -68,10 +68,15 @@ class PendingPlanSyncService {
       final data = response['response'];
       final remoteId = remoteIdFrom(data);
       if (remoteId != null) {
+        final rawJson = data is Map
+            ? Map<String, dynamic>.from(data)
+            : <String, dynamic>{};
+        rawJson.putIfAbsent('doctor_ids', () => doctorIds);
+        rawJson.putIfAbsent('visit_format_id', () => visitFormatId);
         await _db.setPlannedVisitRemoteId(
           localId: localPlanId,
           remoteId: remoteId,
-          rawJson: data is Map ? Map<String, dynamic>.from(data) : null,
+          rawJson: rawJson,
         );
       }
       await _db.deletePendingPlan(pendingId);

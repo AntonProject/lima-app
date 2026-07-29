@@ -55,6 +55,14 @@ class LpuDoctorSelectViewModel extends StateNotifier<LpuDoctorSelectionState> {
     state = state.copyWith(selectedIds: Set.unmodifiable(selected));
   }
 
+  void setSelectedDoctors(Iterable<String> ids) {
+    state = state.copyWith(
+      selectedIds: Set.unmodifiable(ids.where((id) => id.isNotEmpty).toSet()),
+      clearManager: true,
+      mode: LpuVisitMode.single,
+    );
+  }
+
   void setManager(String? manager) {
     state = state.copyWith(
       selectedManager: manager,

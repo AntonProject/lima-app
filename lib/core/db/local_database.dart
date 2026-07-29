@@ -1367,7 +1367,7 @@ class LocalDatabase {
       if (remoteId != null) {
         final existing = await db.query(
           'planned_visits',
-          columns: ['doctor_id', 'doctor_name', 'visit_format'],
+          columns: ['doctor_id', 'doctor_name', 'visit_format', 'raw_json'],
           where: 'remote_id = ?',
           whereArgs: [remoteId],
           limit: 1,
@@ -1384,6 +1384,10 @@ class LocalDatabase {
           if (('${r['visit_format'] ?? ''}'.trim().isEmpty) &&
               '${prev['visit_format'] ?? ''}'.trim().isNotEmpty) {
             r['visit_format'] = prev['visit_format'];
+          }
+          if (('${r['raw_json'] ?? ''}'.trim().isEmpty) &&
+              '${prev['raw_json'] ?? ''}'.trim().isNotEmpty) {
+            r['raw_json'] = prev['raw_json'];
           }
         }
       }

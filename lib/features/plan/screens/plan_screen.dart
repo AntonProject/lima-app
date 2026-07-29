@@ -91,6 +91,47 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
     }
   }
 
+  Future<void> _handleVisitTap(PlannedVisit visit) async {
+    final opensVisitFlow =
+        visit.status == VisitStatus.planned &&
+        visit.organisationType != OrgType.pharmacy;
+    if (!opensVisitFlow) {
+      await _openVisitDetail(visit);
+      return;
+    }
+
+    final organisationId = visit.organisationId;
+    if (organisationId == null || organisationId <= 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n.t(
+              'couldNotOpenVisit',
+              args: const {'error': 'organization_id'},
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final doctorIds = visit.doctorIds
+        .where((id) => id > 0)
+        .toSet()
+        .toList(growable: false);
+    context.push(
+      Uri(
+        path: '/visits/lpu/detail/$organisationId/doctors',
+        queryParameters: {
+          'name': visit.organisationName,
+          if (doctorIds.isNotEmpty) 'doctorIds': doctorIds.join(','),
+          if (visit.visitFormat != null) 'visitFormat': visit.visitFormat!,
+        },
+      ).toString(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final allVisits = ref.watch(plannedVisitsProvider);
@@ -199,7 +240,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                           final v = selectedVisits[i - 1];
                           return PlanVisitCard(
                             visit: v,
-                            onTap: () => _openVisitDetail(v),
+                            onTap: () => _handleVisitTap(v),
                           );
                         },
                       ),

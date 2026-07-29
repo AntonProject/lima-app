@@ -438,11 +438,15 @@ class LiveDataRefreshService {
       'org_type': visit.organisationType == OrgType.pharmacy
           ? 'pharmacy'
           : 'lpu',
+      'doctor_id': visit.doctorIds.isEmpty ? null : visit.doctorIds.first,
       'doctor_name': visit.doctorName,
       'assigned_by': visit.assignedBy,
       'city': visit.city,
+      'district': visit.district,
       'visit_date': visit.date.toIso8601String(),
       'status': visit.status == VisitStatus.completed ? 'completed' : 'planned',
+      'raw_json': jsonEncode({'doctor_ids': visit.doctorIds}),
+      'visit_format': visit.visitFormat,
     };
   }
 

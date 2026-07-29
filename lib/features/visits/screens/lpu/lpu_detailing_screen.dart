@@ -29,6 +29,7 @@ class LpuDetailingScreen extends ConsumerStatefulWidget {
   final String doctorName;
   final String orgName;
   final String? doctorIds;
+  final String? visitFormat;
   final int? visitId;
 
   const LpuDetailingScreen({
@@ -38,6 +39,7 @@ class LpuDetailingScreen extends ConsumerStatefulWidget {
     required this.doctorName,
     this.orgName = '',
     this.doctorIds,
+    this.visitFormat,
     this.visitId,
   });
 
@@ -179,8 +181,13 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
           );
         }).toList();
 
-        final isGroupVisit =
+        final hasMultipleDoctors =
             widget.doctorIds != null && widget.doctorIds!.contains(',');
+        // A planned double visit also has two doctors, but the web/API flow
+        // sends only doctor_ids for it. It must not be converted to the
+        // group-presentation format (visit_format_id=3).
+        final isGroupVisit =
+            hasMultipleDoctors && widget.visitFormat != 'double';
         final result = await ref
             .read(visitWriteRepositoryProvider)
             .complete(

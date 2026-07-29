@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/db/local_database.dart';
@@ -107,6 +109,7 @@ class VisitsRepositoryImpl
       organisationName: '${row['org_name'] ?? ''}',
       organisationId: _toIntForPlan(row['org_id']),
       organisationType: '${row['org_type'] ?? 'lpu'}'.toLowerCase(),
+      doctorIds: _plannedDoctorIds(row),
       doctorName: _nullableString(row['doctor_name']),
       assignedBy: '${row['assigned_by'] ?? ''}',
       city: _nullableString(row['city']),
@@ -138,6 +141,7 @@ class VisitsRepositoryImpl
               visitType == 'circle'
           ? 'pharmacy'
           : 'lpu',
+      doctorIds: _plannedDoctorIds(row),
       doctorName: _nullableString(row['doctor_name']),
       assignedBy: 'Локально',
       date: created,
@@ -149,6 +153,46 @@ class VisitsRepositoryImpl
   static int? _toIntForPlan(Object? value) {
     if (value is num) return value.toInt();
     return int.tryParse('$value');
+  }
+
+  static List<int> _plannedDoctorIds(Map<String, dynamic> row) {
+    final ids = <int>{};
+
+    void addId(Object? value) {
+      final id = _toIntForPlan(value);
+      if (id != null && id > 0) ids.add(id);
+    }
+
+    void addFromMap(Map<dynamic, dynamic> map) {
+      addId(map['doctor_id']);
+      final rawIds = map['doctor_ids'] ?? map['doctorIds'];
+      if (rawIds is List) {
+        for (final value in rawIds) {
+          addId(value);
+        }
+      }
+      final doctors = map['doctors'];
+      if (doctors is List) {
+        for (final doctor in doctors.whereType<Map>()) {
+          addId(doctor['id'] ?? doctor['doctor_id']);
+        }
+      }
+    }
+
+    addId(row['doctor_id']);
+    final rawJson = row['raw_json'];
+    if (rawJson is Map) {
+      addFromMap(rawJson);
+    } else if (rawJson is String && rawJson.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawJson);
+        if (decoded is Map) addFromMap(decoded);
+      } on FormatException {
+        // Older rows can contain non-JSON diagnostics; keep the scalar id.
+      }
+    }
+
+    return List<int>.unmodifiable(ids);
   }
 
   static String? _nullableString(Object? value) {
