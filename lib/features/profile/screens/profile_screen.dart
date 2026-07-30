@@ -82,6 +82,7 @@ class ProfileScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
       body: ListView(
+        physics: const ClampingScrollPhysics(),
         padding: EdgeInsets.only(
           bottom: LimaNavBarLayout.scrollBottomPadding(context),
         ),
