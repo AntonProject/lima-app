@@ -76,6 +76,7 @@ class LiveDataRefreshService {
                     'name': drug.name,
                     'manufacturer': drug.manufacturer,
                     'binding_drug_id': drug.bindingDrugId,
+                    'image_url': drug.imageUrl,
                     'updated_at': now,
                   },
                 )
@@ -105,6 +106,7 @@ class LiveDataRefreshService {
                     'remains_stock': drug.remainsStock ?? drug.stock ?? 0,
                     'current_stock_id': drug.currentStockId,
                     'binding_drug_id': drug.bindingDrugId,
+                    'image_url': drug.imageUrl,
                     'updated_at': now,
                   },
                 )

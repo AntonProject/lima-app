@@ -24,6 +24,7 @@ class LpuDoctorSelectScreen extends ConsumerStatefulWidget {
   final int? preselectedDoctorId;
   final List<int> preselectedDoctorIds;
   final String? visitFormat;
+  final int? plannedVisitId;
 
   const LpuDoctorSelectScreen({
     super.key,
@@ -32,6 +33,7 @@ class LpuDoctorSelectScreen extends ConsumerStatefulWidget {
     this.preselectedDoctorId,
     this.preselectedDoctorIds = const <int>[],
     this.visitFormat,
+    this.plannedVisitId,
   });
 
   @override
@@ -613,6 +615,8 @@ class _LpuDoctorSelectScreenState extends ConsumerState<LpuDoctorSelectScreen> {
                               'managerName': ?selection.selectedManager,
                               if (widget.visitFormat != null)
                                 'visitFormat': widget.visitFormat!,
+                              if (widget.plannedVisitId != null)
+                                'visitId': '${widget.plannedVisitId}',
                             },
                           ).toString(),
                         );

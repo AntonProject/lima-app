@@ -28,6 +28,11 @@ class PharmacyOrderDraftRepositoryImpl implements PharmacyOrderDraftRepository {
   }) async {
     await _db.markSynced([localVisitId]);
 
+    final plannedVisitId = _toInt(submission.request['visit_id']);
+    if (plannedVisitId != null) {
+      await _db.completePlannedVisitById(plannedVisitId);
+    }
+
     final remoteId = submission.remoteId;
     if (remoteId != null) {
       await _db.updateVisitRemoteId(
@@ -49,6 +54,7 @@ class PharmacyOrderDraftRepositoryImpl implements PharmacyOrderDraftRepository {
             buyerType: buyerType,
             isWholesaler: isWholesaler,
             pricingTerms: pricingTerms,
+            plannedVisitId: plannedVisitId,
           );
           await _db.updateVisitRawJson(
             localVisitId: localVisitId,
@@ -81,5 +87,10 @@ class PharmacyOrderDraftRepositoryImpl implements PharmacyOrderDraftRepository {
     if (failure.isPermanent) {
       await _db.markVisitPushFailedPermanently(localVisitId);
     }
+  }
+
+  static int? _toInt(Object? value) {
+    if (value is num) return value.toInt();
+    return int.tryParse('$value');
   }
 }

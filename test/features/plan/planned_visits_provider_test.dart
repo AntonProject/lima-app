@@ -83,4 +83,10 @@ class _FakePlannedVisitsRepository implements PlannedVisitsRepository {
     required int localPlanId,
     required PlannedVisitDraft draft,
   }) async {}
+
+  @override
+  Future<int?> resolveRemotePlanId(int visitId) async => visitId;
+
+  @override
+  Future<void> consumePlannedVisit(int remoteId) async {}
 }

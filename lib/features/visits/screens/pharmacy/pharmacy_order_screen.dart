@@ -19,11 +19,13 @@ part '../../widgets/pharmacy_order_widgets.dart';
 class PharmacyOrderScreen extends ConsumerStatefulWidget {
   final int pharmacyId;
   final String pharmacyName;
+  final int? plannedVisitId;
 
   const PharmacyOrderScreen({
     super.key,
     required this.pharmacyId,
     this.pharmacyName = '',
+    this.plannedVisitId,
   });
 
   @override
@@ -72,6 +74,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
       initialQuantities: const {},
       initialDrugs: const {},
       cartItems: const [],
+      plannedVisitId: widget.plannedVisitId,
     );
     _paramsApplied = true;
   }
@@ -168,6 +171,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
               currentStockId: line.incomeDetailingId,
               bindingDrugId: line.drugId,
               quantity: line.quantity,
+              imageUrl: drug.imageUrl,
             );
           })
           .toList(growable: false);
@@ -184,6 +188,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
           prepaymentPercent: _prepayment,
           buyerType: _buyerType,
           pricingTerms: pricingTerms,
+          plannedVisitId: widget.plannedVisitId,
         ),
       );
     } finally {

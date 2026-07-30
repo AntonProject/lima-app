@@ -49,6 +49,10 @@ class CartRepositoryImpl implements CartRepository {
   }
 
   @override
+  Future<void> saveServerCart(CartServerDraft draft) =>
+      _api.saveServerCart(draft.toMap());
+
+  @override
   Future<void> clearServerCart(int cartId) => _api.clearServerCart(cartId);
 }
 

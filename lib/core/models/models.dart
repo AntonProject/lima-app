@@ -521,6 +521,9 @@ class Drug {
   /// Binding-level drug ID (drug_binding.drug.id, not the dict drug_id).
   final int? bindingDrugId;
 
+  /// Product photo supplied by the drug binding/price-list API.
+  final String? imageUrl;
+
   const Drug({
     required this.id,
     required this.name,
@@ -534,6 +537,7 @@ class Drug {
     this.documentsCount = 0,
     this.currentStockId,
     this.bindingDrugId,
+    this.imageUrl,
   });
 
   factory Drug.fromJson(Map<String, dynamic> json) => Drug(
@@ -549,6 +553,7 @@ class Drug {
     documentsCount: json['documents_count'] as int? ?? 0,
     currentStockId: json['current_stock_id'] as int?,
     bindingDrugId: json['binding_drug_id'] as int?,
+    imageUrl: json['image_url'] as String?,
   );
 }
 

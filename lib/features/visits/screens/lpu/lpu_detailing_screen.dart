@@ -106,127 +106,116 @@ class _LpuDetailingScreenState extends ConsumerState<LpuDetailingScreen> {
     var apiOk = false;
     var localOk = false;
 
-    if (widget.visitId != null) {
-      try {
-        final interaction = ref.read(visitInteractionRepositoryProvider);
-        await interaction.completeRemoteVisit(
-          VisitCompletionDraft(
-            visitId: widget.visitId!,
-            comment: comment,
-            endedAt: DateTime.tryParse(now) ?? DateTime.now(),
-          ),
+    try {
+      final presentations = selectedDrugs.map((name) {
+        final meta = _drugByName(name);
+        final dbRow = _detailState.drugByName[name.toLowerCase()];
+        final drugId = dbRow?.id;
+        final status = _statuses[name];
+        // status_id (server-confirmed): 4=ознакомлен/выписывает,
+        // 5=ознакомлен/не выписывает, 6=не знаком, 2=просто ознакомлен.
+        final statusId = switch (status) {
+          DrugStatus.familiarPrescribes => 4,
+          DrugStatus.familiarNotPrescribes => 5,
+          DrugStatus.unfamiliar => 6,
+          DrugStatus.other => 2,
+          _ => 2,
+        };
+        final statusCode = switch (status) {
+          DrugStatus.familiarPrescribes => 'familiar_prescribes',
+          DrugStatus.familiarNotPrescribes => 'familiar_not_prescribes',
+          DrugStatus.unfamiliar => 'not_familiar',
+          DrugStatus.other => 'other',
+          _ => '',
+        };
+        return LpuPresentationRecord(
+          drugId: drugId,
+          statusId: statusId,
+          drugName: name,
+          manufacturer: meta?.manufacturer ?? '',
+          status: statusCode,
         );
+      }).toList();
 
+      final hasMultipleDoctors =
+          widget.doctorIds != null && widget.doctorIds!.contains(',');
+      // A planned double visit also has two doctors, but the web/API flow
+      // sends only doctor_ids for it. It must not be converted to the
+      // group-presentation format (visit_format_id=3).
+      final isGroupVisit = hasMultipleDoctors && widget.visitFormat != 'double';
+      final result = await ref
+          .read(visitWriteRepositoryProvider)
+          .complete(
+            CompletedVisitDraft(
+              plannedVisitId: widget.visitId,
+              organizationId: widget.orgId,
+              organizationName: widget.orgName,
+              doctorId: widget.doctorId,
+              doctorName: widget.doctorName,
+              localVisitType: 'lpu',
+              notes: comment,
+              medicalRepName: medRepName,
+              createdAt: DateTime.tryParse(now) ?? DateTime.now(),
+              updatedAt: DateTime.tryParse(now) ?? DateTime.now(),
+              payload: LpuCompletedVisitPayload(
+                doctorIds: _allDoctorIds,
+                doctorName: widget.doctorName,
+                groupVisit: isGroupVisit,
+                groupVisitName: isGroupVisit
+                    ? context.l10n.t('groupPresentation')
+                    : null,
+                presentations: List.unmodifiable(presentations),
+              ),
+            ),
+            tryRemote: !ref.read(isOfflineProvider),
+          );
+      localId = result.localId;
+      ref.invalidate(dashboardCountsProvider);
+      localOk = true;
+      apiOk = result.remoteAccepted;
+
+      final completedRemoteId = result.remoteId ?? widget.visitId;
+      if (apiOk && completedRemoteId != null) {
         final positive = _statuses.values
             .where(
-              (s) =>
-                  s == DrugStatus.familiarPrescribes ||
-                  s == DrugStatus.familiarNotPrescribes,
+              (status) =>
+                  status == DrugStatus.familiarPrescribes ||
+                  status == DrugStatus.familiarNotPrescribes,
             )
             .length;
         final rating = _statuses.isEmpty
             ? 0
             : ((positive / _statuses.length) * 5).round().clamp(1, 5);
-
-        await ref
-            .read(doctorsDirectoryRepositoryProvider)
-            .markVisited(
-              doctorId: widget.doctorId,
-              organizationId: widget.orgId,
-              visitId: widget.visitId,
-            );
-
-        await interaction.rateRemoteVisit(
-          VisitRatingDraft(
-            visitId: widget.visitId!,
-            rating: rating,
-            comment: comment,
-          ),
-        );
-        apiOk = true;
-      } catch (_) {
-        // Keep UI flow and local completion dialog even if network failed.
-      }
-    } else {
-      // Manual flow (without pre-created plan): persist visit locally so it
-      // appears in offline history/home and can be synced later.
-      try {
-        final presentations = selectedDrugs.map((name) {
-          final meta = _drugByName(name);
-          final dbRow = _detailState.drugByName[name.toLowerCase()];
-          final drugId = dbRow?.id;
-          final status = _statuses[name];
-          // status_id (server-confirmed): 4=ознакомлен/выписывает,
-          // 5=ознакомлен/не выписывает, 6=не знаком, 2=просто ознакомлен.
-          final statusId = switch (status) {
-            DrugStatus.familiarPrescribes => 4,
-            DrugStatus.familiarNotPrescribes => 5,
-            DrugStatus.unfamiliar => 6,
-            DrugStatus.other => 2,
-            _ => 2,
-          };
-          final statusCode = switch (status) {
-            DrugStatus.familiarPrescribes => 'familiar_prescribes',
-            DrugStatus.familiarNotPrescribes => 'familiar_not_prescribes',
-            DrugStatus.unfamiliar => 'not_familiar',
-            DrugStatus.other => 'other',
-            _ => '',
-          };
-          return LpuPresentationRecord(
-            drugId: drugId,
-            statusId: statusId,
-            drugName: name,
-            manufacturer: meta?.manufacturer ?? '',
-            status: statusCode,
-          );
-        }).toList();
-
-        final hasMultipleDoctors =
-            widget.doctorIds != null && widget.doctorIds!.contains(',');
-        // A planned double visit also has two doctors, but the web/API flow
-        // sends only doctor_ids for it. It must not be converted to the
-        // group-presentation format (visit_format_id=3).
-        final isGroupVisit =
-            hasMultipleDoctors && widget.visitFormat != 'double';
-        final result = await ref
-            .read(visitWriteRepositoryProvider)
-            .complete(
-              CompletedVisitDraft(
-                organizationId: widget.orgId,
-                organizationName: widget.orgName,
+        try {
+          await ref
+              .read(doctorsDirectoryRepositoryProvider)
+              .markVisited(
                 doctorId: widget.doctorId,
-                doctorName: widget.doctorName,
-                localVisitType: 'lpu',
-                notes: comment,
-                medicalRepName: medRepName,
-                createdAt: DateTime.tryParse(now) ?? DateTime.now(),
-                updatedAt: DateTime.tryParse(now) ?? DateTime.now(),
-                payload: LpuCompletedVisitPayload(
-                  doctorIds: _allDoctorIds,
-                  doctorName: widget.doctorName,
-                  groupVisit: isGroupVisit,
-                  groupVisitName: isGroupVisit
-                      ? context.l10n.t('groupPresentation')
-                      : null,
-                  presentations: List.unmodifiable(presentations),
+                organizationId: widget.orgId,
+                visitId: completedRemoteId,
+              );
+          await ref
+              .read(visitInteractionRepositoryProvider)
+              .rateRemoteVisit(
+                VisitRatingDraft(
+                  visitId: completedRemoteId,
+                  rating: rating,
+                  comment: comment,
                 ),
-              ),
-              tryRemote: !ref.read(isOfflineProvider),
-            );
-        localId = result.localId;
-        ref.invalidate(dashboardCountsProvider);
-        localOk = true;
-        apiOk = result.remoteAccepted;
-      } catch (error) {
-        logSwallowed(error, 'LpuDetailingScreen.saveVisit');
+              );
+        } catch (error) {
+          logSwallowed(error, 'LpuDetailingScreen.postCompleteMetadata');
+        }
       }
+    } catch (error) {
+      logSwallowed(error, 'LpuDetailingScreen.saveVisit');
     }
 
     if (ref.read(isOfflineProvider)) {
       pulseOfflineBanner(ref);
     }
     if (!mounted) return;
-    if (widget.visitId == null && localId != null) {
+    if (localId != null) {
       final localVisit = await ref
           .read(visitInteractionRepositoryProvider)
           .getLocalVisitById(localId);

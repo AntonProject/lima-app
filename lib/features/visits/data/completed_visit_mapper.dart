@@ -65,6 +65,7 @@ class CompletedVisitMapper {
         )
         .toList(growable: false);
     return {
+      if (draft.plannedVisitId != null) 'visit_id': draft.plannedVisitId,
       'organization_id': draft.organizationId,
       'organization_name': draft.organizationName,
       'visit_type': 2,
@@ -100,6 +101,7 @@ class CompletedVisitMapper {
         )
         .toList(growable: false);
     return {
+      if (draft.plannedVisitId != null) 'visit_id': draft.plannedVisitId,
       'organization_id': draft.organizationId,
       'organization_name': draft.organizationName,
       'visit_type': 1,
@@ -157,6 +159,7 @@ class CompletedVisitMapper {
         )
         .toList(growable: false);
     return {
+      if (draft.plannedVisitId != null) 'visit_id': draft.plannedVisitId,
       'organization_id': draft.organizationId,
       'organization_name': draft.organizationName,
       'visit_type': 4,

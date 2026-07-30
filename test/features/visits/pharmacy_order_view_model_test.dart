@@ -72,6 +72,7 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
   Future<PharmacyOrderSubmission> submit({
     required int orderUserId,
     required int organizationId,
+    int? plannedVisitId,
     required PharmacyOrderPricingTerms pricingTerms,
     required bool isWholesaler,
     required String orderComment,

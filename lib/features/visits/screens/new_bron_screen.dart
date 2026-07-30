@@ -17,6 +17,8 @@ import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/widgets/app_widgets.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/features/visits/providers/visits_hub_provider.dart';
+import 'package:lima/features/collections/domain/entities/cart_server_item.dart';
+import 'package:lima/features/plan/providers/planned_visits_provider.dart';
 
 part '../widgets/new_bron_screen_widgets.dart';
 
@@ -87,6 +89,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         remainsStock: line.remainsStock,
         currentStockId: line.currentStockId,
         bindingDrugId: line.bindingDrugId,
+        imageUrl: line.imageUrl,
       );
     }
     _paramsLoaded = true;
@@ -104,6 +107,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       initialQuantities: Map.unmodifiable(initialQuantities),
       initialDrugs: Map.unmodifiable(initialDrugs),
       cartItems: List.unmodifiable(ref.read(appCollectionsProvider).cartItems),
+      plannedVisitId: routeData.plannedVisitId,
     );
   }
 
@@ -151,6 +155,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         pharmacyName: widget.pharmacyName,
         prepaymentPercent: _prepayment,
         buyerType: _buyerType,
+        plannedVisitId: widget.routeData.plannedVisitId,
       );
       savedCount++;
     }
@@ -162,6 +167,42 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       }
       _orderViewModel.setActionLocked(false);
       return;
+    }
+    if (!ref.read(isOfflineProvider)) {
+      final serverLines = _ids
+          .map((id) {
+            final drug = _drugById[id];
+            final quantity = _qtyByDrugId[id] ?? 0;
+            final stockId = drug?.currentStockId;
+            if (drug == null || quantity <= 0 || stockId == null) return null;
+            return CartServerDraftLine(
+              currentStockId: stockId,
+              amount: quantity,
+              salePrice: drug.price,
+            );
+          })
+          .whereType<CartServerDraftLine>()
+          .toList(growable: false);
+      if (serverLines.length == savedCount) {
+        try {
+          await notifier.saveServerCart(
+            CartServerDraft(
+              organizationId: widget.pharmacyId,
+              marginId: _marginId,
+              paymentVariantId: _paymentVariantId,
+              items: serverLines,
+            ),
+          );
+          final plannedVisitId = widget.routeData.plannedVisitId;
+          if (plannedVisitId != null) {
+            await ref
+                .read(plannedVisitsRepositoryProvider)
+                .consumePlannedVisit(plannedVisitId);
+          }
+        } catch (_) {
+          // The local cart remains available and can still be checked out.
+        }
+      }
     }
     if (!mounted) return;
     await _showResultDialog(
@@ -280,9 +321,18 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                 cartId: _checkoutCartId,
                 prepaymentPercent: _prepayment,
                 buyerType: _buyerType,
+                plannedVisitId: widget.routeData.plannedVisitId,
               )
               .catchError((_) {}),
         );
+      }
+      if (result.status == PharmacyOrderSubmissionStatus.sent) {
+        final plannedVisitId = widget.routeData.plannedVisitId;
+        if (plannedVisitId != null) {
+          await ref
+              .read(plannedVisitsRepositoryProvider)
+              .consumePlannedVisit(plannedVisitId);
+        }
       }
       ref.invalidate(dashboardCountsProvider);
       if (ref.read(isOfflineProvider)) pulseOfflineBanner(ref);

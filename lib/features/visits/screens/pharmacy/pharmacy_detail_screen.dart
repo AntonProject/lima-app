@@ -20,11 +20,15 @@ part '../../widgets/pharmacy_detail_widgets.dart';
 class PharmacyDetailScreen extends ConsumerStatefulWidget {
   final int pharmacyId;
   final String pharmacyName;
+  final int? plannedVisitId;
+  final String? plannedVisitFormat;
 
   const PharmacyDetailScreen({
     super.key,
     required this.pharmacyId,
     required this.pharmacyName,
+    this.plannedVisitId,
+    this.plannedVisitFormat,
   });
 
   @override

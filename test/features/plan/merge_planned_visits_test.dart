@@ -62,4 +62,65 @@ void main() {
 
     expect(merged.map((item) => item.organisationName), ['B', 'A']);
   });
+
+  test('removes a server plan completed through its original visit id', () {
+    final date = DateTime(2026, 7, 30);
+    final planned = PlannedVisitRecord(
+      localId: 12,
+      remoteId: 38479,
+      organisationName: '57-son dorixona mchj',
+      organisationId: 841,
+      organisationType: 'pharmacy',
+      assignedBy: 'Server',
+      date: date,
+      status: VisitStatus.planned,
+    );
+    final completed = PlannedVisitRecord(
+      localId: 44,
+      remoteId: 38479,
+      organisationName: '57-son dorixona mchj',
+      organisationId: 841,
+      organisationType: 'pharmacy',
+      assignedBy: 'Local',
+      date: date,
+      status: VisitStatus.completed,
+    );
+
+    final merged = const MergePlannedVisits().call(
+      planned: [planned],
+      local: [completed],
+    );
+
+    expect(merged, isEmpty);
+  });
+
+  test('removes an unstamped local plan completed by its local id', () {
+    final date = DateTime(2026, 7, 30);
+    final planned = PlannedVisitRecord(
+      localId: 287,
+      organisationName: 'ASH-SHAFI',
+      organisationId: 14461,
+      organisationType: 'lpu',
+      assignedBy: 'Local',
+      date: date,
+      status: VisitStatus.planned,
+    );
+    final completed = PlannedVisitRecord(
+      localId: 5844,
+      remoteId: 287,
+      organisationName: 'ASH-SHAFI',
+      organisationId: 14461,
+      organisationType: 'lpu',
+      assignedBy: 'Local',
+      date: date,
+      status: VisitStatus.completed,
+    );
+
+    final merged = const MergePlannedVisits().call(
+      planned: [planned],
+      local: [completed],
+    );
+
+    expect(merged, isEmpty);
+  });
 }

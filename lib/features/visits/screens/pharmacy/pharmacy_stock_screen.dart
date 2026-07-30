@@ -21,11 +21,13 @@ part '../../widgets/pharmacy_stock_screen_widgets.dart';
 class PharmacyStockScreen extends ConsumerStatefulWidget {
   final int pharmacyId;
   final String pharmacyName;
+  final int? plannedVisitId;
 
   const PharmacyStockScreen({
     super.key,
     required this.pharmacyId,
     this.pharmacyName = '',
+    this.plannedVisitId,
   });
 
   @override
@@ -146,6 +148,7 @@ class _PharmacyStockScreenState extends ConsumerState<PharmacyStockScreen> {
           .read(visitWriteRepositoryProvider)
           .complete(
             CompletedVisitDraft(
+              plannedVisitId: widget.plannedVisitId,
               organizationId: widget.pharmacyId,
               organizationName: widget.pharmacyName,
               doctorId: null,

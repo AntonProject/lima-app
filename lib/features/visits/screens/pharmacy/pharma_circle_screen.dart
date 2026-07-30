@@ -21,11 +21,13 @@ part '../../widgets/pharma_circle_screen_widgets.dart';
 class PharmaCircleScreen extends ConsumerStatefulWidget {
   final int pharmacyId;
   final String pharmacyName;
+  final int? plannedVisitId;
 
   const PharmaCircleScreen({
     super.key,
     required this.pharmacyId,
     this.pharmacyName = '',
+    this.plannedVisitId,
   });
 
   @override

@@ -18,6 +18,7 @@ void main() {
       expiryDate: '2027-01-01',
     );
     final draft = PharmacyOrderDraft(
+      plannedVisitId: 38479,
       organizationId: 458,
       organizationName: 'Test pharmacy',
       organizationInn: 123,
@@ -43,7 +44,9 @@ void main() {
     final payload = jsonDecode(row['raw_json'] as String) as Map;
 
     expect(row['org_id'], 458);
+    expect(row['remote_id'], 38479);
     expect(row['medical_rep_name'], 'Anton Dev');
+    expect(payload['visit_id'], 38479);
     expect(payload['prepayment_percent'], 0);
     expect(payload['is_wholesaler'], isFalse);
     expect(payload['margin_id'], 22);

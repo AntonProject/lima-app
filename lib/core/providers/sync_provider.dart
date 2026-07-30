@@ -957,6 +957,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
                 'name': d.name,
                 'manufacturer': d.manufacturer,
                 'binding_drug_id': d.bindingDrugId,
+                'image_url': d.imageUrl,
                 'updated_at': now,
               },
             )
@@ -991,6 +992,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
                 'remains_stock': d.remainsStock ?? d.stock ?? 0,
                 'current_stock_id': d.currentStockId,
                 'binding_drug_id': d.bindingDrugId,
+                'image_url': d.imageUrl,
                 'updated_at': now,
               },
             )

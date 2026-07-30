@@ -113,6 +113,7 @@ class StockCompletedVisitPayload extends CompletedVisitPayload {
 }
 
 class CompletedVisitDraft {
+  final int? plannedVisitId;
   final int organizationId;
   final String organizationName;
   final int? doctorId;
@@ -125,6 +126,7 @@ class CompletedVisitDraft {
   final CompletedVisitPayload payload;
 
   const CompletedVisitDraft({
+    this.plannedVisitId,
     required this.organizationId,
     required this.organizationName,
     required this.doctorId,

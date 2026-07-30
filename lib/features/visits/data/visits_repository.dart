@@ -49,7 +49,7 @@ class VisitsRepositoryImpl
 
   @override
   Future<List<PlannedVisitRecord>> getPlannedVisitRecords() async {
-    final rows = await _db.getPlannedVisits();
+    final rows = await _db.getPlannedVisits(completedOnly: false);
     return rows
         .map(_mapPlannedVisitRecord)
         .whereType<PlannedVisitRecord>()
@@ -97,6 +97,14 @@ class VisitsRepositoryImpl
     comment: draft.comment,
   );
 
+  @override
+  Future<int?> resolveRemotePlanId(int visitId) =>
+      _db.getPlannedVisitRemoteId(visitId);
+
+  @override
+  Future<void> consumePlannedVisit(int remoteId) =>
+      _db.completePlannedVisitById(remoteId);
+
   static PlannedVisitRecord? _mapPlannedVisitRecord(Map<String, dynamic> row) {
     final localId = _toIntForPlan(row['id']);
     if (localId == null) return null;
@@ -128,11 +136,13 @@ class VisitsRepositoryImpl
       return null;
     }
     final status = '${row['status'] ?? 'planned'}'.toLowerCase();
-    if (status == 'completed') return null;
+    final rawMap = _decodePlanRawJson(row['raw_json']);
+    final sourcePlanId = _toIntForPlan(rawMap?['visit_id']);
+    if (status == 'completed' && sourcePlanId == null) return null;
     final visitType = '${row['visit_type'] ?? 'lpu'}'.toLowerCase();
     return PlannedVisitRecord(
       localId: localId,
-      remoteId: _toIntForPlan(row['remote_id']),
+      remoteId: sourcePlanId ?? _toIntForPlan(row['remote_id']),
       organisationName: organisationName,
       organisationId: _toIntForPlan(row['org_id']),
       organisationType:
@@ -145,9 +155,24 @@ class VisitsRepositoryImpl
       doctorName: _nullableString(row['doctor_name']),
       assignedBy: 'Локально',
       date: created,
-      status: VisitStatus.planned,
-      visitFormat: _nullableString(row['visit_format']),
+      status: status == 'completed'
+          ? VisitStatus.completed
+          : VisitStatus.planned,
+      visitFormat: _nullableString(
+        rawMap?['visit_format'] ?? row['visit_format'],
+      ),
     );
+  }
+
+  static Map<String, dynamic>? _decodePlanRawJson(Object? rawJson) {
+    if (rawJson is Map) return Map<String, dynamic>.from(rawJson);
+    if (rawJson is! String || rawJson.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(rawJson);
+      return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+    } on FormatException {
+      return null;
+    }
   }
 
   static int? _toIntForPlan(Object? value) {
@@ -395,6 +420,7 @@ class VisitsRepositoryImpl
   Future<Map<String, dynamic>> _createOrderVisit({
     required int orderUserId,
     required int organizationId,
+    int? plannedVisitId,
     int? companyId,
     int? paymentVariantId,
     int? marginId,
@@ -408,6 +434,7 @@ class VisitsRepositoryImpl
   }) => _api.createOrderVisitDebug(
     orderUserId: orderUserId,
     organizationId: organizationId,
+    visitId: plannedVisitId,
     companyId: companyId,
     paymentVariantId: paymentVariantId,
     marginId: marginId,
@@ -424,6 +451,7 @@ class VisitsRepositoryImpl
   Future<PharmacyOrderSubmission> submit({
     required int orderUserId,
     required int organizationId,
+    int? plannedVisitId,
     required PharmacyOrderPricingTerms pricingTerms,
     required bool isWholesaler,
     required String orderComment,
@@ -434,6 +462,7 @@ class VisitsRepositoryImpl
       final result = await _createOrderVisit(
         orderUserId: orderUserId,
         organizationId: organizationId,
+        plannedVisitId: plannedVisitId,
         companyId: pricingTerms.companyId,
         paymentVariantId: pricingTerms.paymentVariantId,
         marginId: pricingTerms.marginId,

@@ -10,6 +10,7 @@ class PharmacyOrderDraftMapper {
     final terms = draft.pricingTerms?.toMap();
     final lines = draft.lines.map((line) => line.toApiMap()).toList();
     final payload = {
+      if (draft.plannedVisitId != null) 'visit_id': draft.plannedVisitId,
       'organization_id': draft.organizationId,
       'organization_name': draft.organizationName,
       'organization_inn': draft.organizationInn,
@@ -36,7 +37,7 @@ class PharmacyOrderDraftMapper {
     };
 
     return {
-      'remote_id': null,
+      'remote_id': draft.plannedVisitId,
       'org_id': draft.organizationId,
       'org_name': draft.organizationName,
       'doctor_id': null,
@@ -57,6 +58,7 @@ class PharmacyOrderDraftMapper {
     required int buyerType,
     required bool isWholesaler,
     required PharmacyOrderPricingTerms pricingTerms,
+    int? plannedVisitId,
   }) {
     try {
       final decoded = jsonDecode(rawJson);
@@ -66,6 +68,7 @@ class PharmacyOrderDraftMapper {
         map['prepayment_percent'] = prepayment;
         map['buyer_type'] = buyerType;
         map['is_wholesaler'] = isWholesaler;
+        if (plannedVisitId != null) map['visit_id'] = plannedVisitId;
         map['margin_id'] = pricingTerms.marginId;
         if (pricingTerms.marginPercent != null) {
           map['margin_percent'] = pricingTerms.marginPercent;

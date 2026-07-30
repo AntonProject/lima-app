@@ -79,6 +79,7 @@ class DrugsRepositoryImpl
       documentsCount: _toInt(row['documents_count']) ?? 0,
       currentStockId: _toInt(row['current_stock_id']),
       bindingDrugId: _toInt(row['binding_drug_id']),
+      imageUrl: row['image_url']?.toString(),
     );
   }
 

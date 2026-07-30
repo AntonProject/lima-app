@@ -40,6 +40,7 @@ class SubmitPharmacyOrder {
   Future<PharmacyOrderSubmission> call({
     required int orderUserId,
     required int organizationId,
+    int? plannedVisitId,
     required PharmacyOrderPricingTerms pricingTerms,
     required bool isWholesaler,
     required String orderComment,
@@ -48,6 +49,7 @@ class SubmitPharmacyOrder {
   }) => _repository.submit(
     orderUserId: orderUserId,
     organizationId: organizationId,
+    plannedVisitId: plannedVisitId,
     pricingTerms: pricingTerms,
     isWholesaler: isWholesaler,
     orderComment: orderComment,
@@ -58,6 +60,7 @@ class SubmitPharmacyOrder {
   Future<Result<PharmacyOrderSubmission>> submitResult({
     required int orderUserId,
     required int organizationId,
+    int? plannedVisitId,
     required PharmacyOrderPricingTerms pricingTerms,
     required bool isWholesaler,
     required String orderComment,
@@ -69,6 +72,7 @@ class SubmitPharmacyOrder {
         await call(
           orderUserId: orderUserId,
           organizationId: organizationId,
+          plannedVisitId: plannedVisitId,
           pricingTerms: pricingTerms,
           isWholesaler: isWholesaler,
           orderComment: orderComment,

@@ -66,6 +66,7 @@ class PharmacyOrderRouteLine {
   final int? currentStockId;
   final int? bindingDrugId;
   final int quantity;
+  final String? imageUrl;
 
   const PharmacyOrderRouteLine({
     required this.id,
@@ -80,6 +81,7 @@ class PharmacyOrderRouteLine {
     this.currentStockId,
     this.bindingDrugId,
     required this.quantity,
+    this.imageUrl,
   });
 }
 
@@ -90,6 +92,7 @@ class PharmacyOrderRouteData {
   final PharmacyOrderPricingTerms? pricingTerms;
   final int? cartId;
   final bool fromCart;
+  final int? plannedVisitId;
 
   const PharmacyOrderRouteData({
     required this.lines,
@@ -98,6 +101,7 @@ class PharmacyOrderRouteData {
     this.pricingTerms,
     this.cartId,
     this.fromCart = false,
+    this.plannedVisitId,
   });
 }
 
@@ -117,6 +121,7 @@ class PharmacyOrderSubmissionFailure extends AppFailure {
 typedef PharmacyOrderLines = List<PharmacyOrderLine>;
 
 class PharmacyOrderDraft {
+  final int? plannedVisitId;
   final int organizationId;
   final String organizationName;
   final int? organizationInn;
@@ -131,6 +136,7 @@ class PharmacyOrderDraft {
   final PharmacyOrderLines lines;
 
   const PharmacyOrderDraft({
+    this.plannedVisitId,
     required this.organizationId,
     required this.organizationName,
     this.organizationInn,

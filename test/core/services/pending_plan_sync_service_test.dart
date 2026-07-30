@@ -12,9 +12,17 @@ void main() {
   });
 
   test('extracts the supported remote plan id fields', () {
+    expect(PendingPlanSyncService.remoteIdFrom(100), 100);
+    expect(PendingPlanSyncService.remoteIdFrom('100'), 100);
     expect(PendingPlanSyncService.remoteIdFrom({'id': 101}), 101);
     expect(PendingPlanSyncService.remoteIdFrom({'plan_id': 102}), 102);
     expect(PendingPlanSyncService.remoteIdFrom({'visit_id': 103}), 103);
+    expect(
+      PendingPlanSyncService.remoteIdFrom({
+        'data': {'visit_id': 104},
+      }),
+      104,
+    );
     expect(PendingPlanSyncService.remoteIdFrom({'message': 'ok'}), isNull);
     expect(PendingPlanSyncService.remoteIdFrom(null), isNull);
   });

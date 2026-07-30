@@ -45,7 +45,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 20,
+      version: 21,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -139,6 +139,7 @@ class LocalDatabase {
         remains_stock    INTEGER,
         current_stock_id INTEGER,
         binding_drug_id  INTEGER,
+        image_url        TEXT,
         documents_count  INTEGER DEFAULT 0,
         updated_at       TEXT,
         sync_id          INTEGER,
@@ -559,6 +560,13 @@ class LocalDatabase {
         logSwallowed(e, 'LocalDatabase._onUpgrade');
       }
     }
+    if (oldVersion < 21) {
+      try {
+        await db.execute('ALTER TABLE drugs ADD COLUMN image_url TEXT');
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
+    }
   }
 
   Future<void> _ensureOptionalColumns() async {
@@ -635,6 +643,11 @@ class LocalDatabase {
     }
     try {
       await db.execute('ALTER TABLE drugs ADD COLUMN binding_drug_id INTEGER');
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
+    }
+    try {
+      await db.execute('ALTER TABLE drugs ADD COLUMN image_url TEXT');
     } catch (e) {
       logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
     }
@@ -1367,13 +1380,24 @@ class LocalDatabase {
       if (remoteId != null) {
         final existing = await db.query(
           'planned_visits',
-          columns: ['doctor_id', 'doctor_name', 'visit_format', 'raw_json'],
+          columns: [
+            'id',
+            'status',
+            'doctor_id',
+            'doctor_name',
+            'visit_format',
+            'raw_json',
+          ],
           where: 'remote_id = ?',
           whereArgs: [remoteId],
           limit: 1,
         );
         if (existing.isNotEmpty) {
           final prev = existing.first;
+          // A completed row is a short-lived local tombstone. Keep it hidden
+          // if a stale plans/current response arrives before the server view
+          // catches up. Reconciliation removes it once the API omits the id.
+          if (prev['status'] == 'completed') continue;
           if ((r['doctor_id'] == null) && prev['doctor_id'] != null) {
             r['doctor_id'] = prev['doctor_id'];
           }
@@ -1389,6 +1413,21 @@ class LocalDatabase {
               '${prev['raw_json'] ?? ''}'.trim().isNotEmpty) {
             r['raw_json'] = prev['raw_json'];
           }
+        } else {
+          // POST /visits/plans may return only a numeric id. Older app builds
+          // consequently left the locally-created row without remote_id, and
+          // a later pull inserted a second server row. Stamp the matching
+          // local row instead so completing the visit consumes one identity.
+          final localTwin = await _findUnstampedPlanTwin(r);
+          if (localTwin != null) {
+            batch.update(
+              'planned_visits',
+              r,
+              where: 'id = ?',
+              whereArgs: [localTwin],
+            );
+            continue;
+          }
         }
       }
       batch.insert(
@@ -1399,6 +1438,40 @@ class LocalDatabase {
     }
     await batch.commit(noResult: true);
     _notifyChanged(['planned_visits']);
+  }
+
+  Future<int?> _findUnstampedPlanTwin(Map<String, dynamic> incoming) async {
+    final orgId = (incoming['org_id'] as num?)?.toInt();
+    final visitDate = DateTime.tryParse('${incoming['visit_date'] ?? ''}');
+    if (orgId == null || visitDate == null) return null;
+
+    final candidates = await db.query(
+      'planned_visits',
+      columns: ['id', 'visit_date', 'visit_format'],
+      where: "remote_id IS NULL AND org_id = ? AND status != 'completed'",
+      whereArgs: [orgId],
+      orderBy: 'id DESC',
+    );
+    final incomingFormat = '${incoming['visit_format'] ?? ''}'.trim();
+    for (final candidate in candidates) {
+      final candidateDate = DateTime.tryParse(
+        '${candidate['visit_date'] ?? ''}',
+      );
+      if (candidateDate == null ||
+          candidateDate.year != visitDate.year ||
+          candidateDate.month != visitDate.month ||
+          candidateDate.day != visitDate.day) {
+        continue;
+      }
+      final candidateFormat = '${candidate['visit_format'] ?? ''}'.trim();
+      if (incomingFormat.isNotEmpty &&
+          candidateFormat.isNotEmpty &&
+          incomingFormat != candidateFormat) {
+        continue;
+      }
+      return (candidate['id'] as num?)?.toInt();
+    }
+    return null;
   }
 
   /// Reconciles server-origin planned visits with the authoritative set from
@@ -1481,8 +1554,39 @@ class LocalDatabase {
     _notifyChanged(['planned_visits']);
   }
 
+  Future<int?> getPlannedVisitRemoteId(int visitId) async {
+    final rows = await db.query(
+      'planned_visits',
+      columns: ['remote_id'],
+      where: 'remote_id = ? OR id = ?',
+      whereArgs: [visitId, visitId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return (rows.first['remote_id'] as num?)?.toInt();
+  }
+
   Future<void> deleteLocalPlannedVisit(int localId) async {
     await db.delete('planned_visits', where: 'id = ?', whereArgs: [localId]);
+    _notifyChanged(['planned_visits']);
+  }
+
+  Future<void> deletePlannedVisitByRemoteId(int remoteId) async {
+    await db.delete(
+      'planned_visits',
+      where: 'remote_id = ? OR id = ?',
+      whereArgs: [remoteId, remoteId],
+    );
+    _notifyChanged(['planned_visits']);
+  }
+
+  Future<void> completePlannedVisitById(int visitId) async {
+    await db.update(
+      'planned_visits',
+      {'status': 'completed'},
+      where: 'remote_id = ? OR id = ?',
+      whereArgs: [visitId, visitId],
+    );
     _notifyChanged(['planned_visits']);
   }
 
@@ -2265,6 +2369,10 @@ class LocalDatabase {
           if (!r.containsKey(stockKey) || r[stockKey] == null) {
             r.remove(stockKey);
           }
+        }
+        final imageUrl = r['image_url']?.toString().trim();
+        if (imageUrl == null || imageUrl.isEmpty) {
+          r.remove('image_url');
         }
         // Catalogue (bindings) rows carry no price; never overwrite an existing
         // price-list price with a missing/zero value.

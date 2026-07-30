@@ -42,19 +42,9 @@ class _DrugCard extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    margin: const EdgeInsets.only(top: 2),
-                    decoration: BoxDecoration(
-                      color: AppColors.iconBgBlue,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.medication_rounded,
-                      color: AppColors.primary,
-                      size: 18,
-                    ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: _DrugThumbnail(imageUrl: drug.imageUrl),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -182,6 +172,40 @@ class _DrugCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DrugThumbnail extends StatelessWidget {
+  final String? imageUrl;
+
+  const _DrugThumbnail({this.imageUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = Container(
+      color: AppColors.iconBgBlue,
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.medication_rounded,
+        color: AppColors.primary,
+        size: 20,
+      ),
+    );
+    final url = imageUrl?.trim();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: url == null || url.isEmpty
+            ? fallback
+            : Image.network(
+                url,
+                fit: BoxFit.contain,
+                errorBuilder: (_, _, _) => fallback,
+              ),
       ),
     );
   }

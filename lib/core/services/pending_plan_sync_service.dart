@@ -110,9 +110,13 @@ class PendingPlanSyncService {
 
   @visibleForTesting
   static int? remoteIdFrom(Object? data) {
+    if (data is num) return data.toInt();
+    if (data is String) return int.tryParse(data);
     if (data is! Map) return null;
     return (data['id'] as num?)?.toInt() ??
         (data['plan_id'] as num?)?.toInt() ??
-        (data['visit_id'] as num?)?.toInt();
+        (data['visit_id'] as num?)?.toInt() ??
+        remoteIdFrom(data['data']) ??
+        remoteIdFrom(data['result']);
   }
 }

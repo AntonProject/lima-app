@@ -12,11 +12,15 @@ import '../../../../core/widgets/app_widgets.dart';
 class PharmacyTypeScreen extends ConsumerWidget {
   final int pharmacyId;
   final String pharmacyName;
+  final int? plannedVisitId;
+  final String? plannedVisitFormat;
 
   const PharmacyTypeScreen({
     super.key,
     required this.pharmacyId,
     required this.pharmacyName,
+    this.plannedVisitId,
+    this.plannedVisitFormat,
   });
 
   @override
@@ -129,6 +133,8 @@ class PharmacyTypeScreen extends ConsumerWidget {
                           'name': pharmacyName,
                           'prepayment': '${payment.prepayment}',
                           'buyerType': '${payment.buyerType}',
+                          if (plannedVisitId != null)
+                            'plannedVisitId': '$plannedVisitId',
                         },
                       ).toString(),
                     );
@@ -145,7 +151,11 @@ class PharmacyTypeScreen extends ConsumerWidget {
                   onTap: () => context.push(
                     Uri(
                       path: '/visits/pharmacy/detail/$pharmacyId/type/stock',
-                      queryParameters: {'name': pharmacyName},
+                      queryParameters: {
+                        'name': pharmacyName,
+                        if (plannedVisitId != null)
+                          'plannedVisitId': '$plannedVisitId',
+                      },
                     ).toString(),
                   ),
                 ),
@@ -160,7 +170,11 @@ class PharmacyTypeScreen extends ConsumerWidget {
                   onTap: () => context.push(
                     Uri(
                       path: '/visits/pharmacy/detail/$pharmacyId/type/circle',
-                      queryParameters: {'name': pharmacyName},
+                      queryParameters: {
+                        'name': pharmacyName,
+                        if (plannedVisitId != null)
+                          'plannedVisitId': '$plannedVisitId',
+                      },
                     ).toString(),
                   ),
                 ),

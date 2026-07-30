@@ -1,3 +1,4 @@
+import '../../../../core/models/models.dart';
 import '../entities/planned_visit_record.dart';
 
 class MergePlannedVisits {
@@ -28,6 +29,15 @@ class MergePlannedVisits {
       final key = record.remoteId == null
           ? 'l_${record.localId}'
           : 'r_${record.remoteId}';
+      if (record.status == VisitStatus.completed) {
+        merged.remove(key);
+        if (record.remoteId != null) {
+          // Older builds sometimes sent the local planned_visits.id because
+          // the numeric POST response was not persisted as remote_id.
+          merged.remove('l_${record.remoteId}');
+        }
+        continue;
+      }
       merged[key] = record;
     }
 

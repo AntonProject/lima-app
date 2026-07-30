@@ -7,6 +7,7 @@ class _CartGroup {
   final int? cartId;
   final int prepaymentPercent;
   final int buyerType;
+  final int? plannedVisitId;
   final List<CartItemSnapshot> items;
 
   const _CartGroup({
@@ -16,11 +17,12 @@ class _CartGroup {
     required this.cartId,
     required this.prepaymentPercent,
     required this.buyerType,
+    required this.plannedVisitId,
     required this.items,
   });
 
   String get identityKey =>
-      '${cartId ?? 0}:${pharmacyId ?? 0}:$prepaymentPercent:$buyerType:$pharmacyName';
+      '${cartId ?? 0}:${pharmacyId ?? 0}:$prepaymentPercent:$buyerType:${plannedVisitId ?? 0}:$pharmacyName';
 
   int get count => items.fold(0, (sum, item) => sum + item.quantity);
   double get total => items.fold(0, (sum, item) => sum + item.total);
@@ -37,6 +39,7 @@ class _CartGroup {
       cartId: first.cartId,
       prepaymentPercent: first.prepaymentPercent ?? 100,
       buyerType: first.buyerType ?? 0,
+      plannedVisitId: first.plannedVisitId,
       items: List.unmodifiable(items),
     );
   }

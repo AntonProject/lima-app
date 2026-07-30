@@ -283,6 +283,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                     cartId: group.cartId,
                     prepaymentPercent: group.prepaymentPercent,
                     buyerType: group.buyerType,
+                    plannedVisitId: group.plannedVisitId,
                   ),
                   child: OutlinedButton(
                     onPressed: null,
@@ -373,6 +374,35 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       ),
       child: Row(
         children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 36,
+              height: 36,
+              child: item.imageUrl?.trim().isNotEmpty == true
+                  ? Image.network(
+                      item.imageUrl!,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, _, _) => const ColoredBox(
+                        color: AppColors.iconBgBlue,
+                        child: Icon(
+                          Icons.medication_rounded,
+                          color: AppColors.primary,
+                          size: 18,
+                        ),
+                      ),
+                    )
+                  : const ColoredBox(
+                      color: AppColors.iconBgBlue,
+                      child: Icon(
+                        Icons.medication_rounded,
+                        color: AppColors.primary,
+                        size: 18,
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -423,6 +453,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
               cartId: item.cartId,
               prepaymentPercent: group.prepaymentPercent,
               buyerType: group.buyerType,
+              plannedVisitId: group.plannedVisitId,
             ),
             child: const Icon(
               Icons.delete_rounded,
@@ -459,6 +490,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
               currentStockId: item.currentStockId,
               bindingDrugId: item.bindingDrugId,
               quantity: item.quantity,
+              imageUrl: item.imageUrl,
             ),
           )
           .toList(growable: false),
@@ -466,6 +498,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       buyerType: group.buyerType,
       cartId: group.cartId,
       fromCart: true,
+      plannedVisitId: group.plannedVisitId,
     );
     if (ref.read(isOfflineProvider)) {
       pulseOfflineBanner(ref);
@@ -551,8 +584,8 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       final prepayment = item.prepaymentPercent ?? 100;
       final buyerType = item.buyerType ?? 0;
       final key = item.cartId != null
-          ? 'server:${item.cartId}:$prepayment:$buyerType'
-          : 'pharmacy:${item.pharmacyId ?? 0}:${item.pharmacyName ?? ''}:$prepayment:$buyerType';
+          ? 'server:${item.cartId}:$prepayment:$buyerType:${item.plannedVisitId ?? 0}'
+          : 'pharmacy:${item.pharmacyId ?? 0}:${item.pharmacyName ?? ''}:$prepayment:$buyerType:${item.plannedVisitId ?? 0}';
       byKey.putIfAbsent(key, () => <CartItemSnapshot>[]).add(item);
     }
     final groups = byKey.values.map(_CartGroup.fromItems).toList();

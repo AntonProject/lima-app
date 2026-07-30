@@ -9,6 +9,7 @@ import 'package:table_calendar/table_calendar.dart';
 
 import '../../../core/i18n/app_i18n.dart';
 import '../../../core/models/models.dart';
+import '../../../core/providers/sync_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_widgets.dart';
 import '../../visits/dialogs/visit_detail_dialog.dart';
@@ -92,10 +93,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
   }
 
   Future<void> _handleVisitTap(PlannedVisit visit) async {
-    final opensVisitFlow =
-        visit.status == VisitStatus.planned &&
-        visit.organisationType != OrgType.pharmacy;
-    if (!opensVisitFlow) {
+    if (visit.status != VisitStatus.planned) {
       await _openVisitDetail(visit);
       return;
     }
@@ -116,6 +114,33 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
       return;
     }
 
+    var plannedVisitId = visit.id;
+    final repository = ref.read(plannedVisitsRepositoryProvider);
+    var remotePlanId = await repository.resolveRemotePlanId(visit.id);
+    if (remotePlanId == null) {
+      // A locally-created card is visible immediately, while its POST may
+      // still be in flight. Finish that small queue before starting the visit
+      // so Visits/add receives the server visit_id rather than SQLite row id.
+      await ref.read(syncProvider.notifier).pushPendingPlans();
+      remotePlanId = await repository.resolveRemotePlanId(visit.id);
+    }
+    if (remotePlanId != null) plannedVisitId = remotePlanId;
+    if (!mounted) return;
+
+    if (visit.organisationType == OrgType.pharmacy) {
+      context.push(
+        Uri(
+          path: '/visits/pharmacy/detail/$organisationId',
+          queryParameters: {
+            'name': visit.organisationName,
+            'plannedVisitId': '$plannedVisitId',
+            if (visit.visitFormat != null) 'visitFormat': visit.visitFormat!,
+          },
+        ).toString(),
+      );
+      return;
+    }
+
     final doctorIds = visit.doctorIds
         .where((id) => id > 0)
         .toSet()
@@ -125,6 +150,7 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
         path: '/visits/lpu/detail/$organisationId/doctors',
         queryParameters: {
           'name': visit.organisationName,
+          'plannedVisitId': '$plannedVisitId',
           if (doctorIds.isNotEmpty) 'doctorIds': doctorIds.join(','),
           if (visit.visitFormat != null) 'visitFormat': visit.visitFormat!,
         },

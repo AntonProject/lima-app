@@ -17,4 +17,8 @@ abstract interface class PlannedVisitsRepository {
     required int localPlanId,
     required PlannedVisitDraft draft,
   });
+
+  Future<int?> resolveRemotePlanId(int visitId);
+
+  Future<void> consumePlannedVisit(int remoteId);
 }

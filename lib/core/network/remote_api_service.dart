@@ -173,7 +173,10 @@ class RemoteApiService {
           onProgress?.call(
             percent == null
                 ? AppI18n.tr('syncLoadingDoctors')
-                : AppI18n.tr('syncLoadingDoctorsPct', args: {'percent': '$percent'}),
+                : AppI18n.tr(
+                    'syncLoadingDoctorsPct',
+                    args: {'percent': '$percent'},
+                  ),
             current: progressCurrent,
             total: progressTotal,
           );
@@ -204,6 +207,7 @@ class RemoteApiService {
         'remains_stock': d.remainsStock ?? d.stock ?? 0,
         'current_stock_id': d.currentStockId,
         'binding_drug_id': d.bindingDrugId,
+        'image_url': d.imageUrl,
         'documents_count': docsResult.counts[d.id] ?? 0,
         'updated_at': now,
       };
@@ -513,6 +517,9 @@ class RemoteApiService {
     if (fmtName != null) {
       if (fmtName.contains('фармкруж') || fmtName.contains('pharm')) {
         return 'circle';
+      }
+      if (fmtName.contains('остат') || fmtName.contains('stock')) {
+        return 'stock';
       }
       if (fmtName.contains('груп') || fmtName.contains('group')) return 'group';
       if (fmtName.contains('двойн') || fmtName.contains('double')) {
@@ -863,6 +870,7 @@ class RemoteApiService {
   Future<Map<String, dynamic>> createOrderVisitDebug({
     required int orderUserId,
     required int organizationId,
+    int? visitId,
     int? companyId,
     int? paymentVariantId,
     int? marginId,
@@ -917,6 +925,7 @@ class RemoteApiService {
           );
 
     final body = <String, dynamic>{
+      'visit_id': ?visitId,
       'complete': true,
       'organization_id': organizationId,
       'visit_type': 1,
@@ -1201,6 +1210,7 @@ class RemoteApiService {
     );
 
     return {
+      if (visit.remoteId != null) 'visit_id': visit.remoteId,
       'complete': true,
       'organization_id': visit.orgId,
       'visit_type': 1,
@@ -1307,7 +1317,10 @@ class RemoteApiService {
     // without the user ever seeing it. Drop the line and log it so it's
     // visible on the sync diagnostics screen instead of disappearing.
     final qty = _toInt(m['package'] ?? m['quantity'] ?? m['amount']);
-    if (incomeDetailingId == null || drugId == null || qty == null || qty <= 0) {
+    if (incomeDetailingId == null ||
+        drugId == null ||
+        qty == null ||
+        qty <= 0) {
       if (incomeDetailingId != null && drugId != null && qty == null) {
         logSwallowed(
           'drug_id=$drugId missing package/quantity/amount',
@@ -1431,17 +1444,20 @@ class RemoteApiService {
       '/api/Visits/plans/current',
       queryParameters: {'date': dateStr},
     );
-    return _filterPlansByOwner(rows, ownerUserId)
-        .map(_mapPlannedVisit)
-        .whereType<PlannedVisit>()
-        .toList();
+    return _filterPlansByOwner(
+      rows,
+      ownerUserId,
+    ).map(_mapPlannedVisit).whereType<PlannedVisit>().toList();
   }
 
   /// Keeps only plans belonging to [ownerUserId] (the logged-in medrep). The
   /// `/visits/plans` endpoint returns other reps' plans too — the web filters
   /// them out, so the app must as well. When [ownerUserId] is null, or a row
   /// has no medrep id, the row is kept (fail-open).
-  static List<dynamic> _filterPlansByOwner(List<dynamic> rows, int? ownerUserId) {
+  static List<dynamic> _filterPlansByOwner(
+    List<dynamic> rows,
+    int? ownerUserId,
+  ) {
     if (ownerUserId == null) return rows;
     return rows.where((raw) {
       if (raw is! Map) return false;
@@ -1473,10 +1489,10 @@ class RemoteApiService {
 
   Future<List<PlannedVisit>> getVisitPlans([int? ownerUserId]) async {
     final rows = await _getListAny(['/visits/plans', '/api/Visits/plans']);
-    return _filterPlansByOwner(rows, ownerUserId)
-        .map(_mapPlannedVisit)
-        .whereType<PlannedVisit>()
-        .toList();
+    return _filterPlansByOwner(
+      rows,
+      ownerUserId,
+    ).map(_mapPlannedVisit).whereType<PlannedVisit>().toList();
   }
 
   /// Returns per-day visit counts for the month calendar from GET /api/Visits/plans/month.
@@ -2952,6 +2968,7 @@ class RemoteApiService {
           // income_detailing_id is needed when creating a Бронь order.
           currentStockId: _toInt(m['income_detailing_id']),
           bindingDrugId: _toInt(drugMap['id']),
+          imageUrl: _drugImageUrl(drugMap),
         ),
       );
     }
@@ -2997,6 +3014,7 @@ class RemoteApiService {
           manufacturer: _toString(producerMap['name']) ?? '',
           price: 0,
           bindingDrugId: _toInt(drugMap['id']),
+          imageUrl: _drugImageUrl(drugMap),
         ),
       );
     }
@@ -3104,7 +3122,10 @@ class RemoteApiService {
         final producer = binding['producer'] is Map
             ? Map<String, dynamic>.from(binding['producer'] as Map)
             : const <String, dynamic>{};
-        final drugId = _toInt(drug['id']);
+        final drugId =
+            _toInt(binding['binding_id']) ??
+            _toInt(binding['id']) ??
+            _toInt(drug['id']);
         if (drugId == null) continue;
         result.add({
           'drug_id': drugId,
@@ -3129,12 +3150,21 @@ class RemoteApiService {
               (isWholesaler == null ? null : (isWholesaler ? 1 : 0)),
           // current_stock_id = income_detailing_id — needed for Бронь order creation.
           'current_stock_id': _toInt(stock['current_stock_id']),
-          // binding_drug_id = drug_binding.drug.id (not dict drug_id).
+          // The Visits API expects the binding id as drugs[].drug_id.
           'binding_drug_id': drugId,
+          'image_url': _drugImageUrl(drug),
         });
       }
     }
     return result;
+  }
+
+  Future<void> saveServerCart(Map<String, dynamic> payload) async {
+    try {
+      await _api.dio.post('/api/Cart', data: payload);
+    } catch (_) {
+      await _api.dio.post('/Cart', data: payload);
+    }
   }
 
   /// Deletes the server-side cart with the given [cartId].
@@ -3699,6 +3729,7 @@ class RemoteApiService {
           ) ??
           0,
       'documents_count': _toInt(m['documents_count'] ?? m['docs_count']) ?? 0,
+      'image_url': _drugImageUrl(m),
       'updated_at': _toIso(m['updated_at']) ?? DateTime.now().toIso8601String(),
       'sync_id': _toInt(m['sync_id']),
       'raw_json': jsonEncode(m),
@@ -3932,6 +3963,24 @@ class RemoteApiService {
     if (value == null) return null;
     final s = value.toString().trim();
     return s.isEmpty ? null : s;
+  }
+
+  static String? _drugImageUrl(Map<dynamic, dynamic> drug) {
+    final photo = drug['photo'];
+    if (photo is Map) {
+      return _toString(
+        photo['small_url'] ??
+            photo['middle_url'] ??
+            photo['url'] ??
+            photo['image_url'],
+      );
+    }
+    return _toString(
+      drug['image_url'] ??
+          drug['small_url'] ??
+          drug['middle_url'] ??
+          drug['photo_url'],
+    );
   }
 
   static int? _toInt(dynamic value) {

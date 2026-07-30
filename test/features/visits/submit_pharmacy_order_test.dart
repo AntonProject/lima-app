@@ -9,6 +9,7 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
   PharmacyOrderPricingTerms? submittedTerms;
   bool? submittedWholesale;
   PharmacyOrderLines? submittedLines;
+  int? submittedPlannedVisitId;
 
   @override
   Future<bool> supportsWholesaleOrders({int? companyId}) async => true;
@@ -46,6 +47,7 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
   Future<PharmacyOrderSubmission> submit({
     required int orderUserId,
     required int organizationId,
+    int? plannedVisitId,
     required PharmacyOrderPricingTerms pricingTerms,
     required bool isWholesaler,
     required String orderComment,
@@ -55,6 +57,7 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
     submittedTerms = pricingTerms;
     submittedWholesale = isWholesaler;
     submittedLines = lines;
+    submittedPlannedVisitId = plannedVisitId;
     return const PharmacyOrderSubmission(
       request: {'ok': true},
       response: {'visit_id': 123},
@@ -90,6 +93,7 @@ void main() {
     final result = await useCase(
       orderUserId: 992,
       organizationId: 458,
+      plannedVisitId: 38479,
       pricingTerms: terms!,
       isWholesaler: false,
       orderComment: '',
@@ -101,6 +105,7 @@ void main() {
     expect(repository.submittedTerms?.marginId, 8);
     expect(repository.submittedWholesale, false);
     expect(repository.submittedLines, same(lines));
+    expect(repository.submittedPlannedVisitId, 38479);
   });
 
   test('keeps 100% wholesale selection in the typed contract', () async {

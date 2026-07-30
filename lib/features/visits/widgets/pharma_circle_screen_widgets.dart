@@ -428,6 +428,7 @@ extension _PharmaCircleScreenUi on _PharmaCircleScreenState {
           .read(visitWriteRepositoryProvider)
           .complete(
             CompletedVisitDraft(
+              plannedVisitId: widget.plannedVisitId,
               organizationId: widget.pharmacyId,
               organizationName: widget.pharmacyName,
               doctorId: null,

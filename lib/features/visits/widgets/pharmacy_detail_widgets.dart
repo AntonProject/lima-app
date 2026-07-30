@@ -334,12 +334,25 @@ extension _PharmacyDetailScreenUi on _PharmacyDetailScreenState {
             right: 16,
             bottom: ctaBottom,
             child: ElevatedButton(
-              onPressed: () => context.push(
-                Uri(
-                  path: '/visits/pharmacy/detail/${widget.pharmacyId}/type',
-                  queryParameters: {'name': widget.pharmacyName},
-                ).toString(),
-              ),
+              onPressed: () {
+                final plannedFormat = widget.plannedVisitFormat;
+                final suffix = switch (plannedFormat) {
+                  'circle' => '/circle',
+                  'stock' => '/stock',
+                  _ => '',
+                };
+                context.push(
+                  Uri(
+                    path:
+                        '/visits/pharmacy/detail/${widget.pharmacyId}/type$suffix',
+                    queryParameters: {
+                      'name': widget.pharmacyName,
+                      'plannedVisitId': ?widget.plannedVisitId?.toString(),
+                      'visitFormat': ?plannedFormat,
+                    },
+                  ).toString(),
+                );
+              },
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 44),
                 shape: RoundedRectangleBorder(

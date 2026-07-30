@@ -24,7 +24,7 @@ class VisitWriteRepositoryImpl implements VisitWriteRepository {
       timestamp: draft.createdAt,
     );
     final localId = await _db.insertVisit({
-      'remote_id': null,
+      'remote_id': draft.plannedVisitId,
       'org_id': draft.organizationId,
       'org_name': draft.organizationName,
       'doctor_id': draft.doctorId,
@@ -41,7 +41,7 @@ class VisitWriteRepositoryImpl implements VisitWriteRepository {
     if (!tryRemote) {
       return VisitWriteResult(
         localId: localId,
-        remoteId: null,
+        remoteId: draft.plannedVisitId,
         remoteAccepted: false,
         queuedForSync: true,
         remoteError: null,
@@ -50,7 +50,7 @@ class VisitWriteRepositoryImpl implements VisitWriteRepository {
 
     final visit = LocalVisit(
       id: localId,
-      remoteId: null,
+      remoteId: draft.plannedVisitId,
       orgId: draft.organizationId,
       orgName: draft.organizationName,
       doctorId: draft.doctorId,
@@ -68,8 +68,11 @@ class VisitWriteRepositoryImpl implements VisitWriteRepository {
     try {
       final pushResult = await _api.pushUnsyncedVisitDebug(visit);
       final response = pushResult['response'];
-      final remoteId = _extractRemoteId(response);
+      final remoteId = _extractRemoteId(response) ?? draft.plannedVisitId;
       await _db.markSynced([localId]);
+      if (draft.plannedVisitId != null) {
+        await _db.completePlannedVisitById(draft.plannedVisitId!);
+      }
       if (remoteId != null) {
         await _db.updateVisitRemoteId(
           localVisitId: localId,
@@ -102,7 +105,7 @@ class VisitWriteRepositoryImpl implements VisitWriteRepository {
       );
       return VisitWriteResult(
         localId: localId,
-        remoteId: null,
+        remoteId: draft.plannedVisitId,
         remoteAccepted: false,
         queuedForSync: true,
         remoteError: '$error',

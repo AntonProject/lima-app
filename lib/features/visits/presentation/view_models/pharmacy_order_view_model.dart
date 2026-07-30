@@ -70,6 +70,7 @@ class PharmacyOrderViewModelConfig {
   final Map<int, int> initialQuantities;
   final Map<int, Drug> initialDrugs;
   final List<CartItemSnapshot> cartItems;
+  final int? plannedVisitId;
 
   const PharmacyOrderViewModelConfig({
     required this.pharmacyId,
@@ -85,13 +86,15 @@ class PharmacyOrderViewModelConfig {
     required this.initialQuantities,
     required this.initialDrugs,
     required this.cartItems,
+    this.plannedVisitId,
   });
 
   bool cartItemBelongsToCurrentOrder(CartItemSnapshot item) {
     if (checkoutCartId != null && item.cartId != checkoutCartId) return false;
     if (item.pharmacyId != pharmacyId) return false;
     if ((item.prepaymentPercent ?? 100) != prepaymentPercent) return false;
-    return (item.buyerType ?? 0) == buyerType;
+    if ((item.buyerType ?? 0) != buyerType) return false;
+    return item.plannedVisitId == plannedVisitId;
   }
 }
 
@@ -207,6 +210,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
           stock: item.stock,
           currentStockId: item.currentStockId,
           bindingDrugId: item.bindingDrugId,
+          imageUrl: item.imageUrl,
         );
       }
     }
@@ -373,6 +377,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
 
     try {
       final draft = PharmacyOrderDraft(
+        plannedVisitId: config.plannedVisitId,
         organizationId: config.pharmacyId,
         organizationName: config.organizationName,
         organizationInn: context.organizationInn,
@@ -401,6 +406,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
         final submissionResult = await _submitPharmacyOrder.submitResult(
           orderUserId: context.orderUserId,
           organizationId: config.pharmacyId,
+          plannedVisitId: config.plannedVisitId,
           pricingTerms: pricingTerms!,
           isWholesaler: config.buyerType == 1,
           orderComment: context.comment,
@@ -496,6 +502,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
       documentsCount: incoming.documentsCount,
       currentStockId: incoming.currentStockId ?? existing?.currentStockId,
       bindingDrugId: incoming.bindingDrugId ?? existing?.bindingDrugId,
+      imageUrl: incoming.imageUrl ?? existing?.imageUrl,
     );
   }
 }

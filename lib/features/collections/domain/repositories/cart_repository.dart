@@ -7,5 +7,7 @@ abstract interface class CartRepository {
 
   Future<List<CartServerItem>> getServerCart();
 
+  Future<void> saveServerCart(CartServerDraft draft);
+
   Future<void> clearServerCart(int cartId);
 }

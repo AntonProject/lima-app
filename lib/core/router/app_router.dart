@@ -269,6 +269,9 @@ final routerProvider = Provider<GoRouter>((ref) {
             child: LpuDoctorSelectScreen(
               orgId: orgId,
               orgName: orgName,
+              plannedVisitId: int.tryParse(
+                state.uri.queryParameters['plannedVisitId'] ?? '',
+              ),
               preselectedDoctorId: preselect,
               preselectedDoctorIds: preselectedDoctorIds,
               visitFormat: state.uri.queryParameters['visitFormat'],
@@ -376,6 +379,11 @@ final routerProvider = Provider<GoRouter>((ref) {
                   return PharmacyDetailScreen(
                     pharmacyId: pharmacyId,
                     pharmacyName: state.uri.queryParameters['name'] ?? '',
+                    plannedVisitId: int.tryParse(
+                      state.uri.queryParameters['plannedVisitId'] ?? '',
+                    ),
+                    plannedVisitFormat:
+                        state.uri.queryParameters['visitFormat'],
                   );
                 },
                 routes: [
@@ -391,6 +399,11 @@ final routerProvider = Provider<GoRouter>((ref) {
                       return PharmacyTypeScreen(
                         pharmacyId: pharmacyId,
                         pharmacyName: state.uri.queryParameters['name'] ?? '',
+                        plannedVisitId: int.tryParse(
+                          state.uri.queryParameters['plannedVisitId'] ?? '',
+                        ),
+                        plannedVisitFormat:
+                            state.uri.queryParameters['visitFormat'],
                       );
                     },
                     routes: [
@@ -407,6 +420,9 @@ final routerProvider = Provider<GoRouter>((ref) {
                             pharmacyId: pharmacyId,
                             pharmacyName:
                                 state.uri.queryParameters['name'] ?? '',
+                            plannedVisitId: int.tryParse(
+                              state.uri.queryParameters['plannedVisitId'] ?? '',
+                            ),
                           );
                         },
                       ),
@@ -423,6 +439,9 @@ final routerProvider = Provider<GoRouter>((ref) {
                             pharmacyId: pharmacyId,
                             pharmacyName:
                                 state.uri.queryParameters['name'] ?? '',
+                            plannedVisitId: int.tryParse(
+                              state.uri.queryParameters['plannedVisitId'] ?? '',
+                            ),
                           );
                         },
                       ),
@@ -439,6 +458,9 @@ final routerProvider = Provider<GoRouter>((ref) {
                             pharmacyId: pharmacyId,
                             pharmacyName:
                                 state.uri.queryParameters['name'] ?? '',
+                            plannedVisitId: int.tryParse(
+                              state.uri.queryParameters['plannedVisitId'] ?? '',
+                            ),
                           );
                         },
                       ),

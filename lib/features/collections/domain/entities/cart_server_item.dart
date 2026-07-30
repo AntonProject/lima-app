@@ -15,6 +15,8 @@ class CartServerItem {
   final int? buyerType;
   final int? currentStockId;
   final int? bindingDrugId;
+  final String? imageUrl;
+  final int? plannedVisitId;
 
   const CartServerItem({
     required this.drugId,
@@ -33,6 +35,8 @@ class CartServerItem {
     this.buyerType,
     this.currentStockId,
     this.bindingDrugId,
+    this.imageUrl,
+    this.plannedVisitId,
   });
 
   factory CartServerItem.fromMap(Map<String, dynamic> json) {
@@ -57,6 +61,8 @@ class CartServerItem {
           (isWholesaler == null ? null : (isWholesaler ? 1 : 0)),
       currentStockId: _toInt(json['current_stock_id']),
       bindingDrugId: _toInt(json['binding_drug_id']),
+      imageUrl: json['image_url']?.toString(),
+      plannedVisitId: _toInt(json['planned_visit_id']),
     );
   }
 
@@ -77,6 +83,8 @@ class CartServerItem {
     if (buyerType != null) 'buyer_type': buyerType,
     if (currentStockId != null) 'current_stock_id': currentStockId,
     if (bindingDrugId != null) 'binding_drug_id': bindingDrugId,
+    if (imageUrl != null) 'image_url': imageUrl,
+    if (plannedVisitId != null) 'planned_visit_id': plannedVisitId,
   };
 
   static int? _toInt(Object? value) {
@@ -98,4 +106,44 @@ class CartServerItem {
     if (normalized == 'false' || normalized == '0') return false;
     return null;
   }
+}
+
+class CartServerDraftLine {
+  final int currentStockId;
+  final int amount;
+  final double salePrice;
+
+  const CartServerDraftLine({
+    required this.currentStockId,
+    required this.amount,
+    required this.salePrice,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'amount': amount,
+    'current_stock_id': currentStockId,
+    'sale_price': salePrice,
+  };
+}
+
+class CartServerDraft {
+  final int organizationId;
+  final int? marginId;
+  final int? paymentVariantId;
+  final List<CartServerDraftLine> items;
+
+  const CartServerDraft({
+    required this.organizationId,
+    this.marginId,
+    this.paymentVariantId,
+    required this.items,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'organization_id': organizationId,
+    'margin_id': marginId,
+    'payment_variant_id': paymentVariantId,
+    'contract_id': null,
+    'items': items.map((item) => item.toMap()).toList(growable: false),
+  };
 }
