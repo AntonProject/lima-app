@@ -38,7 +38,7 @@ view models. Pull не является условием отображения:
 - `lib/core/providers/app_collections_provider.dart` — локальные коллекции для экранов.
 - `lib/features/offline/screens/sync_screen.dart` — ручной sync и диагностика.
 
-Текущая версия схемы `lima.db` — 10.
+Текущая версия схемы `lima.db` — 22.
 
 ## Обзор базы данных
 
@@ -56,6 +56,7 @@ view models. Pull не является условием отображения:
 - `cached_stats` — кеш статистики/dashboard и пользовательского годового плана.
 - `pending_doctors` — врачи, созданные локально и ожидающие отправки на API.
 - `pending_org_updates` — локальные изменения организаций, ожидающие отправки на API.
+- `pending_workday_events` — FIFO-очередь локальных start/end рабочего дня.
 
 ## Связи
 

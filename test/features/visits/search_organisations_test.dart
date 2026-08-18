@@ -69,6 +69,9 @@ class _FakeDirectoryRepository implements OrganisationsDirectoryRepository {
       result.where((organisation) => organisation.id == id).firstOrNull;
 
   @override
+  Future<Organisation?> getRemoteModelById(int id) async => null;
+
+  @override
   Future<List<Organisation>> searchModels({
     required String query,
     List<int>? typeIds,

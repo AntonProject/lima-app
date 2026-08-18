@@ -150,6 +150,14 @@ class OrganisationsRepositoryImpl implements OrganisationsDirectoryRepository {
     return row == null ? null : Organisation.fromJson(row);
   }
 
+  @override
+  Future<Organisation?> getRemoteModelById(int id) async {
+    final row = await _api.getOrganizationById(id);
+    if (row == null) return null;
+    await _db.upsertOrganisations([row]);
+    return Organisation.fromJson(row);
+  }
+
   /// Districts (areas) of a region for the create/edit-organisation forms.
   @override
   Future<List<OrganisationArea>> getAreas(int regionId) async {

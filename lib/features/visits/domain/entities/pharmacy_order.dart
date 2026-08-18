@@ -93,6 +93,7 @@ class PharmacyOrderRouteData {
   final int? cartId;
   final bool fromCart;
   final int? plannedVisitId;
+  final bool isLpuBooking;
 
   const PharmacyOrderRouteData({
     required this.lines,
@@ -102,6 +103,7 @@ class PharmacyOrderRouteData {
     this.cartId,
     this.fromCart = false,
     this.plannedVisitId,
+    this.isLpuBooking = false,
   });
 }
 

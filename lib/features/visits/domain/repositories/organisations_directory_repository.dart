@@ -14,6 +14,10 @@ abstract interface class OrganisationsDirectoryRepository {
 
   Future<Organisation?> getModelById(int id);
 
+  /// Refresh one organisation from the directory without replacing the local
+  /// database as a whole. The detail screen uses this when online.
+  Future<Organisation?> getRemoteModelById(int id);
+
   Future<List<Organisation>> searchModels({
     required String query,
     List<int>? typeIds,

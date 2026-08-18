@@ -20,12 +20,14 @@ class PharmacyOrderScreen extends ConsumerStatefulWidget {
   final int pharmacyId;
   final String pharmacyName;
   final int? plannedVisitId;
+  final bool isLpuBooking;
 
   const PharmacyOrderScreen({
     super.key,
     required this.pharmacyId,
     this.pharmacyName = '',
     this.plannedVisitId,
+    this.isLpuBooking = false,
   });
 
   @override
@@ -189,6 +191,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
           buyerType: _buyerType,
           pricingTerms: pricingTerms,
           plannedVisitId: widget.plannedVisitId,
+          isLpuBooking: widget.isLpuBooking,
         ),
       );
     } finally {

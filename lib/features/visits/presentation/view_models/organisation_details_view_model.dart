@@ -34,15 +34,18 @@ class OrganisationDetailsViewModel
   final int organisationId;
   Future<void>? _activeLoad;
 
-  OrganisationDetailsViewModel(this._repository, this.organisationId)
-    : super(const OrganisationDetailsViewState()) {
-    load();
+  OrganisationDetailsViewModel(
+    this._repository,
+    this.organisationId, {
+    required bool fetchRemote,
+  }) : super(const OrganisationDetailsViewState()) {
+    load(fetchRemote: fetchRemote);
   }
 
-  Future<void> load() {
+  Future<void> load({bool fetchRemote = false}) {
     final active = _activeLoad;
     if (active != null) return active;
-    final future = _loadInternal();
+    final future = _loadInternal(fetchRemote: fetchRemote);
     _activeLoad = future;
     future.whenComplete(() {
       if (identical(_activeLoad, future)) _activeLoad = null;
@@ -50,12 +53,42 @@ class OrganisationDetailsViewModel
     return future;
   }
 
-  Future<void> _loadInternal() async {
+  Future<void> _loadInternal({required bool fetchRemote}) async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final organisation = await _repository.getModelById(organisationId);
+      final localOrganisation = await _repository.getModelById(organisationId);
       if (!mounted) return;
-      state = state.copyWith(organisation: organisation, isLoading: false);
+      state = state.copyWith(
+        organisation: localOrganisation,
+        isLoading: !fetchRemote && localOrganisation == null,
+      );
+
+      if (!fetchRemote) {
+        if (mounted) {
+          state = state.copyWith(isLoading: false);
+        }
+        return;
+      }
+
+      try {
+        final remoteOrganisation = await _repository.getRemoteModelById(
+          organisationId,
+        );
+        if (!mounted) return;
+        state = state.copyWith(
+          organisation: remoteOrganisation ?? localOrganisation,
+          isLoading: false,
+        );
+      } catch (_) {
+        // The local card remains usable when the detail refresh fails. Only
+        // surface an error if there was no cached organisation to display.
+        if (!mounted) return;
+        state = state.copyWith(
+          isLoading: false,
+          error: localOrganisation == null ? 'Не удалось загрузить ЛПУ' : null,
+          clearError: localOrganisation != null,
+        );
+      }
     } catch (error) {
       if (mounted) {
         state = state.copyWith(isLoading: false, error: '$error');

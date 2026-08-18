@@ -59,6 +59,7 @@ extension _LpuDetailScreenUi on _LpuDetailScreenState {
     final worksWithUs = _worksWithUs();
     final displayAddress = (_org?.address ?? widget.orgAddress).trim();
     final ctaBottom = LimaNavBarLayout.ctaBottomOffset(context);
+    final canMakeBooking = _canMakeBooking;
 
     return Scaffold(
       backgroundColor: AppColors.primaryBg,
@@ -74,7 +75,12 @@ extension _LpuDetailScreenUi on _LpuDetailScreenState {
 
               Expanded(
                 child: ListView(
-                  padding: EdgeInsets.fromLTRB(16, 12, 16, ctaBottom + 56),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    12,
+                    16,
+                    ctaBottom + (canMakeBooking ? 112 : 56),
+                  ),
                   children: [
                     // ── Org header card ────────────────────────────────────────
                     Container(
@@ -536,20 +542,61 @@ extension _LpuDetailScreenUi on _LpuDetailScreenState {
             left: 16,
             right: 16,
             bottom: ctaBottom,
-            child: ElevatedButton(
-              onPressed: () => context.push(
-                Uri(
-                  path: '/visits/lpu/detail/${widget.orgId}/doctors',
-                  queryParameters: {'name': widget.orgName},
-                ).toString(),
-              ),
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (canMakeBooking) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: OutlinedButton.icon(
+                      onPressed: _isOpeningBooking ? null : _openLpuBooking,
+                      icon: _isOpeningBooking
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.shopping_cart_rounded, size: 18),
+                      label: Text(context.l10n.t('makeBooking')),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        backgroundColor: AppColors.secondaryBg,
+                        textStyle: GoogleFonts.manrope(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        side: const BorderSide(
+                          color: AppColors.primary,
+                          width: 1.4,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: ElevatedButton(
+                    onPressed: () => context.push(
+                      Uri(
+                        path: '/visits/lpu/detail/${widget.orgId}/doctors',
+                        queryParameters: {'name': widget.orgName},
+                      ).toString(),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(context.l10n.t('startVisit')),
+                  ),
                 ),
-              ),
-              child: Text(context.l10n.t('startVisit')),
+              ],
             ),
           ),
         ],

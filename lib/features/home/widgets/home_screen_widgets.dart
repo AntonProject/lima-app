@@ -6,6 +6,552 @@ part of '../screens/home_screen.dart';
 // ascent/descent rounding pushed it 1px over, causing a RenderFlex overflow.
 const double _homeCardHeight = 84;
 
+class _WorkdayCard extends ConsumerWidget {
+  const _WorkdayCard();
+
+  Future<void> _finishWorkday(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref.read(workdayProvider.notifier).end();
+    } catch (error) {
+      if (!context.mounted) return;
+      _showWorkdayError(
+        context,
+        error,
+        fallback: context.l10n.t('workdayEndFailed'),
+      );
+    }
+  }
+
+  void _startWorkday(BuildContext context) {
+    showAppSheet<void>(
+      context,
+      // The workday picker must sit above the persistent tab bar. The local
+      // shell navigator renders the bar after its child, so use the root
+      // navigator for this modal route.
+      useRootNavigator: true,
+      backgroundColor: AppColors.secondaryBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _WorkdayTypeSheet(hostContext: context),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(workdayProvider);
+    final phase = state.workday.phase;
+    final isStarting = state.action == WorkdayAction.starting;
+    final isEnding = state.action == WorkdayAction.ending;
+    final isNotStarted = phase == WorkdayPhase.notStarted;
+    final isActive = phase == WorkdayPhase.active;
+    final isCompleted = phase == WorkdayPhase.completed;
+
+    final badgeColor = isNotStarted || isCompleted
+        ? AppColors.secondaryText
+        : AppColors.success;
+    final badgeLabel = switch (phase) {
+      WorkdayPhase.notStarted => context.l10n.t('workdayNotStarted'),
+      WorkdayPhase.active => context.l10n.t('workday'),
+      WorkdayPhase.completed => context.l10n.t('workdayCompleted'),
+    };
+    final title = switch (phase) {
+      WorkdayPhase.notStarted => context.l10n.t('selectWorkdayType'),
+      WorkdayPhase.active =>
+        state.workday.dayTypeName ?? context.l10n.t('workday'),
+      WorkdayPhase.completed => context.l10n.t('workdayCompleted'),
+    };
+    final time = _workdayTime(
+      isCompleted ? state.workday.endTime : state.workday.startTime,
+    );
+    final subtitle = switch (phase) {
+      WorkdayPhase.notStarted => context.l10n.t('tapToStartWorkday'),
+      WorkdayPhase.active => context.l10n.t(
+        'workdayStartedAt',
+        args: {'time': time},
+      ),
+      WorkdayPhase.completed => context.l10n.t(
+        'workdayEndedAt',
+        args: {'time': time},
+      ),
+    };
+
+    final card = Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isActive ? AppColors.primary : AppColors.border,
+          width: isActive ? 1.5 : 1,
+        ),
+        boxShadow: shadowSm,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: badgeColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!isNotStarted) ...[
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: badgeColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Text(
+                        badgeLabel,
+                        style: GoogleFonts.manrope(
+                          color: badgeColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.manrope(
+                    color: AppColors.primaryText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.manrope(
+                    color: AppColors.secondaryText,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          if (isNotStarted)
+            Icon(AppIcons.chevronRight, size: 22, color: AppColors.hintText)
+          else if (isActive)
+            SizedBox(
+              height: 36,
+              child: FilledButton(
+                onPressed: isEnding ? null : () => _finishWorkday(context, ref),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  backgroundColor: AppColors.error.withValues(alpha: 0.1),
+                  foregroundColor: AppColors.error,
+                  elevation: 0,
+                  textStyle: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                child: isEnding
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.error,
+                        ),
+                      )
+                    : Text(context.l10n.t('endWorkday')),
+              ),
+            ),
+        ],
+      ),
+    );
+
+    if (!isNotStarted) return card;
+    return AppTapScale(
+      onTap: isStarting ? null : () => _startWorkday(context),
+      pressedScale: 0.98,
+      child: card,
+    );
+  }
+}
+
+class _WorkdayTypeSheet extends ConsumerStatefulWidget {
+  const _WorkdayTypeSheet({required this.hostContext});
+
+  final BuildContext hostContext;
+
+  @override
+  ConsumerState<_WorkdayTypeSheet> createState() => _WorkdayTypeSheetState();
+}
+
+class _WorkdayTypeSheetState extends ConsumerState<_WorkdayTypeSheet> {
+  WorkdayDayType? _selected;
+
+  Future<void> _submit(WorkdayDayType? selected) async {
+    if (selected == null) return;
+    try {
+      await ref.read(workdayProvider.notifier).start(dayType: selected);
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    } catch (error) {
+      if (!mounted) return;
+      final hostContext = widget.hostContext;
+      Navigator.of(context, rootNavigator: true).pop();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!hostContext.mounted) return;
+        _showWorkdayError(
+          hostContext,
+          error,
+          fallback: hostContext.l10n.t('workdayStartFailed'),
+        );
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(workdayProvider);
+    final isStarting = state.action == WorkdayAction.starting;
+    final selectedDayType = _selected;
+    final bottom =
+        MediaQuery.viewInsetsOf(context).bottom +
+        MediaQuery.paddingOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 12, 16, bottom + 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  context.l10n.t('selectWorkdayType'),
+                  style: GoogleFonts.manrope(
+                    color: AppColors.primaryText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              AppTapScale(
+                pressedScale: 0.9,
+                onTap: isStarting
+                    ? null
+                    : () => Navigator.of(context, rootNavigator: true).pop(),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryBg,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.close_rounded,
+                    size: 18,
+                    color: AppColors.secondaryText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: AppColors.divider),
+          const SizedBox(height: 12),
+          if (state.dayTypes.isEmpty && state.isLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else
+            ...state.dayTypes.map((dayType) {
+              final isSelected = selectedDayType?.id == dayType.id;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: AppTapScale(
+                  onTap: isStarting
+                      ? null
+                      : () => setState(() => _selected = dayType),
+                  pressedScale: 0.98,
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 68),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? AppColors.primary.withValues(alpha: 0.07)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected
+                            ? AppColors.primary
+                            : AppColors.border,
+                        width: isSelected ? 2 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            _dayTypeIcon(dayType.id),
+                            color: _dayTypeColor(dayType.id),
+                            size: 23,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                dayType.name,
+                                style: GoogleFonts.manrope(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.primaryText,
+                                ),
+                              ),
+                              if (dayType.description.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  dayType.description,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 11.5,
+                                    color: AppColors.secondaryText,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        if (isSelected)
+                          Container(
+                            width: 28,
+                            height: 28,
+                            alignment: Alignment.center,
+                            decoration: const BoxDecoration(
+                              color: AppColors.primary,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              AppIcons.check,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          )
+                        else
+                          Icon(
+                            AppIcons.chevronRight,
+                            color: AppColors.hintText,
+                            size: 18,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          const SizedBox(height: 2),
+          const Divider(height: 1, color: AppColors.divider),
+          const SizedBox(height: 12),
+          ElevatedButton(
+            onPressed: selectedDayType == null || isStarting
+                ? null
+                : () => _submit(selectedDayType),
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 50),
+              disabledBackgroundColor: AppColors.primary.withValues(
+                alpha: 0.55,
+              ),
+              disabledForegroundColor: Colors.white.withValues(alpha: 0.95),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              textStyle: GoogleFonts.manrope(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            child: isStarting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(AppIcons.location, size: 20),
+                      const SizedBox(width: 10),
+                      Text(context.l10n.t('startWorkday')),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+void _showWorkdayError(
+  BuildContext context,
+  Object error, {
+  required String fallback,
+}) {
+  final message = error is WorkdayActionException
+      ? error.message ?? fallback
+      : fallback;
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  if (overlay == null) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+    return;
+  }
+
+  late final OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (context) => Positioned(
+      top: MediaQuery.paddingOf(context).top + 12,
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: Center(
+          child: Material(
+            color: Colors.transparent,
+            child: TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 180),
+              tween: Tween(begin: 0, end: 1),
+              curve: Curves.easeOutCubic,
+              builder: (context, opacity, child) =>
+                  Opacity(opacity: opacity, child: child),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.sizeOf(context).width * 0.8,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: shadowLg,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 32,
+                        height: 32,
+                        alignment: Alignment.center,
+                        decoration: const BoxDecoration(
+                          color: AppColors.error,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Text(
+                          message,
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.manrope(
+                            color: AppColors.primaryText,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  overlay.insert(entry);
+  Future<void>.delayed(const Duration(seconds: 4)).then((_) => entry.remove());
+}
+
+String _workdayTime(String? raw) {
+  final value = raw == null ? null : DateTime.tryParse(raw);
+  if (value == null) return '—';
+
+  // The API returns a wall-clock value shifted by the user's UTC offset but
+  // without an explicit offset. Use the device timezone instead of a fixed
+  // Tashkent-only correction.
+  final localValue = value.subtract(DateTime.now().timeZoneOffset);
+  return '${localValue.hour.toString().padLeft(2, '0')}:${localValue.minute.toString().padLeft(2, '0')}';
+}
+
+IconData _dayTypeIcon(int id) => switch (id) {
+  1 => AppIcons.location,
+  2 => AppIcons.company,
+  3 => AppIcons.pharmacy,
+  _ => AppIcons.calendar,
+};
+
+Color _dayTypeColor(int id) => switch (id) {
+  3 => AppColors.accent,
+  _ => AppColors.primary,
+};
+
 class _ActivityCard extends StatelessWidget {
   final String title;
   final String value;

@@ -1396,10 +1396,36 @@ class RemoteApiService {
     }
   }
 
-  Future<String> getWorkdayStatus() async {
-    final response = await _api.dio.get('/api/WorkDay/status');
-    final map = _extractMap(response.data);
-    return _toString(map['status']) ?? 'not_started';
+  /// Reads a boolean feature flag from the global configuration endpoint.
+  ///
+  /// Runtime environments have returned both a keyed map and a list of
+  /// `{key, value}` objects, so keep this parsing deliberately tolerant.
+  Future<bool?> getGlobalBoolean(String key) async {
+    final response = await _api.dio.get('/api/Global');
+    return _readGlobalBoolean(response.data, key);
+  }
+
+  /// Runtime status fields are boolean (`is_started` / `is_completed`), not
+  /// the old string `status` value used by the legacy home prototype.
+  Future<Map<String, dynamic>> getWorkdayStatus() async {
+    try {
+      final response = await _api.dio.get('/api/WorkDay/status');
+      return _extractMap(response.data);
+    } on DioException catch (error) {
+      // Older backend deployments use 404 to mean that a workday has not yet
+      // been started. Normalize it to the current response contract.
+      if (error.response?.statusCode == 404) {
+        return const {
+          'is_started': false,
+          'is_completed': false,
+          'start_time': null,
+          'end_time': null,
+          'day_type_id': null,
+          'day_type_name': null,
+        };
+      }
+      rethrow;
+    }
   }
 
   Future<List<Map<String, dynamic>>> getDayTypes() async {
@@ -2477,6 +2503,23 @@ class RemoteApiService {
       queryParameters: {'_no_limit': true},
     );
     return rows.map(_mapOrg).whereType<Map<String, dynamic>>().toList();
+  }
+
+  /// Loads the authoritative relationship flags for one organisation.
+  ///
+  /// The list/sync payload can be stale or omit fields that are important on
+  /// the detail screen. Keep this request narrow so opening a card does not
+  /// trigger a full organisations refresh.
+  Future<Map<String, dynamic>?> getOrganizationById(int organizationId) async {
+    final rows = await _getListAnyWithQuery(
+      ['/api/dict/organizations', '/dict/organizations'],
+      queryParameters: {'org_id': organizationId},
+    );
+    final mapped = rows.map(_mapOrg).whereType<Map<String, dynamic>>();
+    for (final row in mapped) {
+      if (_toInt(row['id']) == organizationId) return row;
+    }
+    return null;
   }
 
   Future<List<Map<String, dynamic>>> getDoctorOrganisationRelations({
@@ -3575,7 +3618,11 @@ class RemoteApiService {
       'med_rep_id': _toInt(m['med_rep_id']),
       'med_rep_name': _toString(m['med_rep_name']),
       'visited': (_toBool(m['visited']) ?? false) ? 1 : 0,
-      'is_budget': (_toBool(m['is_budget']) ?? false) ? 1 : 0,
+      'is_budget': switch (_toBool(m['is_budget'])) {
+        true => 1,
+        false => 0,
+        null => null,
+      },
       'date_create': _toString(m['date_create']),
       'revision_status': _toString(m['revision_status']),
       'latitude': _toDouble(
@@ -4019,6 +4066,41 @@ class RemoteApiService {
     final s = value.toString().toLowerCase();
     if (s == 'true' || s == '1') return true;
     if (s == 'false' || s == '0') return false;
+    return null;
+  }
+
+  static bool? _readGlobalBoolean(dynamic data, String key) {
+    if (data is Map) {
+      final map = Map<String, dynamic>.from(data);
+      if (map.containsKey(key)) return _toBool(map[key]);
+
+      final mapKey = _toString(
+        map['key'] ?? map['name'] ?? map['config_key'] ?? map['code'],
+      );
+      if (mapKey == key) {
+        return _toBool(map['value'] ?? map['config_value']);
+      }
+
+      for (final wrapperKey in const [
+        'result',
+        'data',
+        'items',
+        'results',
+        'payload',
+      ]) {
+        if (!map.containsKey(wrapperKey)) continue;
+        final nested = _readGlobalBoolean(map[wrapperKey], key);
+        if (nested != null) return nested;
+      }
+      return null;
+    }
+
+    if (data is List) {
+      for (final row in data) {
+        final value = _readGlobalBoolean(row, key);
+        if (value != null) return value;
+      }
+    }
     return null;
   }
 

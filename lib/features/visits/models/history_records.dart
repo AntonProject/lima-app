@@ -201,6 +201,8 @@ class HistoryVisitRecord {
       id: () {
         final remoteId =
             _toInt(row['remote_id']) ??
+            _toInt(row['visit_id']) ??
+            _toInt(raw['visit_id'] ?? raw['id']) ??
             _extractRemoteId(row['last_push_response_json']);
         return remoteId?.toString() ?? '';
       }(),
@@ -332,6 +334,19 @@ class HistoryVisitRecord {
         raw.containsKey('order_status') ||
         raw.containsKey('order_status_name') ||
         raw.containsKey('total_sum');
+    final organizationTypeId = _toInt(
+      row['organization_type_id'] ??
+          row['org_type_id'] ??
+          (raw['organization'] is Map
+              ? (raw['organization'] as Map)['type_id']
+              : null) ??
+          raw['organization_type_id'] ??
+          raw['org_type_id'],
+    );
+    // A booking always uses visit_type=1 on the API, including bookings made
+    // in a commercial LPU. The organization type is the source of truth for
+    // where the user returns to create the next order.
+    final orderOrganizationType = organizationTypeId == 2 ? 'lpu' : 'pharmacy';
     final hasDoctorSignals =
         _pick(raw, const ['doctor_name', 'doctor_full_name', 'doctor_fio']) !=
             '—' ||
@@ -356,10 +371,12 @@ class HistoryVisitRecord {
     if ((hasOrderItems || hasOrderFields) &&
         !hasDoctorSignals &&
         !hasCirclePayload) {
-      return ('pharmacy', 'order');
+      return (orderOrganizationType, 'order');
     }
     if (typeRaw == 'order' || typeRaw == '1' || typeRaw == 'pharmacy') {
-      return hasCirclePayload ? ('pharmacy', 'circle') : ('pharmacy', 'order');
+      return hasCirclePayload
+          ? ('pharmacy', 'circle')
+          : (orderOrganizationType, 'order');
     }
     if (typeRaw == '2' || typeRaw == 'lpu' || typeRaw == 'presentation') {
       final doctors = _extractDoctorNames(raw);
@@ -375,7 +392,7 @@ class HistoryVisitRecord {
     final rowType = _asLower(row['type']);
     if (rowType == 'stock') return ('stock', 'stock');
     if (rowType == 'order' || rowType == 'pharmacy') {
-      return ('pharmacy', 'order');
+      return (orderOrganizationType, 'order');
     }
     final doctors = _extractDoctorNames(raw);
     final isGroup = doctors.length > 1;

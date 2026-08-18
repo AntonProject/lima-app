@@ -15,6 +15,7 @@ import 'package:lima/features/visits/providers/lpu_details_provider.dart';
 import 'package:lima/features/visits/providers/organisation_details_provider.dart';
 import 'package:lima/features/visits/providers/visits_hub_provider.dart';
 import 'package:lima/features/visits/domain/entities/organisation_draft.dart';
+import 'package:lima/features/visits/dialogs/payment_type_dialog.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -38,6 +39,7 @@ class LpuDetailScreen extends ConsumerStatefulWidget {
 
 class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
   final Set<int> _expandedDoctorIds = {};
+  bool _isOpeningBooking = false;
 
   Organisation? get _org =>
       ref.read(organisationDetailsViewModelProvider(widget.orgId)).organisation;
@@ -157,6 +159,35 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
 
   bool? _worksWithUs() {
     return _org?.worksWithUs;
+  }
+
+  /// Only commercial LPUs can start the booking flow. An absent field is not
+  /// treated as a commercial organization, so legacy local rows never expose
+  /// the action optimistically.
+  bool get _canMakeBooking => _org?.typeId == 2 && _org?.isBudget == false;
+
+  Future<void> _openLpuBooking() async {
+    if (_isOpeningBooking || !_canMakeBooking) return;
+    setState(() => _isOpeningBooking = true);
+
+    try {
+      final terms = await showPaymentTypeDialog(context);
+      if (terms == null || !mounted) return;
+
+      context.push(
+        Uri(
+          path: '/visits/pharmacy/detail/${widget.orgId}/type/order',
+          queryParameters: {
+            'name': widget.orgName,
+            'prepayment': '${terms.prepayment}',
+            'buyerType': '${terms.buyerType}',
+            'bookingSource': 'lpu',
+          },
+        ).toString(),
+      );
+    } finally {
+      if (mounted) setState(() => _isOpeningBooking = false);
+    }
   }
 
   Future<void> _buildYandexRoute() async {

@@ -132,6 +132,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
   double get _total => _orderState.total;
   bool get _actionLocked => _orderState.isActionLocked;
 
+  String get _organizationDetailPath => widget.routeData.isLpuBooking
+      ? '/visits/lpu/detail/${widget.pharmacyId}'
+      : '/visits/pharmacy/detail/${widget.pharmacyId}';
+
   Future<void> _saveToCart() async {
     if (_actionLocked) return;
     if (_hasInvalidQuantities) {
@@ -157,8 +161,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         buyerType: _buyerType,
         plannedVisitId: widget.routeData.plannedVisitId,
       );
+      if (!mounted) return;
       savedCount++;
     }
+    if (!mounted) return;
     if (savedCount == 0) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -193,11 +199,13 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
               items: serverLines,
             ),
           );
+          if (!mounted) return;
           final plannedVisitId = widget.routeData.plannedVisitId;
           if (plannedVisitId != null) {
             await ref
                 .read(plannedVisitsRepositoryProvider)
                 .consumePlannedVisit(plannedVisitId);
+            if (!mounted) return;
           }
         } catch (_) {
           // The local cart remains available and can still be checked out.
@@ -332,8 +340,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
           await ref
               .read(plannedVisitsRepositoryProvider)
               .consumePlannedVisit(plannedVisitId);
+          if (!mounted) return;
         }
       }
+      if (!mounted) return;
       ref.invalidate(dashboardCountsProvider);
       if (ref.read(isOfflineProvider)) pulseOfflineBanner(ref);
       unawaited(
@@ -409,8 +419,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                     } else {
                       context.go(
                         Uri(
-                          path:
-                              '/visits/pharmacy/detail/${widget.pharmacyId}/type',
+                          path: _organizationDetailPath,
                           queryParameters: {'name': widget.pharmacyName},
                         ).toString(),
                       );

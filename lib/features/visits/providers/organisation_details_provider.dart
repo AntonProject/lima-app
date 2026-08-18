@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/providers/connectivity_provider.dart';
 import '../presentation/view_models/organisation_details_view_model.dart';
 import 'visits_hub_provider.dart';
 
@@ -8,5 +9,6 @@ final organisationDetailsViewModelProvider = StateNotifierProvider.autoDispose
       (ref, organisationId) => OrganisationDetailsViewModel(
         ref.watch(organisationsDirectoryRepositoryProvider),
         organisationId,
+        fetchRemote: !ref.watch(isOfflineProvider),
       ),
     );

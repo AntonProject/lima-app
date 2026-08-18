@@ -47,18 +47,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final params = GoRouterState.of(context).uri.queryParameters;
     final range = params['range'];
     final type = params['type'];
-    if (range == 'today') {
-      ref.read(historyViewModelProvider.notifier).setTodayOnly(true);
-    }
-    if (type == 'lpu') {
-      ref.read(historyViewModelProvider.notifier).setFilterIndex(1);
-    }
-    if (type == 'pharmacy') {
-      ref.read(historyViewModelProvider.notifier).setFilterIndex(2);
-    }
-    if (type == 'stock') {
-      ref.read(historyViewModelProvider.notifier).setFilterIndex(3);
-    }
     final orgId = params['orgId'];
     if (orgId != null) _orgIdFilter = int.tryParse(orgId);
     _visitIdToOpen = params['visitId'];
@@ -70,7 +58,23 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       _autoOpenFirst = true;
     }
     _routeParamsApplied = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoOpenVisit());
+    // Route parameters are available while Flutter is building this page.
+    // Applying them synchronously mutates a provider during build and crashes
+    // when a recent-visit card opens this screen with a `type` query parameter.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final viewModel = ref.read(historyViewModelProvider.notifier);
+      if (range == 'today') viewModel.setTodayOnly(true);
+      switch (type) {
+        case 'lpu':
+          viewModel.setFilterIndex(1);
+        case 'pharmacy':
+          viewModel.setFilterIndex(2);
+        case 'stock':
+          viewModel.setFilterIndex(3);
+      }
+      _tryAutoOpenVisit();
+    });
   }
 
   bool _isTodayRecord(HistoryVisitRecord visit) {
@@ -136,17 +140,22 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final list = _filtered;
     if (list.isEmpty) return;
 
+    final requestedVisitId = _visitIdToOpen?.trim();
+    final hasRequestedVisitId =
+        requestedVisitId != null && requestedVisitId.isNotEmpty;
     HistoryVisitRecord? target;
-    if (_visitIdToOpen != null && _visitIdToOpen!.trim().isNotEmpty) {
-      final raw = _visitIdToOpen!.trim();
+    if (hasRequestedVisitId) {
       for (final v in list) {
-        if (v.id == raw) {
+        if (v.id == requestedVisitId) {
           target = v;
           break;
         }
       }
-    }
-    if (target == null && _autoOpenFirst) {
+      // A concrete visit ID must never silently resolve to another record.
+      // This is especially important when the list is filtered by organization
+      // type and the requested record has not been loaded locally yet.
+      if (target == null) return;
+    } else if (_autoOpenFirst) {
       target = list.first;
     }
     if (target == null) return;
@@ -454,6 +463,7 @@ class _VisitItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final isStock = visit.type == 'stock';
     final isCircle = visit.subType == 'circle';
+    final isOrder = visit.subType == 'order';
     final isPharmacy = visit.type == 'pharmacy';
     final isLpu = visit.type == 'lpu';
     final isGroupPresentation = isLpu && visit.subType == 'group';
@@ -462,7 +472,7 @@ class _VisitItem extends StatelessWidget {
         ? context.l10n.t('pharmCircle')
         : isStock
         ? context.l10n.t('removeStockTitle')
-        : isPharmacy
+        : isOrder
         ? context.l10n.t('bron')
         : isGroupPresentation
         ? context.l10n.t('groupPresentation')
@@ -473,7 +483,7 @@ class _VisitItem extends StatelessWidget {
         ? const Color(0xFFDDF5E6)
         : isStock
         ? const Color(0xFFFFF3DB)
-        : isPharmacy
+        : isOrder
         ? const Color(0xFFDDF5E6)
         : isGroupPresentation
         ? const Color(0xFFEFE9FF)
@@ -482,7 +492,7 @@ class _VisitItem extends StatelessWidget {
         ? const Color(0xFF34A36A)
         : isStock
         ? const Color(0xFFE3A335)
-        : isPharmacy
+        : isOrder
         ? const Color(0xFF34A36A)
         : isGroupPresentation
         ? const Color(0xFF7A63E8)

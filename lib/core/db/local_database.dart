@@ -45,7 +45,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 21,
+      version: 22,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -295,8 +295,28 @@ class LocalDatabase {
       )
     ''');
 
+    await db.execute(_createPendingWorkdayEventsSql);
+
     await db.execute(_createPendingOrganizationsSql);
   }
+
+  // Workday actions are business events, not merely a UI preference. Keeping
+  // them in their own FIFO queue preserves the user-visible start -> finish
+  // sequence when connectivity disappears mid-day.
+  static const String _createPendingWorkdayEventsSql = '''
+      CREATE TABLE IF NOT EXISTS pending_workday_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id         INTEGER NOT NULL,
+        action          TEXT NOT NULL,
+        day_type_id     INTEGER,
+        day_type_name   TEXT,
+        latitude        REAL NOT NULL DEFAULT 0,
+        longitude       REAL NOT NULL DEFAULT 0,
+        created_at      TEXT NOT NULL,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        last_error      TEXT
+      )
+  ''';
 
   // Offline-created organisations (pharmacies) awaiting push. temp_local_id is
   // the negative id used in the `organisations` table until the server assigns
@@ -563,6 +583,13 @@ class LocalDatabase {
     if (oldVersion < 21) {
       try {
         await db.execute('ALTER TABLE drugs ADD COLUMN image_url TEXT');
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
+    }
+    if (oldVersion < 22) {
+      try {
+        await db.execute(_createPendingWorkdayEventsSql);
       } catch (e) {
         logSwallowed(e, 'LocalDatabase._onUpgrade');
       }
@@ -1628,6 +1655,64 @@ class LocalDatabase {
   Future<int> pendingPlansCount() async {
     final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM pending_plans');
     return (rows.first['c'] as int?) ?? 0;
+  }
+
+  // ── Pending workday queue ─────────────────────────────────────────────────
+
+  Future<void> enqueuePendingWorkdayEvent({
+    required int userId,
+    required String action,
+    int? dayTypeId,
+    String? dayTypeName,
+    double latitude = 0,
+    double longitude = 0,
+  }) async {
+    await db.insert('pending_workday_events', {
+      'user_id': userId,
+      'action': action,
+      'day_type_id': dayTypeId,
+      'day_type_name': dayTypeName,
+      'latitude': latitude,
+      'longitude': longitude,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    _notifyChanged(['pending_workday_events']);
+  }
+
+  Future<List<Map<String, dynamic>>> getPendingWorkdayEvents(int userId) async {
+    return db.query(
+      'pending_workday_events',
+      where: 'user_id = ?',
+      whereArgs: [userId],
+      orderBy: 'id ASC',
+    );
+  }
+
+  Future<int> pendingWorkdayEventsCount([int? userId]) async {
+    final rows = await db.rawQuery(
+      userId == null
+          ? 'SELECT COUNT(*) AS c FROM pending_workday_events'
+          : 'SELECT COUNT(*) AS c FROM pending_workday_events WHERE user_id = ?',
+      userId == null ? const <Object?>[] : <Object?>[userId],
+    );
+    return Sqflite.firstIntValue(rows) ?? 0;
+  }
+
+  Future<void> deletePendingWorkdayEvent(int id) async {
+    await db.delete('pending_workday_events', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged(['pending_workday_events']);
+  }
+
+  Future<void> recordPendingWorkdayEventFailure({
+    required int id,
+    required String error,
+  }) async {
+    await db.rawUpdate(
+      'UPDATE pending_workday_events '
+      'SET attempts = attempts + 1, last_error = ? WHERE id = ?',
+      [error, id],
+    );
+    _notifyChanged(['pending_workday_events']);
   }
 
   static String _isoYmd(DateTime d) {
@@ -2916,8 +3001,12 @@ class LocalDatabase {
     final plans = await db.rawQuery(
       'SELECT COUNT(*) AS cnt FROM pending_plans',
     );
+    final workdayEvents = await db.rawQuery(
+      'SELECT COUNT(*) AS cnt FROM pending_workday_events',
+    );
     return (Sqflite.firstIntValue(visits) ?? 0) +
-        (Sqflite.firstIntValue(plans) ?? 0);
+        (Sqflite.firstIntValue(plans) ?? 0) +
+        (Sqflite.firstIntValue(workdayEvents) ?? 0);
   }
 
   // ── Sync Meta ─────────────────────────────────────────────────────────────

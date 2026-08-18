@@ -14,6 +14,7 @@ import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/providers/locale_provider.dart';
 import 'package:lima/core/providers/dashboard_counts_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
+import 'package:lima/core/providers/workday_provider.dart';
 import 'package:lima/core/services/in_app_notifications_service.dart';
 import 'package:lima/features/offline/domain/entities/sync_data_change.dart';
 import 'package:lima/features/home/domain/repositories/home_repository.dart';
@@ -105,6 +106,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       ref.read(homeRecentVisitsProvider.notifier).load();
       if (!ref.read(isOfflineProvider)) {
         ref.read(syncProvider.notifier).reconcileInBackground();
+        ref.read(workdayProvider.notifier).refresh();
         ref
             .read(myPlanProvider(DateTime.now().year).notifier)
             .load(refreshOnly: true);
@@ -183,6 +185,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final syncState = ref.watch(syncProvider);
     final collections = ref.watch(appCollectionsProvider);
     final dashboardCounts = ref.watch(dashboardCountsProvider).valueOrNull;
+    final workdayState = ref.watch(workdayProvider);
     final myPlanState = ref.watch(myPlanProvider(DateTime.now().year));
     final myPlan = myPlanState.plan;
     final activePlanTask = myPlan?.activeTask(DateTime.now());
@@ -453,24 +456,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    AppTapScale(
-                      onTap: () => context.go('/visits'),
-                      pressedScale: 0.97,
-                      child: ElevatedButton.icon(
-                        onPressed: null,
-                        icon: Icon(AppIcons.location, size: 16),
-                        label: Text(context.l10n.t('startWork')),
-                        style: ElevatedButton.styleFrom(
-                          minimumSize: const Size(double.infinity, 44),
-                          disabledBackgroundColor: AppColors.primary,
-                          disabledForegroundColor: Colors.white,
-                          textStyle: GoogleFonts.manrope(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
+                    if (workdayState.isVisible)
+                      const _WorkdayCard()
+                    else if (workdayState.featureEnabled == false)
+                      AppTapScale(
+                        onTap: () => context.go('/visits'),
+                        pressedScale: 0.97,
+                        child: ElevatedButton.icon(
+                          onPressed: null,
+                          icon: Icon(AppIcons.location, size: 16),
+                          label: Text(context.l10n.t('startWork')),
+                          style: ElevatedButton.styleFrom(
+                            minimumSize: const Size(double.infinity, 44),
+                            disabledBackgroundColor: AppColors.primary,
+                            disabledForegroundColor: Colors.white,
+                            textStyle: GoogleFonts.manrope(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
-                      ),
-                    ),
+                      )
+                    else
+                      // Do not expose the legacy navigation action while the
+                      // feature flag is loading. It can otherwise send a tap
+                      // intended for workday start to the visits search.
+                      const SizedBox(height: 44),
                     const SizedBox(height: 14),
                     // ── Activity section ───────────────────────────────────────
                     Text(
@@ -660,8 +671,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                 path: '/visits/history',
                                 queryParameters: {
                                   if (v.id.isNotEmpty) 'visitId': v.id,
-                                  'type': v.type,
-                                  'openFirst': '1',
                                 },
                               ).toString(),
                             ),

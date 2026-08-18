@@ -27,6 +27,9 @@ class _FakeOrganisationsDirectoryRepository
   Future<Organisation?> getModelById(int id) async => null;
 
   @override
+  Future<Organisation?> getRemoteModelById(int id) async => null;
+
+  @override
   Future<List<Organisation>> searchModels({
     required String query,
     List<int>? typeIds,

@@ -131,6 +131,19 @@ extension _NewBronScreenUi on _NewBronScreenState {
     bool success = true,
     bool stayOnPageOnClose = false,
   }) async {
+    if (!mounted) return;
+
+    // The result dialog can outlive this route while navigation is in progress.
+    // Capture everything it needs before opening it so callbacks never read a
+    // defunct State.context after the order screen has been removed.
+    final l10n = context.l10n;
+    final router = GoRouter.of(context);
+    final organizationDetailPath = Uri(
+      path: _organizationDetailPath,
+      queryParameters: {'name': widget.pharmacyName},
+    ).toString();
+    final homePath = '/home?refresh=${DateTime.now().millisecondsSinceEpoch}';
+
     await showDialog<void>(
       context: context,
       barrierDismissible: !success,
@@ -218,12 +231,7 @@ extension _NewBronScreenUi on _NewBronScreenState {
                   ElevatedButton(
                     onPressed: () {
                       Navigator.pop(ctx);
-                      context.pushReplacement(
-                        Uri(
-                          path: '/visits/pharmacy/detail/${widget.pharmacyId}',
-                          queryParameters: {'name': widget.pharmacyName},
-                        ).toString(),
-                      );
+                      router.pushReplacement(organizationDetailPath);
                     },
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 52),
@@ -232,7 +240,7 @@ extension _NewBronScreenUi on _NewBronScreenState {
                       ),
                     ),
                     child: Text(
-                      context.l10n.t('goToCompany'),
+                      l10n.t('goToCompany'),
                       style: GoogleFonts.manrope(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -245,9 +253,7 @@ extension _NewBronScreenUi on _NewBronScreenState {
                     onPressed: () {
                       Navigator.pop(ctx);
                       if (!stayOnPageOnClose) {
-                        context.go(
-                          '/home?refresh=${DateTime.now().millisecondsSinceEpoch}',
-                        );
+                        router.go(homePath);
                       }
                     },
                     style: OutlinedButton.styleFrom(
@@ -260,8 +266,8 @@ extension _NewBronScreenUi on _NewBronScreenState {
                     ),
                     child: Text(
                       stayOnPageOnClose
-                          ? context.l10n.t('understood')
-                          : context.l10n.t('toHome'),
+                          ? l10n.t('understood')
+                          : l10n.t('toHome'),
                       style: GoogleFonts.manrope(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,

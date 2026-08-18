@@ -41,6 +41,8 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
 
   HistoryVisitRecord get visit => widget.visit;
   bool get _isPharmacy => visit.type == 'pharmacy';
+  bool get _isOrder => visit.subType == 'order';
+  bool get _isLpuOrder => _isOrder && visit.type == 'lpu';
   bool get _isStock => visit.type == 'stock';
   bool get _isCircle => visit.type == 'pharmacy' && visit.subType == 'circle';
   String _visitTitle(String base) =>
@@ -103,7 +105,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
     _buyerType = visit.buyerType ?? 0;
     // Same check as creation path (pharmacy_type_screen.dart): if the company
     // has no wholesale markup, the "Опт" button must stay locked during edit.
-    if (_isPharmacy && !_isStock && !_isCircle) {
+    if (_isOrder && !_isStock && !_isCircle) {
       _loadWholesaleSupport();
     }
   }
@@ -138,8 +140,10 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
           padding: EdgeInsets.fromLTRB(14, 8, 14, insetBottom + 12),
           child: _isCircle
               ? _buildCircleVisit(context)
+              : _isOrder
+              ? _buildOrderDetail(context)
               : _isPharmacy
-              ? _buildPharmacyOrder(context)
+              ? _buildOrderDetail(context)
               : _isStock
               ? _buildStockVisit(context)
               : _buildDefault(context),
@@ -397,7 +401,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
     );
   }
 
-  Widget _buildPharmacyOrder(BuildContext context) {
+  Widget _buildOrderDetail(BuildContext context) {
     final total = visit.orderTotal > 0 ? visit.orderTotal : 0.0;
     final items = _extractOrderItems();
     return Column(
@@ -613,11 +617,12 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
                   if (id == null) return;
                   context.push(
                     Uri(
-                      path: '/visits/pharmacy/detail/$id/type',
+                      path: '/visits/pharmacy/detail/$id/type/order',
                       queryParameters: {
                         'name': visit.org,
                         'prepayment': '$_prepayment',
                         'buyerType': '$_buyerType',
+                        if (_isLpuOrder) 'bookingSource': 'lpu',
                       },
                     ).toString(),
                   );
@@ -629,7 +634,9 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
                   ),
                 ),
                 child: Text(
-                  context.l10n.t('newOrderInPharmacy'),
+                  context.l10n.t(
+                    _isLpuOrder ? 'newOrderInLpu' : 'newOrderInPharmacy',
+                  ),
                   textAlign: TextAlign.center,
                   style: GoogleFonts.manrope(
                     fontSize: 14,

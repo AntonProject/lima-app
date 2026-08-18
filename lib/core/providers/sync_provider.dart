@@ -11,6 +11,7 @@ import 'package:lima/core/network/remote_api_service.dart';
 import 'package:lima/core/services/in_app_notifications_service.dart';
 import 'package:lima/core/services/doctor_directory_sync_service.dart';
 import 'package:lima/core/services/pending_plan_sync_service.dart';
+import 'package:lima/core/services/pending_workday_sync_service.dart';
 import 'package:lima/core/services/pending_mutation_sync_service.dart';
 import 'package:lima/core/services/pending_visit_push_service.dart';
 import 'package:lima/core/services/delta_pull_service.dart';
@@ -111,6 +112,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
   final int? Function() _currentCompanyId;
   late final DoctorDirectorySyncService _doctorDirectorySync;
   late final PendingPlanSyncService _pendingPlanSync;
+  late final PendingWorkdaySyncService _pendingWorkdaySync;
   late final PendingMutationSyncService _pendingMutationSync;
   late final PendingVisitPushService _pendingVisitPush;
   late final DeltaPullService _deltaPull;
@@ -144,6 +146,11 @@ class SyncNotifier extends StateNotifier<SyncState> {
       onProgress: _publishDoctorDirectoryProgress,
     );
     _pendingPlanSync = PendingPlanSyncService(
+      db: _db,
+      remoteApi: _remoteApi,
+      isOffline: _isOffline,
+    );
+    _pendingWorkdaySync = PendingWorkdaySyncService(
       db: _db,
       remoteApi: _remoteApi,
       isOffline: _isOffline,
@@ -1068,8 +1075,23 @@ class SyncNotifier extends StateNotifier<SyncState> {
   }
 
   Future<bool> _pushPendingBeforePull({required bool fullRefresh}) async {
-    // Drain pending plan submissions first — they're cheap and unrelated to
-    // visit-push pipeline. Errors here are non-fatal: rows stay in queue.
+    // Workday start/end events establish the user's current work context, so
+    // they always leave the device before plans, visits, and other mutations.
+    final workdayQueueDrained = await _pushPendingWorkdayEvents();
+    if (!workdayQueueDrained) {
+      final remaining = await _db.unsyncedCount();
+      state = state.copyWith(
+        status: SyncStatus.error,
+        unsyncedCount: remaining,
+        message: AppI18n.tr('syncPushFailedDeferred'),
+        clearProgress: true,
+        clearActiveOperation: true,
+      );
+      return false;
+    }
+
+    // Planned visits are cheap and unrelated to the visit-push pipeline.
+    // Errors here are non-fatal: rows stay in queue.
     await _pushPendingPlans();
 
     final pending = await _db.unsyncedCount();
@@ -1121,6 +1143,10 @@ class SyncNotifier extends StateNotifier<SyncState> {
   Future<void> pushPendingPlans() => _pendingPlanSync.sync();
 
   Future<void> _pushPendingPlans() => _pendingPlanSync.sync();
+
+  Future<bool> pushPendingWorkdayEvents() => _pendingWorkdaySync.sync();
+
+  Future<bool> _pushPendingWorkdayEvents() => _pendingWorkdaySync.sync();
 
   void _setPullProgress(String message, {int? current, int? total}) {
     if (!mounted) return;
@@ -1233,6 +1259,26 @@ class SyncNotifier extends StateNotifier<SyncState> {
     }
 
     try {
+      // Preserve start -> end ordering before any independent local writes.
+      final workdayQueueDrained = await _pushPendingWorkdayEvents();
+      if (!workdayQueueDrained) {
+        final remaining = await _db.unsyncedCount();
+        state = state.copyWith(
+          status: SyncStatus.error,
+          unsyncedCount: remaining,
+          message: AppI18n.tr('syncPushFailedDeferred'),
+          lastPostDebug: {
+            'ok': false,
+            'blocked_by': 'pending_workday_events',
+            'remaining_unsynced': remaining,
+            'message': 'Workday queue must sync before visit mutations',
+          },
+          clearActiveOperation: true,
+        );
+        _reconcilePending = false;
+        return;
+      }
+
       final visitResult = await _pendingVisitPush.sync();
       final syncedIds = visitResult.syncedIds;
       final parkedIds = visitResult.parkedIds;
@@ -1340,9 +1386,13 @@ class SyncNotifier extends StateNotifier<SyncState> {
         );
       }
 
-      state = state.copyWith(clearActiveOperation: true);
+      final remainingUnsent = await _db.unsyncedCount();
+      state = state.copyWith(
+        unsyncedCount: remainingUnsent,
+        clearActiveOperation: true,
+      );
       final pushCompleted =
-          failed.isEmpty && queueFailures.isEmpty && remaining == 0;
+          failed.isEmpty && queueFailures.isEmpty && remainingUnsent == 0;
       if (pushCompleted) {
         _drainPendingReconcile();
       } else {

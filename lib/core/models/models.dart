@@ -124,6 +124,29 @@ bool _toBool(dynamic value) {
   return false;
 }
 
+bool? _toNullableBool(dynamic value) {
+  if (value == null) return null;
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == '1' || normalized == 'true') return true;
+    if (normalized == '0' || normalized == 'false') return false;
+  }
+  return null;
+}
+
+Map<String, dynamic>? _decodeJsonMap(String? rawJson) {
+  if (rawJson == null || rawJson.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+  } catch (error) {
+    logSwallowed(error, 'Organisation.decodeRawJson');
+  }
+  return null;
+}
+
 String? _toStringOrNull(dynamic value) {
   if (value == null) return null;
   final s = value.toString().trim();
@@ -176,7 +199,12 @@ class Organisation {
   final int? medRepId;
   final String? medRepName;
   final bool visited;
-  final bool isBudget;
+
+  /// Whether the organization is funded from the state budget.
+  ///
+  /// The server may omit this field. Keep that distinction from `false`: only
+  /// an explicit `false` allows the LPU booking workflow.
+  final bool? isBudget;
   final String? dateCreate;
   final String? revisionStatus;
   final double? latitude;
@@ -221,7 +249,7 @@ class Organisation {
     this.medRepId,
     this.medRepName,
     this.visited = false,
-    this.isBudget = false,
+    this.isBudget,
     this.dateCreate,
     this.revisionStatus,
     this.latitude,
@@ -264,20 +292,37 @@ class Organisation {
 
   bool? get worksWithUs {
     final raw = rawJsonMap;
-    final candidate =
-        raw['is_working_with_us'] ??
-        raw['working_with_us'] ??
-        raw['is_partner'] ??
-        raw['is_active_partner'] ??
-        raw['visited'];
-    if (candidate is bool) return candidate;
-    if (candidate is num) return candidate != 0;
-    if (candidate is String) {
-      final normalized = candidate.toLowerCase();
-      if (normalized == 'true' || normalized == '1') return true;
-      if (normalized == 'false' || normalized == '0') return false;
+
+    // The directory API exposes the relationship through med_rep_id. A
+    // non-null value means the organisation is assigned to an MP; null means
+    // it is not assigned. `visited` is only visit history and must not drive
+    // this badge.
+    if (raw.containsKey('med_rep_id')) {
+      return _hasAssignedMedRep(raw['med_rep_id']);
     }
-    return visited;
+    if (medRepId != null) return true;
+
+    // Keep support for older cached payloads that used an explicit partner
+    // flag, but never fall back to `visited`.
+    for (final key in const [
+      'is_working_with_us',
+      'working_with_us',
+      'is_partner',
+      'is_active_partner',
+    ]) {
+      final value = _toNullableBool(raw[key]);
+      if (value != null) return value;
+    }
+    return null;
+  }
+
+  static bool _hasAssignedMedRep(dynamic value) {
+    if (value == null) return false;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized.isNotEmpty && normalized != 'null';
+    }
+    return true;
   }
 
   static String? _firstText(
@@ -307,48 +352,58 @@ class Organisation {
     return const <String, dynamic>{};
   }
 
-  factory Organisation.fromJson(Map<String, dynamic> json) => Organisation(
-    id: _toInt(json['id']) ?? 0,
-    name: _toStringOrNull(json['name']) ?? '',
-    nameRu: _toStringOrNull(json['name_ru']),
-    address: _toStringOrNull(json['address']) ?? '',
-    type: _orgTypeFromRaw(json['type'] ?? json['type_name']),
-    typeId: _toInt(json['type_id']),
-    typeName: _toStringOrNull(json['type_name']),
-    city: _toStringOrNull(json['city']),
-    regionId: _toInt(json['region_id']),
-    regionName: _toStringOrNull(json['region_name']),
-    district: _toStringOrNull(json['district']),
-    areaId: _toInt(json['area_id']),
-    areaName: _toStringOrNull(json['area_name']),
-    inn: _toStringOrNull(json['inn']),
-    pinfl: _toStringOrNull(json['pinfl']),
-    brand: _toStringOrNull(json['brand']),
-    category: _toStringOrNull(json['category']),
-    categoryId: _toInt(json['category_id']),
-    responsible: _toStringOrNull(json['responsible']),
-    phone: _toStringOrNull(json['phone']),
-    phone2: _toStringOrNull(json['phone2']),
-    phone3: _toStringOrNull(json['phone3']),
-    healthCareFacilityTypeId: _toInt(json['health_care_facility_type_id']),
-    healthCareFacilityTypeName: _toStringOrNull(
-      json['health_care_facility_type_name'],
-    ),
-    classificationId: _toInt(json['classification_id']),
-    classificationName: _toStringOrNull(json['classification_name']),
-    medRepId: _toInt(json['med_rep_id']),
-    medRepName: _toStringOrNull(json['med_rep_name']),
-    visited: _toBool(json['visited']),
-    isBudget: _toBool(json['is_budget']),
-    dateCreate: _toStringOrNull(json['date_create']),
-    revisionStatus: _toStringOrNull(json['revision_status']),
-    latitude: _toDouble(json['latitude']),
-    longitude: _toDouble(json['longitude']),
-    distanceM: _toDouble(json['distance_m']),
-    isFavorite: _toBool(json['is_favorite']),
-    updatedAt: _toStringOrNull(json['updated_at']),
-    rawJson: _toStringOrNull(json['raw_json']),
-  );
+  factory Organisation.fromJson(Map<String, dynamic> json) {
+    final rawJson = _toStringOrNull(json['raw_json']);
+    final raw = _decodeJsonMap(rawJson);
+    final isBudget = raw == null
+        ? _toNullableBool(json['is_budget'])
+        : raw.containsKey('is_budget')
+        ? _toNullableBool(raw['is_budget'])
+        : null;
+
+    return Organisation(
+      id: _toInt(json['id']) ?? 0,
+      name: _toStringOrNull(json['name']) ?? '',
+      nameRu: _toStringOrNull(json['name_ru']),
+      address: _toStringOrNull(json['address']) ?? '',
+      type: _orgTypeFromRaw(json['type'] ?? json['type_name']),
+      typeId: _toInt(json['type_id']),
+      typeName: _toStringOrNull(json['type_name']),
+      city: _toStringOrNull(json['city']),
+      regionId: _toInt(json['region_id']),
+      regionName: _toStringOrNull(json['region_name']),
+      district: _toStringOrNull(json['district']),
+      areaId: _toInt(json['area_id']),
+      areaName: _toStringOrNull(json['area_name']),
+      inn: _toStringOrNull(json['inn']),
+      pinfl: _toStringOrNull(json['pinfl']),
+      brand: _toStringOrNull(json['brand']),
+      category: _toStringOrNull(json['category']),
+      categoryId: _toInt(json['category_id']),
+      responsible: _toStringOrNull(json['responsible']),
+      phone: _toStringOrNull(json['phone']),
+      phone2: _toStringOrNull(json['phone2']),
+      phone3: _toStringOrNull(json['phone3']),
+      healthCareFacilityTypeId: _toInt(json['health_care_facility_type_id']),
+      healthCareFacilityTypeName: _toStringOrNull(
+        json['health_care_facility_type_name'],
+      ),
+      classificationId: _toInt(json['classification_id']),
+      classificationName: _toStringOrNull(json['classification_name']),
+      medRepId: _toInt(json['med_rep_id']),
+      medRepName: _toStringOrNull(json['med_rep_name']),
+      visited: _toBool(json['visited']),
+      isBudget: isBudget,
+      dateCreate: _toStringOrNull(json['date_create']),
+      revisionStatus: _toStringOrNull(json['revision_status']),
+      latitude: _toDouble(json['latitude']),
+      longitude: _toDouble(json['longitude']),
+      distanceM: _toDouble(json['distance_m']),
+      isFavorite: _toBool(json['is_favorite']),
+      updatedAt: _toStringOrNull(json['updated_at']),
+      rawJson: rawJson,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -380,7 +435,7 @@ class Organisation {
     'med_rep_id': medRepId,
     'med_rep_name': medRepName,
     'visited': visited ? 1 : 0,
-    'is_budget': isBudget ? 1 : 0,
+    'is_budget': isBudget == null ? null : (isBudget! ? 1 : 0),
     'date_create': dateCreate,
     'revision_status': revisionStatus,
     'latitude': latitude,

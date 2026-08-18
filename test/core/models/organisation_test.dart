@@ -54,10 +54,7 @@ void main() {
         Organisation.fromJson({'id': 1, 'type': 'дистрибьютор'}).type,
         OrgType.distributor,
       );
-      expect(
-        Organisation.fromJson({'id': 1, 'type': 'lpu'}).type,
-        OrgType.lpu,
-      );
+      expect(Organisation.fromJson({'id': 1, 'type': 'lpu'}).type, OrgType.lpu);
     });
 
     test('unrecognized/missing type defaults to lpu', () {
@@ -69,10 +66,7 @@ void main() {
     });
 
     test('falls back to type_name when type is absent', () {
-      final org = Organisation.fromJson({
-        'id': 1,
-        'type_name': 'Аптека',
-      });
+      final org = Organisation.fromJson({'id': 1, 'type_name': 'Аптека'});
       expect(org.type, OrgType.pharmacy);
     });
 
@@ -86,6 +80,29 @@ void main() {
         final org = Organisation.fromJson({'id': 1, 'is_favorite': rawValue});
         expect(org.isFavorite, false, reason: 'failed for $rawValue');
       }
+    });
+
+    test('is_budget preserves an unknown server value instead of treating it '
+        'as commercial', () {
+      expect(
+        Organisation.fromJson({'id': 1, 'is_budget': false}).isBudget,
+        false,
+      );
+      expect(
+        Organisation.fromJson({'id': 1, 'is_budget': true}).isBudget,
+        true,
+      );
+
+      // Old local rows used `0` as the column default. The stored source JSON
+      // tells us whether that was a real API value or merely a DB default.
+      expect(
+        Organisation.fromJson({
+          'id': 1,
+          'is_budget': 0,
+          'raw_json': '{"id": 1}',
+        }).isBudget,
+        isNull,
+      );
     });
 
     test('missing id defaults to 0 rather than throwing', () {
@@ -148,6 +165,28 @@ void main() {
       expect(
         Organisation.fromJson({'id': 1, 'raw_json': 'not json'}).rawJsonMap,
         isEmpty,
+      );
+    });
+
+    test('worksWithUs is based on med_rep_id, not visit history', () {
+      final assigned = Organisation.fromJson({
+        'id': 19,
+        'med_rep_id': 73,
+        'visited': 1,
+        'raw_json': '{"med_rep_id":73,"visited":true}',
+      });
+      final unassigned = Organisation.fromJson({
+        'id': 4238,
+        'med_rep_id': null,
+        'visited': 0,
+        'raw_json': '{"med_rep_id":null,"visited":false}',
+      });
+
+      expect(assigned.worksWithUs, true);
+      expect(unassigned.worksWithUs, false);
+      expect(
+        Organisation.fromJson({'id': 1, 'visited': 1}).worksWithUs,
+        isNull,
       );
     });
 

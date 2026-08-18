@@ -423,6 +423,9 @@ final routerProvider = Provider<GoRouter>((ref) {
                             plannedVisitId: int.tryParse(
                               state.uri.queryParameters['plannedVisitId'] ?? '',
                             ),
+                            isLpuBooking:
+                                state.uri.queryParameters['bookingSource'] ==
+                                'lpu',
                           );
                         },
                       ),

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/core/providers/sync_provider.dart';
+import 'package:lima/core/providers/workday_provider.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/features/home/screens/home_screen.dart';
@@ -261,6 +262,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             ref.read(organisationsDirectoryRepositoryProvider),
           ),
           currentYearPlan,
+          ref.read(workdayProvider.notifier).refresh(),
         ]).timeout(const Duration(seconds: 5));
       } catch (e) {
         debugPrint('[SPLASH] preload skipped: $e');
