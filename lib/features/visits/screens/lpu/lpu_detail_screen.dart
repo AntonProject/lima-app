@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/services/app_actions.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/core/models/models.dart';
+import 'package:lima/core/models/client_contract.dart';
 import 'package:lima/features/collections/providers/collections_repository_providers.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
 import 'package:lima/core/theme/app_theme.dart';
@@ -14,6 +15,8 @@ import 'package:lima/core/utils/swallowed.dart';
 import 'package:lima/features/visits/providers/lpu_details_provider.dart';
 import 'package:lima/features/visits/providers/organisation_details_provider.dart';
 import 'package:lima/features/visits/providers/visits_hub_provider.dart';
+import 'package:lima/features/visits/providers/pharmacy_order_provider.dart';
+import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/features/visits/domain/entities/organisation_draft.dart';
 import 'package:lima/features/visits/dialogs/payment_type_dialog.dart';
 import 'package:lima/shell/nav_bar_layout.dart';
@@ -171,20 +174,53 @@ class _LpuDetailScreenState extends ConsumerState<LpuDetailScreen> {
     setState(() => _isOpeningBooking = true);
 
     try {
-      final terms = await showPaymentTypeDialog(context);
-      if (terms == null || !mounted) return;
+      final repository = ref.read(pharmacyOrderRepositoryProvider);
+      final companyId = ref.read(authProvider).user?.companyId;
+      final terms = await repository.getOrderTermOptions(companyId: companyId);
+      final prepaymentEnabled = await repository.getPrepaymentFeatureFlag();
+      final inn = int.tryParse((_orgInn() ?? '').replaceAll(RegExp(r'\D'), ''));
+      final contracts = inn == null
+          ? const <ClientContract>[]
+          : await repository.getClientContracts(inn);
+      if (terms.isEmpty) {
+        throw StateError('Booking terms are unavailable');
+      }
+      if (!mounted) return;
+      final selection = await showPaymentTypeDialog(
+        context,
+        terms: terms,
+        prepaymentEnabled: prepaymentEnabled,
+        contracts: contracts,
+      );
+      if (selection == null || !mounted) return;
+      final pricing = selection.pricingTerms;
 
       context.push(
         Uri(
           path: '/visits/pharmacy/detail/${widget.orgId}/type/order',
           queryParameters: {
             'name': widget.orgName,
-            'prepayment': '${terms.prepayment}',
-            'buyerType': '${terms.buyerType}',
+            'prepayment': '${selection.prepayment}',
+            'buyerType': '${selection.buyerType}',
+            if (pricing != null) 'marginId': '${pricing.marginId}',
+            if (pricing != null) 'paymentVariantId': '1',
+            if (companyId != null) 'companyId': '$companyId',
+            if (selection.contractId != null)
+              'contractId': '${selection.contractId}',
             'bookingSource': 'lpu',
           },
         ).toString(),
       );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.l10n.t('orderFailedError', args: {'error': '$error'}),
+            ),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isOpeningBooking = false);
     }

@@ -66,6 +66,10 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
     final params = GoRouterState.of(context).uri.queryParameters;
     _prepayment = int.tryParse(params['prepayment'] ?? '') ?? 100;
     _buyerType = int.tryParse(params['buyerType'] ?? '') ?? 0;
+    final selectedCompanyId = int.tryParse(params['companyId'] ?? '');
+    final paymentVariantId = int.tryParse(params['paymentVariantId'] ?? '');
+    final marginId = int.tryParse(params['marginId'] ?? '');
+    final contractId = int.tryParse(params['contractId'] ?? '');
     _orderConfig = PharmacyOrderViewModelConfig(
       pharmacyId: widget.pharmacyId,
       organizationName: widget.pharmacyName,
@@ -73,6 +77,10 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
       checkoutCartId: null,
       prepaymentPercent: _prepayment,
       buyerType: _buyerType,
+      selectedCompanyId: selectedCompanyId,
+      paymentVariantId: paymentVariantId,
+      marginId: marginId,
+      contractId: contractId,
       initialQuantities: const {},
       initialDrugs: const {},
       cartItems: const [],
@@ -177,7 +185,19 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
             );
           })
           .toList(growable: false);
-      final pricingTerms = pricingPreview?.terms;
+      final config = _orderConfig!;
+      final pricingTerms =
+          pricingPreview?.terms ??
+          (config.marginId == null
+              ? null
+              : PharmacyOrderPricingTerms(
+                  companyId: config.selectedCompanyId,
+                  paymentVariantId: config.paymentVariantId ?? 1,
+                  marginId: config.marginId!,
+                  contractId: config.contractId,
+                  prepaymentPercent: config.prepaymentPercent,
+                  isWholesaler: config.buyerType == 1,
+                ));
 
       if (!mounted) return;
       context.push(
@@ -190,6 +210,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
           prepaymentPercent: _prepayment,
           buyerType: _buyerType,
           pricingTerms: pricingTerms,
+          contractId: config.contractId,
           plannedVisitId: widget.plannedVisitId,
           isLpuBooking: widget.isLpuBooking,
         ),

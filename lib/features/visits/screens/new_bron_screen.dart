@@ -47,6 +47,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
   int? _paymentVariantId;
   int? _marginId;
   int? _marginPercent;
+  int? _contractId;
   int? _checkoutCartId;
   bool _fromCart = false;
   bool _paramsLoaded = false;
@@ -71,6 +72,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     _paymentVariantId = routeData.pricingTerms?.paymentVariantId;
     _marginId = routeData.pricingTerms?.marginId;
     _marginPercent = routeData.pricingTerms?.marginPercent;
+    _contractId = routeData.contractId ?? routeData.pricingTerms?.contractId;
     _fromCart = routeData.fromCart;
     final initialQuantities = <int, int>{};
     final initialDrugs = <int, Drug>{};
@@ -104,6 +106,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       paymentVariantId: _paymentVariantId,
       marginId: _marginId,
       marginPercent: _marginPercent,
+      contractId: _contractId,
       initialQuantities: Map.unmodifiable(initialQuantities),
       initialDrugs: Map.unmodifiable(initialDrugs),
       cartItems: List.unmodifiable(ref.read(appCollectionsProvider).cartItems),
@@ -329,6 +332,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                 cartId: _checkoutCartId,
                 prepaymentPercent: _prepayment,
                 buyerType: _buyerType,
+                contractId: _contractId,
                 plannedVisitId: widget.routeData.plannedVisitId,
               )
               .catchError((_) {}),

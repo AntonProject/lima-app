@@ -1,7 +1,7 @@
 name: lima
 description: LIMA — Mobile app for medical representatives
 publish_to: 'none'
-version: 1.0.7+35
+version: 1.0.7+36
 
 environment:
   sdk: ^3.10.4
@@ -50,6 +50,7 @@ dependencies:
   image: ^4.3.0
   open_filex: ^4.7.0
   share_plus: ^10.0.2
+  file_picker: ^10.1.9
 
   cupertino_icons: ^1.0.8
   package_info_plus: ^9.0.1

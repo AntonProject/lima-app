@@ -15,7 +15,8 @@ class PharmacyOrderDraftMapper {
       'organization_name': draft.organizationName,
       'organization_inn': draft.organizationInn,
       'visit_type': 1,
-      'status': 'completed',
+      'status': 'pending',
+      'sync_status': 'pending',
       'comment': draft.comment,
       'order_comment': draft.comment,
       'order_user_id': draft.orderUserId,
@@ -29,6 +30,7 @@ class PharmacyOrderDraftMapper {
       if (terms?['margin_id'] != null) 'margin_id': terms!['margin_id'],
       if (terms?['margin_percent'] != null)
         'margin_percent': terms!['margin_percent'],
+      if (terms?['contract_id'] != null) 'contract_id': terms!['contract_id'],
       'drugs': lines,
       // Keep this legacy alias for old local readers.
       'items': lines,
@@ -43,7 +45,7 @@ class PharmacyOrderDraftMapper {
       'doctor_id': null,
       'doctor_name': null,
       'visit_type': 'order',
-      'status': 'completed',
+      'status': 'pending',
       'notes': draft.comment,
       'medical_rep_name': draft.medicalRepName,
       'created_at': createdAt,
@@ -74,6 +76,8 @@ class PharmacyOrderDraftMapper {
           map['margin_percent'] = pricingTerms.marginPercent;
         }
         map['payment_variant_id'] = pricingTerms.paymentVariantId;
+        map['contract_id'] = pricingTerms.contractId;
+        map['sync_status'] = 'pending';
         return jsonEncode(map);
       }
     } catch (_) {

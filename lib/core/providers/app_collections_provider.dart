@@ -24,6 +24,7 @@ class CartItemSnapshot {
   final int? cartId;
   final int? prepaymentPercent;
   final int? buyerType;
+  final int? contractId;
   final String? imageUrl;
   final int? plannedVisitId;
 
@@ -49,6 +50,7 @@ class CartItemSnapshot {
     this.cartId,
     this.prepaymentPercent,
     this.buyerType,
+    this.contractId,
     this.imageUrl,
     this.plannedVisitId,
     this.currentStockId,
@@ -73,6 +75,7 @@ class CartItemSnapshot {
       cartId: cartId,
       prepaymentPercent: prepaymentPercent,
       buyerType: buyerType,
+      contractId: contractId,
       imageUrl: imageUrl,
       plannedVisitId: plannedVisitId,
       currentStockId: currentStockId,
@@ -96,6 +99,7 @@ class CartItemSnapshot {
       if (cartId != null) 'cart_id': cartId,
       if (prepaymentPercent != null) 'prepayment_percent': prepaymentPercent,
       if (buyerType != null) 'buyer_type': buyerType,
+      if (contractId != null) 'contract_id': contractId,
       if (imageUrl != null) 'image_url': imageUrl,
       if (plannedVisitId != null) 'planned_visit_id': plannedVisitId,
       if (currentStockId != null) 'current_stock_id': currentStockId,
@@ -123,6 +127,7 @@ class CartItemSnapshot {
       buyerType:
           _toInt(json['buyer_type']) ??
           (isWholesaler == null ? null : (isWholesaler ? 1 : 0)),
+      contractId: _toInt(json['contract_id']),
       currentStockId: json['current_stock_id'] as int?,
       bindingDrugId: json['binding_drug_id'] as int?,
       imageUrl: json['image_url'] as String?,
@@ -139,6 +144,7 @@ class CartItemSnapshot {
     int? cartId,
     int? prepaymentPercent,
     int? buyerType,
+    int? contractId,
     int? plannedVisitId,
   }) {
     return CartItemSnapshot(
@@ -156,6 +162,7 @@ class CartItemSnapshot {
       cartId: cartId,
       prepaymentPercent: prepaymentPercent,
       buyerType: buyerType,
+      contractId: contractId,
       imageUrl: drug.imageUrl,
       plannedVisitId: plannedVisitId,
       currentStockId: drug.currentStockId,
@@ -295,6 +302,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
             prepaymentPercent:
                 mapped.prepaymentPercent ?? localMatch.prepaymentPercent,
             buyerType: mapped.buyerType ?? localMatch.buyerType,
+            contractId: mapped.contractId ?? localMatch.contractId,
             imageUrl: mapped.imageUrl ?? localMatch.imageUrl,
             plannedVisitId: localMatch.plannedVisitId,
             currentStockId: mapped.currentStockId,
@@ -373,6 +381,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     String? pharmacyName,
     int? prepaymentPercent,
     int? buyerType,
+    int? contractId,
     int? plannedVisitId,
   }) async {
     final items = [...state.cartItems];
@@ -382,6 +391,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
           item.pharmacyId == pharmacyId &&
           (item.prepaymentPercent ?? 100) == (prepaymentPercent ?? 100) &&
           (item.buyerType ?? 0) == (buyerType ?? 0) &&
+          item.contractId == contractId &&
           item.plannedVisitId == plannedVisitId,
     );
     if (index == -1) {
@@ -394,6 +404,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
           addedAt: DateTime.now().toIso8601String(),
           prepaymentPercent: prepaymentPercent,
           buyerType: buyerType,
+          contractId: contractId,
           plannedVisitId: plannedVisitId,
         ),
       );
@@ -418,6 +429,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     int? cartId,
     int? prepaymentPercent,
     int? buyerType,
+    int? contractId,
     int? plannedVisitId,
   }) async {
     final items = [...state.cartItems];
@@ -431,6 +443,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
       if (buyerType != null && (item.buyerType ?? 0) != buyerType) {
         return false;
       }
+      if (contractId != null && item.contractId != contractId) return false;
       if (item.plannedVisitId != plannedVisitId) return false;
       return true;
     });
@@ -453,6 +466,7 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
     int? cartId,
     int? prepaymentPercent,
     int? buyerType,
+    int? contractId,
     int? plannedVisitId,
   }) async {
     final items = [...state.cartItems];
@@ -468,6 +482,9 @@ class AppCollectionsNotifier extends StateNotifier<AppCollectionsState> {
       }
       if (matches && buyerType != null) {
         matches = (item.buyerType ?? 0) == buyerType;
+      }
+      if (matches && contractId != null) {
+        matches = item.contractId == contractId;
       }
       if (matches) {
         matches = item.plannedVisitId == plannedVisitId;

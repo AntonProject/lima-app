@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -79,7 +80,8 @@ class DrugsRepositoryImpl
       documentsCount: _toInt(row['documents_count']) ?? 0,
       currentStockId: _toInt(row['current_stock_id']),
       bindingDrugId: _toInt(row['binding_drug_id']),
-      imageUrl: row['image_url']?.toString(),
+      imageUrl: _localImagePath(row),
+      cachedImagePath: row['image_cached_path']?.toString(),
     );
   }
 
@@ -91,6 +93,14 @@ class DrugsRepositoryImpl
   static double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
     return double.tryParse('$value') ?? 0;
+  }
+
+  static String? _localImagePath(Map<String, dynamic> row) {
+    final cached = row['image_cached_path']?.toString().trim();
+    if (cached != null && cached.isNotEmpty && File(cached).existsSync()) {
+      return cached;
+    }
+    return row['image_url']?.toString();
   }
 
   static bool? _toBool(dynamic value) {
@@ -124,6 +134,7 @@ class DrugsRepositoryImpl
 
   static DrugMaterial _mapMaterial(Map<String, dynamic> row) {
     String? fileName;
+    String? fileUid;
     int? documentId = _toInt(row['document_id'] ?? row['remote_id']);
     String? documentTypeName = row['document_type_name']?.toString();
     final raw = row['raw_json'];
@@ -132,6 +143,7 @@ class DrugsRepositoryImpl
         final decoded = jsonDecode(raw);
         if (decoded is Map) {
           fileName ??= decoded['file_name']?.toString();
+          fileUid ??= decoded['file_uid']?.toString();
           documentId ??= _toInt(
             decoded['id'] ?? decoded['document_id'] ?? decoded['remote_id'],
           );
@@ -141,6 +153,9 @@ class DrugsRepositoryImpl
         // Optional metadata must not hide an otherwise valid material.
       }
     }
+    final downloadUrl = fileUid != null && fileUid.isNotEmpty
+        ? '/files/download/${Uri.encodeComponent(fileUid)}'
+        : null;
     return DrugMaterial(
       id: _toInt(row['id']) ?? 0,
       drugId: _toInt(row['drug_id']),
@@ -149,7 +164,9 @@ class DrugsRepositoryImpl
       description: row['description']?.toString(),
       fileType: row['file_type']?.toString() ?? '',
       documentTypeName: documentTypeName,
-      url: row['local_path']?.toString() ?? '',
+      // Old offline rows may still contain file_url. Prefer the UID kept in
+      // raw_json, so the corrected download endpoint works before next sync.
+      url: downloadUrl ?? row['local_path']?.toString() ?? '',
       fileName: fileName,
       cachedPath: row['cached_path']?.toString(),
       uploadedAt: row['uploaded_at']?.toString(),

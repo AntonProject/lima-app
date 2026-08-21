@@ -19,7 +19,8 @@ class MaterialCacheService {
   /// Safe to call multiple times — skips already-cached files.
   Future<int> downloadPending(LocalDatabase db) async {
     final pending = await db.getMaterialsToCache();
-    if (pending.isEmpty) return 0;
+    final pendingImages = await db.getDrugImagesToCache();
+    if (pending.isEmpty && pendingImages.isEmpty) return 0;
 
     final dir = await _cacheDir();
     var cachedCount = 0;
@@ -68,6 +69,49 @@ class MaterialCacheService {
         }
       }
     }
+    for (final row in pendingImages) {
+      final id = row['id'] as int?;
+      final rawUrl = row['image_url']?.toString().trim() ?? '';
+      if (id == null || rawUrl.isEmpty) continue;
+      final cachedPath = row['image_cached_path']?.toString().trim();
+      if (cachedPath != null &&
+          cachedPath.isNotEmpty &&
+          await File(cachedPath).exists()) {
+        cachedCount++;
+        continue;
+      }
+      final fullUrl = rawUrl.startsWith('http')
+          ? rawUrl
+          : _resolveApiUrl(rawUrl);
+      final file = File('${dir.path}/drug_image_$id${_imageExtension(rawUrl)}');
+      if (await file.exists()) {
+        await db.updateDrugImageCachedPath(id, file.path);
+        cachedCount++;
+        continue;
+      }
+      try {
+        await _dio.download(
+          fullUrl,
+          file.path,
+          options: Options(
+            headers: _authToken != null
+                ? {'Authorization': 'Bearer $_authToken'}
+                : {},
+            receiveTimeout: const Duration(seconds: 60),
+          ),
+        );
+        await db.updateDrugImageCachedPath(id, file.path);
+        cachedCount++;
+      } catch (_) {
+        if (await file.exists()) {
+          try {
+            await file.delete();
+          } catch (error) {
+            logSwallowed(error, 'MaterialCacheService.deletePartialImage');
+          }
+        }
+      }
+    }
     return cachedCount;
   }
 
@@ -78,6 +122,7 @@ class MaterialCacheService {
       await dir.delete(recursive: true);
     }
     await db.db.execute("UPDATE drug_materials SET cached_path = NULL");
+    await db.db.execute("UPDATE drugs SET image_cached_path = NULL");
   }
 
   Future<Directory> _cacheDir() async {
@@ -92,6 +137,13 @@ class MaterialCacheService {
         ? '.${url.split('.').last.split('?').first}'
         : '.pdf';
     return 'material_$id$ext';
+  }
+
+  static String _imageExtension(String url) {
+    final extension = url.split('?').first.split('.').last.toLowerCase();
+    return RegExp(r'^[a-z0-9]{2,5}$').hasMatch(extension)
+        ? '.$extension'
+        : '.jpg';
   }
 
   String _resolveApiUrl(String rawPath) {

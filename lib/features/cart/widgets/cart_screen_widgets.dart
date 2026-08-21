@@ -7,6 +7,7 @@ class _CartGroup {
   final int? cartId;
   final int prepaymentPercent;
   final int buyerType;
+  final int? contractId;
   final int? plannedVisitId;
   final List<CartItemSnapshot> items;
 
@@ -17,6 +18,7 @@ class _CartGroup {
     required this.cartId,
     required this.prepaymentPercent,
     required this.buyerType,
+    required this.contractId,
     required this.plannedVisitId,
     required this.items,
   });
@@ -39,6 +41,7 @@ class _CartGroup {
       cartId: first.cartId,
       prepaymentPercent: first.prepaymentPercent ?? 100,
       buyerType: first.buyerType ?? 0,
+      contractId: first.contractId,
       plannedVisitId: first.plannedVisitId,
       items: List.unmodifiable(items),
     );

@@ -3,32 +3,35 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  const presentationFiles = [
-    'lib/features/auth/providers/auth_provider.dart',
-    'lib/features/home/screens/home_screen.dart',
-    'lib/features/knowledge/screens/knowledge_screen.dart',
-    'lib/features/knowledge/screens/drug_detail_screen.dart',
-    'lib/features/knowledge/screens/material_viewer_screen.dart',
-    'lib/features/visits/screens/pharmacy/pharmacy_order_screen.dart',
-    'lib/features/visits/screens/pharmacy/pharmacy_detail_screen.dart',
-    'lib/features/visits/screens/new_bron_screen.dart',
-    'lib/features/profile/screens/profile_screen.dart',
-    'lib/features/profile/screens/fav_doctors_screen.dart',
-    'lib/features/profile/screens/fav_pharmacies_screen.dart',
-    'lib/features/cart/screens/cart_screen.dart',
-    'lib/features/offline/screens/sync_screen.dart',
-    'lib/features/splash/screens/splash_screen.dart',
-    'lib/features/visits/screens/history_screen.dart',
-    'lib/features/visits/dialogs/visit_detail_dialog.dart',
-    'lib/features/visits/screens/pharmacy/pharma_circle_screen.dart',
-    'lib/features/visits/screens/pharmacy/pharmacy_stock_screen.dart',
-    'lib/features/visits/screens/lpu/lpu_detail_screen.dart',
-    'lib/features/plan/screens/my_plan_screen.dart',
-  ];
+  const legacyPresentationExceptions = {
+    'lib/features/auth/screens/login_screen.dart',
+    'lib/features/visits/screens/lpu/lpu_doctor_select_screen.dart',
+    // These two slices still contain their composition root/raw form state;
+    // keep them explicit until their own migration change set lands.
+    'lib/features/offline/presentation/view_models/sync_view_model.dart',
+    'lib/features/visits/presentation/view_models/add_pharmacy_view_model.dart',
+  };
+
+  List<String> discoverPresentationFiles() {
+    return Directory('lib/features')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .map((file) => file.path)
+        .where((path) => path.endsWith('.dart'))
+        .where(
+          (path) =>
+              path.contains('/presentation/') || path.endsWith('_screen.dart'),
+        )
+        .where((path) => !legacyPresentationExceptions.contains(path))
+        .toList()
+      ..sort();
+  }
 
   test(
     'migrated presentation files do not reach infrastructure or raw rows',
     () {
+      final presentationFiles = discoverPresentationFiles();
+      expect(presentationFiles, isNotEmpty);
       for (final path in presentationFiles) {
         final source = File(path).readAsStringSync();
         expect(
@@ -79,6 +82,7 @@ void main() {
       'lib/features/visits/data/doctors_repository.dart',
       'lib/features/visits/data/organisations_repository.dart',
       'lib/features/visits/data/visits_repository.dart',
+      'lib/features/workday/data/workday_repository_impl.dart',
     ];
 
     for (final path in repositoryFiles) {

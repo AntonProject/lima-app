@@ -13,6 +13,7 @@ class CartServerItem {
   final int? cartId;
   final int? prepaymentPercent;
   final int? buyerType;
+  final int? contractId;
   final int? currentStockId;
   final int? bindingDrugId;
   final String? imageUrl;
@@ -33,6 +34,7 @@ class CartServerItem {
     this.cartId,
     this.prepaymentPercent,
     this.buyerType,
+    this.contractId,
     this.currentStockId,
     this.bindingDrugId,
     this.imageUrl,
@@ -59,6 +61,7 @@ class CartServerItem {
       buyerType:
           _toInt(json['buyer_type']) ??
           (isWholesaler == null ? null : (isWholesaler ? 1 : 0)),
+      contractId: _toInt(json['contract_id']),
       currentStockId: _toInt(json['current_stock_id']),
       bindingDrugId: _toInt(json['binding_drug_id']),
       imageUrl: json['image_url']?.toString(),
@@ -81,6 +84,7 @@ class CartServerItem {
     if (cartId != null) 'cart_id': cartId,
     if (prepaymentPercent != null) 'prepayment_percent': prepaymentPercent,
     if (buyerType != null) 'buyer_type': buyerType,
+    if (contractId != null) 'contract_id': contractId,
     if (currentStockId != null) 'current_stock_id': currentStockId,
     if (bindingDrugId != null) 'binding_drug_id': bindingDrugId,
     if (imageUrl != null) 'image_url': imageUrl,
@@ -130,12 +134,14 @@ class CartServerDraft {
   final int organizationId;
   final int? marginId;
   final int? paymentVariantId;
+  final int? contractId;
   final List<CartServerDraftLine> items;
 
   const CartServerDraft({
     required this.organizationId,
     this.marginId,
     this.paymentVariantId,
+    this.contractId,
     required this.items,
   });
 
@@ -143,7 +149,7 @@ class CartServerDraft {
     'organization_id': organizationId,
     'margin_id': marginId,
     'payment_variant_id': paymentVariantId,
-    'contract_id': null,
+    'contract_id': contractId,
     'items': items.map((item) => item.toMap()).toList(growable: false),
   };
 }

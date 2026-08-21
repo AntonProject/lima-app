@@ -94,9 +94,16 @@ class RecentVisitMapper {
           rawMap['visit_status'],
     ).toLowerCase();
     final complete = _safeString(rawMap['complete']).toLowerCase();
-    final statusKey = _statusKey(
+    var statusKey = _statusKey(
       (complete == 'true' || complete == '1') ? 'completed' : statusRaw,
     );
+    final syncFailed = _toBool(row['sync_failed']) == true;
+    final syncPending = _toBool(row['is_synced']) == false;
+    if (syncFailed) {
+      statusKey = 'sync_failed';
+    } else if (syncPending) {
+      statusKey = 'pending';
+    }
 
     return RecentVisit(
       id: id,
@@ -218,5 +225,15 @@ class RecentVisitMapper {
   static int? _toInt(Object? value) {
     if (value is num) return value.toInt();
     return int.tryParse('$value');
+  }
+
+  static bool? _toBool(Object? value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value == null) return null;
+    final normalized = value.toString().trim().toLowerCase();
+    if (normalized == 'true' || normalized == '1') return true;
+    if (normalized == 'false' || normalized == '0') return false;
+    return null;
   }
 }

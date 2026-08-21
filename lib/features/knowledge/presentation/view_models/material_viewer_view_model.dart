@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/models/models.dart';
+import '../../../../core/utils/swallowed.dart';
 import '../../domain/repositories/knowledge_repository.dart';
 import '../../domain/services/material_access_service.dart';
 
@@ -132,6 +133,7 @@ class MaterialViewerViewModel extends StateNotifier<MaterialViewerViewState> {
       );
       return path;
     } catch (error) {
+      logSwallowed(error, 'MaterialViewerViewModel.ensureLocal');
       if (mounted) {
         downloading.remove(index);
         failed.add(index);

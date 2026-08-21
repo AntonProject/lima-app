@@ -11,6 +11,11 @@ class HistoryVisitRecord {
   final String drug;
   final String drugStatus;
   final String status;
+
+  /// Local delivery state. This is intentionally separate from the server
+  /// visit status: a locally completed order can still be waiting for push.
+  final String syncStatus;
+  final String? syncError;
   final String duration;
   final String medicalRep;
   final String doctor;
@@ -41,6 +46,8 @@ class HistoryVisitRecord {
     this.drug = '—',
     this.drugStatus = '—',
     this.status = 'planned',
+    this.syncStatus = 'synced',
+    this.syncError,
     this.duration = '—',
     this.medicalRep = '—',
     this.doctor = '—',
@@ -135,6 +142,7 @@ class HistoryVisitRecord {
           row['status_name'] ??
           row['visit_status'],
     );
+    final syncStatus = _syncStatus(row);
     final isCompletedByFlag = _toBool(raw['complete']) ?? false;
     final presentations = _extractPresentations(raw);
     final firstDrug = presentations.isEmpty ? '—' : presentations.first.name;
@@ -214,9 +222,15 @@ class HistoryVisitRecord {
       subType: subType,
       drug: firstDrug,
       drugStatus: firstDrugStatus,
-      status: _statusKey(
-        isCompletedByFlag && statusRaw.isEmpty ? 'completed' : statusRaw,
-      ),
+      status: syncStatus == 'pending' || syncStatus == 'failed'
+          ? syncStatus
+          : _statusKey(
+              isCompletedByFlag && statusRaw.isEmpty ? 'completed' : statusRaw,
+            ),
+      syncStatus: syncStatus,
+      syncError: '${row['last_error'] ?? ''}'.trim().isEmpty
+          ? null
+          : '${row['last_error']}'.trim(),
       duration: durationMin > 0 ? '$durationMin мин' : '—',
       medicalRep: medicalRep,
       doctor: doctor,
@@ -401,6 +415,10 @@ class HistoryVisitRecord {
 
   ColorSpec get statusColor {
     switch (status) {
+      case 'pending':
+        return const ColorSpec(bgHex: 0xFFFFF4D6, fgHex: 0xFFB88700);
+      case 'failed':
+        return const ColorSpec(bgHex: 0xFFFFE8E8, fgHex: 0xFFE05050);
       case 'completed':
         return const ColorSpec(bgHex: 0xFFDDF5E6, fgHex: 0xFF2AA65A);
       case 'planned':
@@ -790,6 +808,14 @@ class HistoryVisitRecord {
     if (s == 'true' || s == '1') return true;
     if (s == 'false' || s == '0') return false;
     return null;
+  }
+
+  static String _syncStatus(Map<String, dynamic> row) {
+    final isSynced = _toBool(row['is_synced']);
+    final failed = _toBool(row['sync_failed']);
+    if (failed == true) return 'failed';
+    if (isSynced == false) return 'pending';
+    return 'synced';
   }
 }
 

@@ -806,12 +806,16 @@ class _VisitItem extends StatelessWidget {
     final isCircle = type == 'pharmacy' && subType == 'circle';
     final localizedStatus = switch (statusKey) {
       'completed' => context.l10n.t('conducted'),
+      'pending' => context.l10n.t('orderPendingSync'),
+      'sync_failed' => context.l10n.t('orderSyncFailed'),
       'in_progress' => context.l10n.t('visitStatusInProgress'),
       'cancelled' => context.l10n.t('cancelled'),
       _ => context.l10n.t('visitStatusPlanned'),
     };
     final (statusBg, statusFg) = switch (statusKey) {
       'completed' => (const Color(0xFFEFF2F7), const Color(0xFF77839A)),
+      'pending' => (const Color(0xFFFFF4D6), const Color(0xFFB88700)),
+      'sync_failed' => (const Color(0xFFFCE7E7), const Color(0xFFE35D5B)),
       'in_progress' => (const Color(0xFFFAF1DF), const Color(0xFFC89B3C)),
       'cancelled' => (const Color(0xFFFCE7E7), const Color(0xFFE35D5B)),
       _ => (const Color(0xFFEAF0FF), AppColors.primary),

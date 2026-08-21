@@ -453,6 +453,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
               cartId: item.cartId,
               prepaymentPercent: group.prepaymentPercent,
               buyerType: group.buyerType,
+              contractId: group.contractId,
               plannedVisitId: group.plannedVisitId,
             ),
             child: const Icon(
@@ -496,6 +497,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
           .toList(growable: false),
       prepaymentPercent: group.prepaymentPercent,
       buyerType: group.buyerType,
+      contractId: group.contractId,
       cartId: group.cartId,
       fromCart: true,
       plannedVisitId: group.plannedVisitId,
@@ -584,8 +586,8 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       final prepayment = item.prepaymentPercent ?? 100;
       final buyerType = item.buyerType ?? 0;
       final key = item.cartId != null
-          ? 'server:${item.cartId}:$prepayment:$buyerType:${item.plannedVisitId ?? 0}'
-          : 'pharmacy:${item.pharmacyId ?? 0}:${item.pharmacyName ?? ''}:$prepayment:$buyerType:${item.plannedVisitId ?? 0}';
+          ? 'server:${item.cartId}:$prepayment:$buyerType:${item.contractId ?? 0}:${item.plannedVisitId ?? 0}'
+          : 'pharmacy:${item.pharmacyId ?? 0}:${item.pharmacyName ?? ''}:$prepayment:$buyerType:${item.contractId ?? 0}:${item.plannedVisitId ?? 0}';
       byKey.putIfAbsent(key, () => <CartItemSnapshot>[]).add(item);
     }
     final groups = byKey.values.map(_CartGroup.fromItems).toList();

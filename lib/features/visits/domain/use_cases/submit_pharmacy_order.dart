@@ -13,6 +13,7 @@ class SubmitPharmacyOrder {
     required PharmacyOrderLines lines,
     int? companyId,
     int paymentVariantId = 1,
+    int? contractId,
     double? orderTotal,
   }) => _repository.calculatePricing(
     prepaymentPercent: prepaymentPercent,
@@ -20,6 +21,7 @@ class SubmitPharmacyOrder {
     lines: lines,
     companyId: companyId,
     paymentVariantId: paymentVariantId,
+    contractId: contractId,
     orderTotal: orderTotal,
   );
 
@@ -29,13 +31,15 @@ class SubmitPharmacyOrder {
     required double orderTotal,
     int paymentVariantId = 1,
     int? companyId,
+    int? contractId,
   }) => _repository.resolvePricingTerms(
     prepaymentPercent: prepaymentPercent,
     isWholesaler: isWholesaler,
     orderTotal: orderTotal,
     paymentVariantId: paymentVariantId,
     companyId: companyId,
-  );
+    contractId: contractId,
+    );
 
   Future<PharmacyOrderSubmission> call({
     required int orderUserId,

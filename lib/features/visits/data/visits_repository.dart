@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/db/local_database.dart';
 import '../../../core/models/local_visit.dart';
 import '../../../core/models/models.dart';
+import '../../../core/models/client_contract.dart';
+import '../../../core/models/order_term_option.dart';
 import '../../../core/network/remote_api_service.dart';
 import '../models/history_records.dart';
 import '../../offline/domain/entities/sync_data_change.dart';
@@ -316,6 +318,7 @@ class VisitsRepositoryImpl
     required PharmacyOrderLines lines,
     int? companyId,
     int paymentVariantId = 1,
+    int? contractId,
     double? orderTotal,
   }) async {
     if (lines.isEmpty) return null;
@@ -325,6 +328,7 @@ class VisitsRepositoryImpl
       drugs: lines.map((line) => line.toApiMap()).toList(),
       companyId: companyId,
       paymentVariantId: paymentVariantId,
+      contractId: contractId,
       orderTotal: orderTotal,
     );
     if (draft == null) return null;
@@ -338,6 +342,7 @@ class VisitsRepositoryImpl
       marginPercent: _toInt(draft['margin_percent']),
       prepaymentPercent: prepaymentPercent,
       isWholesaler: isWholesaler,
+      contractId: _toInt(draft['contract_id']) ?? contractId,
     );
 
     final pricedRows =
@@ -369,8 +374,80 @@ class VisitsRepositoryImpl
   }
 
   @override
-  Future<bool> supportsWholesaleOrders({int? companyId}) =>
-      _api.supportsWholesaleOrders(companyId: companyId);
+  Future<bool> supportsWholesaleOrders({int? companyId}) async {
+    final terms = await getOrderTermOptions(companyId: companyId);
+    return terms.any((term) => term.wholesaler);
+  }
+
+  @override
+  Future<List<OrderTermOption>> getOrderTermOptions({int? companyId}) async {
+    final key = 'booking_terms:${companyId ?? 'current'}';
+    try {
+      final terms = await _api.getOrderTermOptions(companyId: companyId);
+      await _cacheJson(key, terms.map((term) => term.toMap()).toList());
+      return terms;
+    } catch (error) {
+      logSwallowed(error, 'VisitsRepository.getOrderTermOptions');
+      final cached = await _readCachedJson(key);
+      if (cached == null) rethrow;
+      return OrderTermOption.fromResponse(cached);
+    }
+  }
+
+  @override
+  Future<bool?> getPrepaymentFeatureFlag() async {
+    const key = 'booking_prepayment_feature';
+    try {
+      final value = await _api.getPrepaymentFeatureFlag();
+      if (value != null) await _db.setSyncMeta(key, value.toString());
+      return value;
+    } catch (error) {
+      logSwallowed(error, 'VisitsRepository.getPrepaymentFeatureFlag');
+      final cached = await _db.getSyncMeta(key);
+      if (cached == null) rethrow;
+      return _parseBool(cached);
+    }
+  }
+
+  @override
+  Future<List<ClientContract>> getClientContracts(int clientInn) async {
+    if (clientInn <= 0) return const <ClientContract>[];
+    final key = 'booking_contracts:$clientInn';
+    try {
+      final contracts = await _api.getClientContracts(clientInn);
+      await _cacheJson(
+        key,
+        contracts.map((contract) => contract.toMap()).toList(),
+      );
+      return contracts;
+    } catch (error) {
+      logSwallowed(error, 'VisitsRepository.getClientContracts');
+      final cached = await _readCachedJson(key);
+      if (cached == null) rethrow;
+      return ClientContract.fromResponse(cached);
+    }
+  }
+
+  Future<void> _cacheJson(String key, Object value) =>
+      _db.setSyncMeta(key, jsonEncode(value));
+
+  Future<Object?> _readCachedJson(String key) async {
+    final raw = await _db.getSyncMeta(key);
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      return jsonDecode(raw);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static bool? _parseBool(Object? value) {
+    if (value is bool) return value;
+    final normalized = '$value'.trim().toLowerCase();
+    if (normalized == 'true' || normalized == '1') return true;
+    if (normalized == 'false' || normalized == '0') return false;
+    return null;
+  }
 
   Future<Map<String, dynamic>?> _resolveOrderPricingTerms({
     required int prepaymentPercent,
@@ -378,12 +455,14 @@ class VisitsRepositoryImpl
     double orderTotal = 0,
     int paymentVariantId = 1,
     int? companyId,
+    int? contractId,
   }) => _api.resolveOrderPricingTerms(
     prepaymentPercent: prepaymentPercent,
     isWholesaler: isWholesaler,
     orderTotal: orderTotal,
     paymentVariantId: paymentVariantId,
     companyId: companyId,
+    contractId: contractId,
   );
 
   @override
@@ -393,6 +472,7 @@ class VisitsRepositoryImpl
     required double orderTotal,
     int paymentVariantId = 1,
     int? companyId,
+    int? contractId,
   }) async {
     final terms = await _resolveOrderPricingTerms(
       prepaymentPercent: prepaymentPercent,
@@ -400,6 +480,7 @@ class VisitsRepositoryImpl
       orderTotal: orderTotal,
       paymentVariantId: paymentVariantId,
       companyId: companyId,
+      contractId: contractId,
     );
     if (terms == null) return null;
     final marginId = _toInt(terms['margin_id']);
@@ -411,6 +492,7 @@ class VisitsRepositoryImpl
       marginPercent: _toInt(terms['margin_percent']),
       prepaymentPercent:
           _toInt(terms['prepayment_percent']) ?? prepaymentPercent,
+      contractId: _toInt(terms['contract_id']) ?? contractId,
       isWholesaler: terms['is_wholesaler'] is bool
           ? terms['is_wholesaler'] as bool
           : isWholesaler,
@@ -426,6 +508,7 @@ class VisitsRepositoryImpl
     int? marginId,
     int? marginPercent,
     int? prepaymentPercent,
+    int? contractId,
     required bool isWholesaler,
     String? orderComment,
     String? orderExpireDate,
@@ -440,6 +523,7 @@ class VisitsRepositoryImpl
     marginId: marginId,
     marginPercent: marginPercent,
     prepaymentPercent: prepaymentPercent,
+    contractId: contractId,
     isWholesaler: isWholesaler,
     orderComment: orderComment,
     orderExpireDate: orderExpireDate,
@@ -468,6 +552,7 @@ class VisitsRepositoryImpl
         marginId: pricingTerms.marginId,
         marginPercent: pricingTerms.marginPercent,
         prepaymentPercent: pricingTerms.prepaymentPercent,
+        contractId: pricingTerms.contractId,
         isWholesaler: isWholesaler,
         orderComment: orderComment,
         drugs: lines.map((line) => line.toApiMap()).toList(),

@@ -422,3 +422,34 @@ flows перечислены в этапе 6 и остаются следующ�
 - [x] `flutter analyze` и полный `flutter test` проходят локально и запускаются
   в CI.
 - [x] Архитектурные документы обновлены под фактический data flow.
+
+## 6. Повторный аудит 2026-08-20
+
+Историческая миграция основных модулей выполнена: domain-контракты, typed
+repository/ViewModel для каталогов, синхронизации, визитов, брони, истории,
+избранного и основных offline-first сценариев присутствуют. Raw-map API в
+domain repository interfaces при повторной проверке не обнаружен.
+
+Глобальный Definition of Done при этом ещё не достигнут:
+
+- [ ] Новый `WorkdayNotifier` напрямую зависит от `RemoteApiService`,
+  `LocalDatabase` и `SharedPreferences`. Для этого feature нужен
+  `WorkdayRepository` и отдельная data-реализация.
+- [ ] `test/architecture/layer_boundaries_test.dart` проверяет вручную
+  перечисленный набор presentation-файлов, а не все мигрированные экраны и
+  providers. Новые feature-файлы могут обойти правило незаметно.
+- [ ] Формулировки Definition of Done о «всех UI-экранах» нельзя считать
+  подтверждёнными до расширения architecture test и проверки всех
+  presentation/provider файлов.
+- [ ] Полный core-sync integration test и widget smoke/integration tests
+  остаются отдельным пробелом покрытия.
+
+Дополнительная декомпозиция крупных экранов является maintainability backlog,
+а не блокером корректности слоёв. В первую очередь следует рассматривать
+`sync_screen.dart`, `home_screen.dart`, `history_screen.dart`,
+`fav_doctors_screen.dart`, `material_viewer_screen.dart`, `new_bron_screen.dart`
+и `lpu_doctor_select_screen.dart`. Делить их нужно только по устойчивым UI- и
+state-границам, без изменения API/SQLite/offline поведения.
+
+Исполнимый остаток миграции включён в
+[`CURRENT_IMPLEMENTATION_GAPS_TODO.md`](CURRENT_IMPLEMENTATION_GAPS_TODO.md).

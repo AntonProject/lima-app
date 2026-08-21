@@ -30,6 +30,7 @@
 - `drug_materials` — материалы препаратов
 - `visits` — визиты (офлайн-first)
 - `sync_meta` — метаданные синка (`last_pull_at`, `last_push_at`, bootstrap key)
+- `pending_workday_events` — FIFO start/end рабочего дня с retry/parking
 
 Ключевые поля для sync:
 - `visits.remote_id` — ID на сервере
@@ -52,8 +53,14 @@ notifier объединяет их с результатом отправки в
 `PendingWorkdaySyncService` хранит start/end рабочего дня в локальной FIFO-
 очереди, когда нет сети. Эта очередь отправляется первой: пока сервер не
 подтвердил рабочий день, визиты, бронь и прочие pending-изменения не уходят
-в API. При повторной отправке сервис сверяет `/api/workday/status`, чтобы
-корректно распознать уже применённый на сервере start/end после обрыва сети.
+в API. Для validation 4xx и исчерпания четырёх попыток запись получает
+`parked`, причину и HTTP-код; transient ошибки получают exponential backoff.
+При повторной отправке сервис сверяет `/api/workday/status`, чтобы корректно
+распознать уже применённый на сервере start/end после обрыва сети.
+
+Состояние рабочего дня читается через `WorkdayRepository`: feature flag,
+`/WorkDay/status` и `/DayType` имеют отдельные typed load/cache операции, поэтому
+частичный отказ одного endpoint не стирает успешные секции provider state.
 
 Отправка локальных визитов и их retry/backoff/parking вынесены в
 `PendingVisitPushService`. Сервис сохраняет request/response диагностику и
@@ -97,7 +104,9 @@ best-effort и записывается локально независимо о
 ### Визиты
 - `GET /api/Visits/history`
 - `POST /api/Visits/add` (fallback: `/Visits/add`, `/visits/add`)
-- `GET /api/Company/markups` — подбор `margin_id` для выбранной предоплаты/типа покупателя
+- `GET /api/Markups/short` — точная матрица `margin_id`/предоплата/тип покупателя
+- `GET /api/Contracts/client/{clientInn}` — договоры коммерческого ЛПУ
+- `GET /api/Global` — `behavior.prepayment.percent.enable`
 - `PUT /api/Visits/{visitId}` (fallback `/Visits/{visitId}`)
 - `POST /Visits/rating` (fallback `/api/Visits/rating`)
 - `GET /api/Visits/plans/current`
@@ -114,6 +123,13 @@ best-effort и записывается локально независимо о
 - `GET /api/daytype`
 - `POST /api/workday/start`
 - `POST /api/workday/end`
+
+### Booking terms and offline cache
+
+Аптека и ЛПУ используют один typed `OrderTermOption` источник и не подставляют
+приближённый margin. Условия, feature flag и договоры кешируются в `sync_meta`;
+выбранный `contract_id` проходит через cart/draft, pricing и `/Visits/add`.
+Локально ожидающие заказы отображаются как pending до `is_synced = 1`.
 
 ### Личный план продаж
 - `GET /api/planning/my-plan?year={YYYY}` — годовой план/факт и

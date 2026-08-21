@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lima/core/models/client_contract.dart';
+import 'package:lima/core/models/order_term_option.dart';
 import 'package:lima/features/visits/domain/entities/pharmacy_order.dart';
 import 'package:lima/features/visits/domain/repositories/pharmacy_order_repository.dart';
 import 'package:lima/features/visits/domain/use_cases/build_pharmacy_order_lines.dart';
@@ -15,12 +17,24 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
   Future<bool> supportsWholesaleOrders({int? companyId}) async => true;
 
   @override
+  Future<List<OrderTermOption>> getOrderTermOptions({int? companyId}) async =>
+      const [];
+
+  @override
+  Future<bool?> getPrepaymentFeatureFlag() async => true;
+
+  @override
+  Future<List<ClientContract>> getClientContracts(int clientInn) async =>
+      const [];
+
+  @override
   Future<PharmacyOrderPricingPreview?> calculatePricing({
     required int prepaymentPercent,
     required bool isWholesaler,
     required PharmacyOrderLines lines,
     int? companyId,
     int paymentVariantId = 1,
+    int? contractId,
     double? orderTotal,
   }) async => null;
 
@@ -31,6 +45,7 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
     required double orderTotal,
     int paymentVariantId = 1,
     int? companyId,
+    int? contractId,
   }) async {
     resolvedTerms = PharmacyOrderPricingTerms(
       companyId: companyId,

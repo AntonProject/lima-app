@@ -45,7 +45,7 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 22,
+      version: 24,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -140,6 +140,7 @@ class LocalDatabase {
         current_stock_id INTEGER,
         binding_drug_id  INTEGER,
         image_url        TEXT,
+        image_cached_path TEXT,
         documents_count  INTEGER DEFAULT 0,
         updated_at       TEXT,
         sync_id          INTEGER,
@@ -314,7 +315,11 @@ class LocalDatabase {
         longitude       REAL NOT NULL DEFAULT 0,
         created_at      TEXT NOT NULL,
         attempts        INTEGER NOT NULL DEFAULT 0,
-        last_error      TEXT
+        last_error      TEXT,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        next_retry_at   TEXT,
+        parked_at       TEXT,
+        http_status     INTEGER
       )
   ''';
 
@@ -590,6 +595,29 @@ class LocalDatabase {
     if (oldVersion < 22) {
       try {
         await db.execute(_createPendingWorkdayEventsSql);
+      } catch (e) {
+        logSwallowed(e, 'LocalDatabase._onUpgrade');
+      }
+    }
+    if (oldVersion < 23) {
+      // Additive only: existing offline workday events remain available for
+      // retry and diagnostics after an app upgrade.
+      for (final sql in const [
+        "ALTER TABLE pending_workday_events ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
+        'ALTER TABLE pending_workday_events ADD COLUMN next_retry_at TEXT',
+        'ALTER TABLE pending_workday_events ADD COLUMN parked_at TEXT',
+        'ALTER TABLE pending_workday_events ADD COLUMN http_status INTEGER',
+      ]) {
+        try {
+          await db.execute(sql);
+        } catch (e) {
+          logSwallowed(e, 'LocalDatabase._onUpgrade');
+        }
+      }
+    }
+    if (oldVersion < 24) {
+      try {
+        await db.execute('ALTER TABLE drugs ADD COLUMN image_cached_path TEXT');
       } catch (e) {
         logSwallowed(e, 'LocalDatabase._onUpgrade');
       }
@@ -1675,17 +1703,38 @@ class LocalDatabase {
       'latitude': latitude,
       'longitude': longitude,
       'created_at': DateTime.now().toIso8601String(),
+      'status': 'pending',
     });
     _notifyChanged(['pending_workday_events']);
   }
 
-  Future<List<Map<String, dynamic>>> getPendingWorkdayEvents(int userId) async {
+  Future<List<Map<String, dynamic>>> getPendingWorkdayEvents(
+    int userId, {
+    bool readyOnly = false,
+  }) async {
+    final where = readyOnly
+        ? "user_id = ? AND (status IS NULL OR status != 'parked') AND "
+              '(next_retry_at IS NULL OR next_retry_at <= ?)'
+        : 'user_id = ?';
+    final whereArgs = readyOnly
+        ? <Object?>[userId, DateTime.now().toIso8601String()]
+        : <Object?>[userId];
     return db.query(
       'pending_workday_events',
-      where: 'user_id = ?',
-      whereArgs: [userId],
+      where: where,
+      whereArgs: whereArgs,
       orderBy: 'id ASC',
     );
+  }
+
+  Future<int> parkedWorkdayEventsCount([int? userId]) async {
+    final rows = await db.rawQuery(
+      userId == null
+          ? "SELECT COUNT(*) AS c FROM pending_workday_events WHERE status = 'parked'"
+          : "SELECT COUNT(*) AS c FROM pending_workday_events WHERE user_id = ? AND status = 'parked'",
+      userId == null ? const <Object?>[] : <Object?>[userId],
+    );
+    return Sqflite.firstIntValue(rows) ?? 0;
   }
 
   Future<int> pendingWorkdayEventsCount([int? userId]) async {
@@ -1706,11 +1755,44 @@ class LocalDatabase {
   Future<void> recordPendingWorkdayEventFailure({
     required int id,
     required String error,
+    String status = 'retryScheduled',
+    DateTime? nextRetryAt,
+    DateTime? parkedAt,
+    int? httpStatus,
   }) async {
     await db.rawUpdate(
       'UPDATE pending_workday_events '
-      'SET attempts = attempts + 1, last_error = ? WHERE id = ?',
-      [error, id],
+      'SET attempts = attempts + 1, last_error = ?, status = ?, '
+      'next_retry_at = ?, parked_at = ?, http_status = ? WHERE id = ?',
+      [
+        error,
+        status,
+        nextRetryAt?.toIso8601String(),
+        parkedAt?.toIso8601String(),
+        httpStatus,
+        id,
+      ],
+    );
+    _notifyChanged(['pending_workday_events']);
+  }
+
+  Future<void> markPendingWorkdayEventStatus({
+    required int id,
+    required String status,
+    DateTime? nextRetryAt,
+    DateTime? parkedAt,
+    int? httpStatus,
+  }) async {
+    await db.update(
+      'pending_workday_events',
+      {
+        'status': status,
+        'next_retry_at': nextRetryAt?.toIso8601String(),
+        'parked_at': parkedAt?.toIso8601String(),
+        'http_status': httpStatus,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
     );
     _notifyChanged(['pending_workday_events']);
   }
@@ -1868,6 +1950,14 @@ class LocalDatabase {
     final unsyncedDoctors = replaceDoctors
         ? await db.query('doctors', where: 'id < 0')
         : const <Map<String, dynamic>>[];
+    final cachedDrugImages = await db.query(
+      'drugs',
+      columns: ['id', 'image_cached_path'],
+      where: "image_cached_path IS NOT NULL AND TRIM(image_cached_path) != ''",
+    );
+    final cachedDrugImageById = <Object?, Object?>{
+      for (final row in cachedDrugImages) row['id']: row['image_cached_path'],
+    };
 
     await db.transaction((txn) async {
       await txn.delete('organisations');
@@ -1934,9 +2024,16 @@ class LocalDatabase {
       }
 
       for (final drug in drugs) {
+        final row = Map<String, dynamic>.from(drug);
+        final id = row['id'];
+        final incomingCachedPath = row['image_cached_path']?.toString().trim();
+        if ((incomingCachedPath == null || incomingCachedPath.isEmpty) &&
+            cachedDrugImageById[id] != null) {
+          row['image_cached_path'] = cachedDrugImageById[id];
+        }
         await txn.insert(
           'drugs',
-          Map<String, dynamic>.from(drug),
+          row,
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
@@ -2440,6 +2537,18 @@ class LocalDatabase {
         final r = Map<String, dynamic>.from(row);
         final id = r['id'];
         if (id == null) continue;
+        final existingImage = await txn.query(
+          'drugs',
+          columns: ['image_cached_path'],
+          where: 'id = ?',
+          whereArgs: [id],
+          limit: 1,
+        );
+        final incomingCachedPath = r['image_cached_path']?.toString().trim();
+        if ((incomingCachedPath == null || incomingCachedPath.isEmpty) &&
+            existingImage.isNotEmpty) {
+          r['image_cached_path'] = existingImage.first['image_cached_path'];
+        }
 
         // Preserve current_stock_id / binding_drug_id if the incoming row
         // doesn't have them (delta-sync rows don't include price-list fields).
@@ -2555,6 +2664,23 @@ class LocalDatabase {
       'drug_materials',
       where:
           "local_path IS NOT NULL AND local_path != '' AND (cached_path IS NULL OR cached_path = '')",
+    );
+  }
+
+  Future<void> updateDrugImageCachedPath(int drugId, String localPath) async {
+    await db.update(
+      'drugs',
+      {'image_cached_path': localPath},
+      where: 'id = ?',
+      whereArgs: [drugId],
+    );
+    _notifyChanged(['drugs']);
+  }
+
+  Future<List<Map<String, dynamic>>> getDrugImagesToCache() async {
+    return db.rawQuery(
+      'SELECT id, image_url, image_cached_path FROM drugs '
+      "WHERE image_url IS NOT NULL AND TRIM(image_url) != ''",
     );
   }
 

@@ -41,4 +41,23 @@ void main() {
     expect(records.single.status, 'completed');
     expect(records.single.doctor, 'Dr. Test');
   });
+
+  test('keeps a locally completed order pending until it is synced', () {
+    final records = HistoryRecordsMapper.fromRows([
+      {
+        'id': 9,
+        'org_id': 8,
+        'org_name': 'Clinic',
+        'visit_type': 'order',
+        'status': 'completed',
+        'is_synced': 0,
+        'created_at': '2026-07-15T10:00:00',
+        'updated_at': '2026-07-15T10:00:00',
+        'raw_json': jsonEncode({'complete': true}),
+      },
+    ]);
+
+    expect(records.single.syncStatus, 'pending');
+    expect(records.single.status, 'pending');
+  });
 }

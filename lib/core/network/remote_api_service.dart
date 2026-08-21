@@ -6,8 +6,10 @@ import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/core/models/client_contract.dart';
 import 'package:lima/core/models/models.dart';
 import 'package:lima/core/models/local_visit.dart';
+import 'package:lima/core/models/order_term_option.dart';
 import 'package:lima/core/utils/swallowed.dart';
 import 'api_client.dart';
 
@@ -703,50 +705,64 @@ class RemoteApiService {
         .toList();
   }
 
+  /// Returns the exact booking combinations accepted by the server.
+  ///
+  /// `/Markups/short` is intentionally separate from the legacy company
+  /// markup endpoints: it already contains the buyer flags for each margin,
+  /// so callers must not infer wholesale availability from another response.
+  Future<List<OrderTermOption>> getOrderTermOptions({int? companyId}) async {
+    final rows = await _getListAny(['/api/Markups/short', '/Markups/short']);
+    final options = <OrderTermOption>[];
+    for (final row in rows.whereType<Map>()) {
+      try {
+        final option = OrderTermOption.fromMap(Map<String, dynamic>.from(row));
+        final rowCompanyId = _toInt(row['company_id']);
+        if (companyId != null &&
+            rowCompanyId != null &&
+            rowCompanyId != companyId) {
+          continue;
+        }
+        options.add(option);
+      } on FormatException {
+        // Ignore malformed rows, but never synthesize a usable option.
+      }
+    }
+    return List.unmodifiable(options);
+  }
+
+  Future<bool?> getPrepaymentFeatureFlag() =>
+      getGlobalBoolean('behavior.prepayment.percent.enable');
+
+  Future<List<ClientContract>> getClientContracts(int clientInn) async {
+    if (clientInn <= 0) return const <ClientContract>[];
+    final rows = await _getListAny([
+      '/api/Contracts/client/$clientInn',
+      '/Contracts/client/$clientInn',
+    ]);
+    final contracts = <ClientContract>[];
+    for (final row in rows.whereType<Map>()) {
+      try {
+        contracts.add(ClientContract.fromMap(Map<String, dynamic>.from(row)));
+      } on FormatException {
+        // A malformed contract must not make the booking screen invent one.
+      }
+    }
+    return List.unmodifiable(contracts);
+  }
+
   Future<Set<String>> getSupportedOrderTermKeys({int? companyId}) async {
-    final markups = await getCompanyMarkups();
     final keys = <String>{};
-    for (final markup in markups) {
-      final markupCompanyId = _toInt(markup['company_id']);
-      if (companyId != null && markupCompanyId != null) {
-        if (markupCompanyId != companyId) continue;
-      }
-      final prepayment = _toInt(markup['prepayment_percent']);
-      if (prepayment == null) continue;
-      final detailings = _extractMarkupDetailings(
-        markup,
-      ).where((detail) => _toBool(detail['is_deleted']) != true).toList();
-      if (detailings.isEmpty) {
-        keys.add('$prepayment:0');
-        continue;
-      }
-      for (final detail in detailings) {
-        final buyerType = (_toBool(detail['is_wholesaler']) ?? false) ? 1 : 0;
-        keys.add('$prepayment:$buyerType');
-      }
+    for (final option in await getOrderTermOptions(companyId: companyId)) {
+      if (option.retail) keys.add('${option.prepaymentPercent}:0');
+      if (option.wholesaler) keys.add('${option.prepaymentPercent}:1');
     }
     return keys;
   }
 
   Future<bool> supportsWholesaleOrders({int? companyId}) async {
-    final markups = await getCompanyMarkups();
-    for (final markup in markups) {
-      final markupCompanyId = _toInt(markup['company_id']);
-      if (companyId != null &&
-          markupCompanyId != null &&
-          markupCompanyId != companyId) {
-        continue;
-      }
-      final detailings = _extractMarkupDetailings(markup);
-      if (detailings.any(
-        (detail) =>
-            _toBool(detail['is_deleted']) != true &&
-            (_toBool(detail['is_wholesaler']) ?? false),
-      )) {
-        return true;
-      }
-    }
-    return false;
+    return (await getOrderTermOptions(
+      companyId: companyId,
+    )).any((option) => option.wholesaler);
   }
 
   Future<Map<String, dynamic>?> resolveOrderPricingTerms({
@@ -755,77 +771,30 @@ class RemoteApiService {
     double orderTotal = 0,
     int paymentVariantId = 1,
     int? companyId,
+    int? contractId,
   }) async {
-    final markups = await getCompanyMarkups();
-    final scopedMarkups = markups.where((markup) {
-      final markupCompanyId = _toInt(markup['company_id']);
-      if (companyId != null && markupCompanyId != null) {
-        return markupCompanyId == companyId;
-      }
-      return true;
-    }).toList();
-
-    final exactMatches = scopedMarkups.where((markup) {
-      final percent = _toInt(markup['prepayment_percent']);
-      return percent == prepaymentPercent;
-    }).toList();
-
-    final candidateMarkups = exactMatches.isNotEmpty
-        ? exactMatches
-        : (prepaymentPercent == 0
-              ? (scopedMarkups.where((markup) {
-                  final percent = _toInt(markup['prepayment_percent']);
-                  return percent != null && percent < 100;
-                }).toList()..sort((a, b) {
-                  final ap = _toInt(a['prepayment_percent']) ?? 999999;
-                  final bp = _toInt(b['prepayment_percent']) ?? 999999;
-                  return ap.compareTo(bp);
-                }))
-              : const <Map<String, dynamic>>[]);
-
-    for (final markup in candidateMarkups) {
-      final markupCompanyId = _toInt(markup['company_id']);
-      final percent = _toInt(markup['prepayment_percent']);
-
-      final detailings = _extractMarkupDetailings(markup);
-      final activeDetailings = detailings
-          .where((detail) => _toBool(detail['is_deleted']) != true)
-          .toList();
-      final filtered = activeDetailings.where((detail) {
-        final start = _toDouble(detail['sum_start']);
-        final end = _toDouble(detail['sum_end']);
-        final inRange =
-            (start == null || orderTotal >= start) &&
-            (end == null || end <= 0 || orderTotal <= end);
-        if (!inRange) return false;
-
-        final variant = _toInt(detail['payment_variant_id']);
-        return variant == null || variant == paymentVariantId;
-      }).toList();
-
-      Map<String, dynamic> detail = filtered.firstWhere(
-        (detail) => (_toBool(detail['is_wholesaler']) ?? false) == isWholesaler,
-        orElse: () => const <String, dynamic>{},
-      );
-      if (detail.isEmpty && filtered.isNotEmpty) {
-        detail = filtered.first;
-      }
-      if (detail.isEmpty && activeDetailings.isNotEmpty) {
-        detail = activeDetailings.first;
-      }
-
-      return {
-        'company_id': markupCompanyId,
-        'payment_variant_id':
-            _toInt(detail['payment_variant_id']) ?? paymentVariantId,
-        'margin_id': _toInt(markup['id'] ?? markup['margin_id']),
-        'margin_percent': _toInt(detail['margin_percent']),
-        'prepayment_percent': percent ?? prepaymentPercent,
-        'requested_prepayment_percent': prepaymentPercent,
-        'is_wholesaler': isWholesaler,
-      };
-    }
-    return null;
+    // The short endpoint is the server's authoritative matrix.  Do not
+    // infer a nearby prepayment percentage or buyer type from legacy markup
+    // responses: that creates a payload the UI never actually selected.
+    final matches = (await getOrderTermOptions(companyId: companyId))
+        .where(
+          (option) =>
+              option.prepaymentPercent == prepaymentPercent &&
+              option.supportsBuyer(isWholesaler),
+        )
+        .toList(growable: false);
+    if (matches.length != 1) return null;
+    final option = matches.single;
+    return {
+      'company_id': companyId,
+      'payment_variant_id': paymentVariantId,
+      'margin_id': option.marginId,
+      'margin_percent': null,
+      'prepayment_percent': option.prepaymentPercent,
+      'requested_prepayment_percent': prepaymentPercent,
+      'is_wholesaler': isWholesaler,
+      'contract_id': contractId,
+    };
   }
 
   Future<Map<String, dynamic>> createOrderDebug({
@@ -879,6 +848,7 @@ class RemoteApiService {
     required bool isWholesaler,
     String? orderComment,
     String? orderExpireDate,
+    int? contractId,
     required List<Map<String, dynamic>> drugs,
     bool pricesAlreadyCalculated = false,
   }) async {
@@ -904,6 +874,7 @@ class RemoteApiService {
         orderTotal: orderTotal,
         paymentVariantId: resolvedPaymentVariantId,
         companyId: companyId,
+        contractId: contractId,
       );
       if (terms != null) {
         resolvedPaymentVariantId =
@@ -922,6 +893,7 @@ class RemoteApiService {
             marginId: resolvedMarginId,
             paymentVariantId: resolvedPaymentVariantId,
             isWholesaler: isWholesaler,
+            contractId: contractId,
           );
 
     final body = <String, dynamic>{
@@ -934,7 +906,7 @@ class RemoteApiService {
       'payment_variant_id': resolvedPaymentVariantId,
       'margin_id': resolvedMarginId,
       'is_wholesaler': isWholesaler,
-      'contract_id': null,
+      'contract_id': contractId,
       'comment': orderComment ?? '',
       'drugs': calculatedDrugs
           .map(
@@ -956,6 +928,7 @@ class RemoteApiService {
     required List<Map<String, dynamic>> drugs,
     int? companyId,
     int paymentVariantId = 1,
+    int? contractId,
     double? orderTotal,
   }) async {
     final sanitizedDrugs = _sanitizeOrderDrugs(drugs);
@@ -973,6 +946,7 @@ class RemoteApiService {
       orderTotal: effectiveOrderTotal,
       paymentVariantId: paymentVariantId,
       companyId: companyId,
+      contractId: contractId,
     );
     if (pricingTerms == null) return null;
     final resolvedPaymentVariantId =
@@ -984,6 +958,7 @@ class RemoteApiService {
       marginId: resolvedMarginId,
       paymentVariantId: resolvedPaymentVariantId,
       isWholesaler: isWholesaler,
+      contractId: contractId,
     );
     return {
       'company_id': pricingTerms['company_id'],
@@ -992,6 +967,7 @@ class RemoteApiService {
       'margin_percent': pricingTerms['margin_percent'],
       'prepayment_percent': prepaymentPercent,
       'is_wholesaler': isWholesaler,
+      'contract_id': contractId,
       'drugs': pricedDrugs,
     };
   }
@@ -1043,12 +1019,14 @@ class RemoteApiService {
     required int marginId,
     required int paymentVariantId,
     required bool isWholesaler,
+    int? contractId,
   }) async {
     if (drugs.isEmpty) return drugs;
     final pricing = await _postPricingCalculateDebug({
       'margin_id': marginId,
       'payment_variant_id': paymentVariantId,
       'is_wholesaler': isWholesaler,
+      'contract_id': contractId,
       'calculate_sale_price_details': drugs
           .map(
             (drug) => <String, dynamic>{
@@ -1217,7 +1195,7 @@ class RemoteApiService {
       'latitude': 0,
       'longitude': 0,
       'margin_id': marginId,
-      'contract_id': null,
+      'contract_id': _toInt(raw['contract_id']),
       'is_wholesaler': isWholesaler,
       'payment_variant_id': paymentVariantId,
       'comment': _toString(raw['order_comment'] ?? raw['comment']) ?? '',
@@ -1336,19 +1314,27 @@ class RemoteApiService {
         (salePrice == null ? null : _withoutNds(salePrice));
 
     return {
-      'visit_detailing_id': ?_toInt(m['visit_detailing_id']),
+      if (_toInt(m['visit_detailing_id']) != null)
+        'visit_detailing_id': _toInt(m['visit_detailing_id']),
       'income_detailing_id': incomeDetailingId,
       'drug_id': drugId,
-      'drug_one_c_guid': ?_toString(m['drug_one_c_guid']),
+      if (_toString(m['drug_one_c_guid']) != null)
+        'drug_one_c_guid': _toString(m['drug_one_c_guid']),
       'package': qty,
-      'margin_percent':
-          ?(_toDouble(m['margin_percent']) ?? defaultMarginPercent?.toDouble()),
+      if (_toDouble(m['margin_percent']) != null ||
+          defaultMarginPercent != null)
+        'margin_percent':
+            _toDouble(m['margin_percent']) ?? defaultMarginPercent!.toDouble(),
       'sale_price': ?salePrice,
       'sale_price_without_nds': ?withoutNds,
-      'serial_no': ?_toString(m['serial_no'] ?? m['serial_number']),
-      'expire_date': ?_toString(m['expire_date'] ?? m['expiry_date']),
-      'is_deleted': ?_toBool(m['is_deleted']),
-      'storage_id': ?_toInt(m['storage_id']),
+      if (_toString(m['serial_no'] ?? m['serial_number']) != null)
+        'serial_no': _toString(m['serial_no'] ?? m['serial_number']),
+      if (_toString(m['expire_date'] ?? m['expiry_date']) != null)
+        'expire_date': _toString(m['expire_date'] ?? m['expiry_date']),
+      if (_toBool(m['is_deleted']) != null)
+        'is_deleted': _toBool(m['is_deleted']),
+      if (_toInt(m['storage_id']) != null)
+        'storage_id': _toInt(m['storage_id']),
     };
   }
 
@@ -3109,10 +3095,17 @@ class RemoteApiService {
           counts[drugId] = (counts[drugId] ?? 0) + docs.length;
           for (final doc in docs) {
             if (doc is! Map) continue;
+            final fileUid = _toString(doc['file_uid']);
+            final fileUrl = _toString(doc['file_url'] ?? doc['url']);
             materials.add({
               'drug_id': drugId,
               'title': _toString(doc['title'] ?? doc['file_name']) ?? '',
-              'local_path': _toString(doc['file_url']),
+              // The documented download contract is file_uid ->
+              // /files/download/{file_uid}. Keep file_url only as a fallback
+              // for older API rows that do not expose the UID.
+              'local_path': fileUid == null
+                  ? fileUrl
+                  : '/files/download/${Uri.encodeComponent(fileUid)}',
               'file_type': _toString(doc['document_type_name']),
               'description': _toString(doc['description']),
               'uploaded_at': _toString(doc['date_of_creation']),

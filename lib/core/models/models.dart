@@ -578,6 +578,7 @@ class Drug {
 
   /// Product photo supplied by the drug binding/price-list API.
   final String? imageUrl;
+  final String? cachedImagePath;
 
   const Drug({
     required this.id,
@@ -593,6 +594,7 @@ class Drug {
     this.currentStockId,
     this.bindingDrugId,
     this.imageUrl,
+    this.cachedImagePath,
   });
 
   factory Drug.fromJson(Map<String, dynamic> json) => Drug(
@@ -609,6 +611,7 @@ class Drug {
     currentStockId: json['current_stock_id'] as int?,
     bindingDrugId: json['binding_drug_id'] as int?,
     imageUrl: json['image_url'] as String?,
+    cachedImagePath: json['image_cached_path'] as String?,
   );
 }
 

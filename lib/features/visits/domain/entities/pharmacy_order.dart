@@ -6,6 +6,7 @@ class PharmacyOrderPricingTerms {
   final int paymentVariantId;
   final int marginId;
   final int? marginPercent;
+  final int? contractId;
   final int prepaymentPercent;
   final bool isWholesaler;
 
@@ -14,6 +15,7 @@ class PharmacyOrderPricingTerms {
     required this.paymentVariantId,
     required this.marginId,
     this.marginPercent,
+    this.contractId,
     required this.prepaymentPercent,
     required this.isWholesaler,
   });
@@ -23,6 +25,7 @@ class PharmacyOrderPricingTerms {
     'payment_variant_id': paymentVariantId,
     'margin_id': marginId,
     'margin_percent': marginPercent,
+    'contract_id': contractId,
     'prepayment_percent': prepaymentPercent,
     'is_wholesaler': isWholesaler,
   };
@@ -93,6 +96,7 @@ class PharmacyOrderRouteData {
   final int? cartId;
   final bool fromCart;
   final int? plannedVisitId;
+  final int? contractId;
   final bool isLpuBooking;
 
   const PharmacyOrderRouteData({
@@ -103,6 +107,7 @@ class PharmacyOrderRouteData {
     this.cartId,
     this.fromCart = false,
     this.plannedVisitId,
+    this.contractId,
     this.isLpuBooking = false,
   });
 }

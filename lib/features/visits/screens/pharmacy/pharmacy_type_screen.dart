@@ -111,33 +111,59 @@ class PharmacyTypeScreen extends ConsumerWidget {
                   bgColor: AppColors.iconBgBlue,
                   iconColor: AppColors.primary,
                   onTap: () async {
-                    var allowWholesale = true;
                     try {
                       final companyId = ref.read(authProvider).user?.companyId;
-                      allowWholesale = await ref
-                          .read(pharmacyOrderRepositoryProvider)
-                          .supportsWholesaleOrders(companyId: companyId);
-                    } catch (_) {
-                      allowWholesale = true;
+                      final repository = ref.read(
+                        pharmacyOrderRepositoryProvider,
+                      );
+                      final terms = await repository.getOrderTermOptions(
+                        companyId: companyId,
+                      );
+                      final prepaymentEnabled = await repository
+                          .getPrepaymentFeatureFlag();
+                      if (terms.isEmpty) {
+                        throw StateError('Booking terms are unavailable');
+                      }
+                      if (!context.mounted) return;
+                      final payment = await showPaymentTypeDialog(
+                        context,
+                        terms: terms,
+                        prepaymentEnabled: prepaymentEnabled,
+                      );
+                      if (payment == null || !context.mounted) return;
+                      final pricing = payment.pricingTerms;
+                      context.push(
+                        Uri(
+                          path:
+                              '/visits/pharmacy/detail/$pharmacyId/type/order',
+                          queryParameters: {
+                            'name': pharmacyName,
+                            'prepayment': '${payment.prepayment}',
+                            'buyerType': '${payment.buyerType}',
+                            if (pricing != null)
+                              'marginId': '${pricing.marginId}',
+                            if (pricing != null) 'paymentVariantId': '1',
+                            if (companyId != null) 'companyId': '$companyId',
+                            if (payment.contractId != null)
+                              'contractId': '${payment.contractId}',
+                            if (plannedVisitId != null)
+                              'plannedVisitId': '$plannedVisitId',
+                          },
+                        ).toString(),
+                      );
+                    } catch (error) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            context.l10n.t(
+                              'orderFailedError',
+                              args: {'error': '$error'},
+                            ),
+                          ),
+                        ),
+                      );
                     }
-                    if (!context.mounted) return;
-                    final payment = await showPaymentTypeDialog(
-                      context,
-                      allowWholesale: allowWholesale,
-                    );
-                    if (payment == null || !context.mounted) return;
-                    context.push(
-                      Uri(
-                        path: '/visits/pharmacy/detail/$pharmacyId/type/order',
-                        queryParameters: {
-                          'name': pharmacyName,
-                          'prepayment': '${payment.prepayment}',
-                          'buyerType': '${payment.buyerType}',
-                          if (plannedVisitId != null)
-                            'plannedVisitId': '$plannedVisitId',
-                        },
-                      ).toString(),
-                    );
                   },
                 ),
                 const SizedBox(height: 8),

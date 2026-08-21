@@ -1,13 +1,16 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/core/models/models.dart';
 import 'package:lima/core/theme/app_theme.dart';
 import 'package:lima/core/utils/swallowed.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:share_plus/share_plus.dart';
 import '../providers/material_viewer_provider.dart';
 import '../presentation/view_models/material_viewer_view_model.dart';
 import 'package:video_player/video_player.dart';
@@ -17,11 +20,14 @@ import 'package:video_player/video_player.dart';
 enum _MediaType { image, video, pdf, document }
 
 _MediaType _mediaTypeOf(String url, String? fileType, String? fileName) {
-  final ft = (fileType ?? '').toLowerCase();
+  final ft = (fileType ?? '').toLowerCase().trim();
   if ({'image', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}.contains(ft)) {
     return _MediaType.image;
   }
-  if ({'video', 'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'}.contains(ft)) {
+  if (ft == 'video' ||
+      ft.startsWith('video/') ||
+      ft.contains('видео') ||
+      {'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'}.contains(ft)) {
     return _MediaType.video;
   }
   if (ft == 'pdf') return _MediaType.pdf;
@@ -82,6 +88,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
   final _pageController = PageController();
   final _videoControllers = <int, VideoPlayerController>{};
   bool _initialPageApplied = false;
+  bool _isExporting = false;
 
   MaterialViewerKey get _providerKey =>
       (drugId: widget.drugId, initialIndex: widget.initialIndex);
@@ -133,7 +140,8 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
     if (_videoControllers.containsKey(index)) return;
     final savePath = await _viewModel.ensureLocal(
       index,
-      cacheName: 'lima_vid_${widget.drugId}_$index',
+      // v2 prevents an old, partially downloaded video from being reused.
+      cacheName: 'lima_vid_v2_${widget.drugId}_$index',
     );
     if (savePath == null) return;
 
@@ -151,24 +159,92 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
     }
   }
 
-  Future<void> _openExternal(int index) async {
-    if (index >= _viewState.materials.length) return;
+  Future<void> _saveToFiles(int index) async {
+    if (index >= _viewState.materials.length || _isExporting) return;
+    setState(() => _isExporting = true);
+    try {
+      final material = _viewState.materials[index];
+      final fileName = _exportFileName(material, index);
+      final savePath =
+          _viewState.localPaths[index] ??
+          await _viewModel.ensureLocal(
+            index,
+            cacheName: 'lima_download_v3_${widget.drugId}_$fileName',
+          );
+      if (savePath == null || !(await File(savePath).exists())) {
+        throw StateError('Material file was not downloaded');
+      }
 
-    // Check in-memory path first
-    final local = _viewState.localPaths[index];
-    if (local != null && File(local).existsSync()) {
-      await OpenFilex.open(local);
-      return;
+      final exportedPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Сохранить файл',
+        fileName: fileName,
+        bytes: await File(savePath).readAsBytes(),
+      );
+      if (exportedPath != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.l10n.t('exportFileSaved', args: {'path': exportedPath}),
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      logSwallowed(error, 'MaterialViewerScreen.saveToFiles');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(context.l10n.t('failedToLoad'))));
+      }
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
     }
+  }
 
+  String _exportFileName(DrugMaterial material, int index) {
+    final source = (material.fileName?.trim().isNotEmpty ?? false)
+        ? material.fileName!
+        : (material.title.isEmpty ? 'file_$index' : material.title);
+    final safe = source.replaceAll(RegExp(r'[/\\:*?"<>|]'), '_');
+    if (RegExp(r'\.[a-zA-Z0-9]{1,8}$').hasMatch(safe)) return safe;
+    return switch (_typeAt(index)) {
+      _MediaType.image => '$safe.jpg',
+      _MediaType.video => '$safe.mp4',
+      _MediaType.pdf => '$safe.pdf',
+      _MediaType.document => safe,
+    };
+  }
+
+  Future<void> _shareExternal(String savePath, DrugMaterial material) {
+    return Share.shareXFiles(
+      [XFile(savePath)],
+      text: material.title,
+      subject: material.title,
+    );
+  }
+
+  Future<void> _previewExternal(int index) async {
+    if (index >= _viewState.materials.length) return;
     final material = _viewState.materials[index];
     final title = (material.title.isEmpty ? 'file_$index' : material.title)
         .replaceAll(RegExp(r'[/\\:*?"<>|]'), '_');
-    final savePath = await _viewModel.ensureLocal(
-      index,
-      cacheName: 'lima_${widget.drugId}_$title',
-    );
-    if (savePath != null) await OpenFilex.open(savePath);
+    final savePath =
+        _viewState.localPaths[index] ??
+        await _viewModel.ensureLocal(
+          index,
+          cacheName: 'lima_preview_v2_${widget.drugId}_$title',
+        );
+    if (savePath == null) return;
+
+    try {
+      final result = await OpenFilex.open(savePath);
+      if (result.type != ResultType.done && mounted) {
+        await _shareExternal(savePath, material);
+      }
+    } catch (error) {
+      logSwallowed(error, 'MaterialViewerScreen.previewExternal');
+      if (mounted) await _shareExternal(savePath, material);
+    }
   }
 
   @override
@@ -273,7 +349,8 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
           ),
           _TopBtn(
             icon: Icons.download_rounded,
-            onTap: () => _openExternal(_viewState.currentIndex),
+            isBusy: _isExporting,
+            onTap: () => _saveToFiles(_viewState.currentIndex),
           ),
         ],
       ),
@@ -427,7 +504,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
               ),
               const SizedBox(height: 24),
               GestureDetector(
-                onTap: () => _openExternal(index),
+                onTap: () => _previewExternal(index),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 24,
@@ -637,7 +714,7 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
     right: 12,
     bottom: 12,
     child: GestureDetector(
-      onTap: () => _openExternal(index),
+      onTap: () => _previewExternal(index),
       child: Container(
         width: 40,
         height: 40,
@@ -665,12 +742,14 @@ class _MaterialViewerScreenState extends ConsumerState<MaterialViewerScreen> {
 class _TopBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
-  const _TopBtn({required this.icon, required this.onTap});
+  final bool isBusy;
+
+  const _TopBtn({required this.icon, required this.onTap, this.isBusy = false});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: isBusy ? null : onTap,
       child: Container(
         width: 40,
         height: 40,
@@ -678,7 +757,15 @@ class _TopBtn extends StatelessWidget {
           color: Colors.white.withValues(alpha: 0.14),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Icon(icon, color: Colors.white, size: 22),
+        child: isBusy
+            ? const Padding(
+                padding: EdgeInsets.all(10),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : Icon(icon, color: Colors.white, size: 22),
       ),
     );
   }

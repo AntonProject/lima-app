@@ -373,6 +373,8 @@ class AppI18n {
       'orderQueuedSyncFail':
           'Не удалось отправить на сервер. Заказ останется в очереди синхронизации',
       'orderWillSendOnSync': 'Заказ будет отправлен при синхронизации',
+      'orderPendingSync': 'Ожидает отправки',
+      'orderSyncFailed': 'Не отправлено',
       'selectFormat': 'Выберите формат',
       'imagePng': 'Изображение (.png)',
       'goToCompany': 'Перейти к компании',
@@ -1016,6 +1018,8 @@ class AppI18n {
       'orderQueuedSyncFail':
           'Serverga yuborib boʻlmadi. Buyurtma sinxronlash navbatida qoladi',
       'orderWillSendOnSync': 'Buyurtma sinxronlashda yuboriladi',
+      'orderPendingSync': 'Yuborilishni kutmoqda',
+      'orderSyncFailed': 'Yuborilmadi',
       'selectFormat': 'Formatni tanlang',
       'imagePng': 'Rasm (.png)',
       'goToCompany': 'Kompaniyaga oʻtish',
@@ -1654,6 +1658,8 @@ class AppI18n {
       'orderQueuedSyncFail':
           'Серверга юбориб бўлмади. Буюртма синхронлаш навбатида қолади',
       'orderWillSendOnSync': 'Буюртма синхронлашда юборилади',
+      'orderPendingSync': 'Юбориш кутилмоқда',
+      'orderSyncFailed': 'Юборилмади',
       'selectFormat': 'Форматни танланг',
       'imagePng': 'Расм (.png)',
       'goToCompany': 'Компанияга ўтиш',
@@ -2282,6 +2288,8 @@ class AppI18n {
       'orderQueuedSyncFail':
           'Could not send to the server. The order stays in the sync queue',
       'orderWillSendOnSync': 'The order will be sent on sync',
+      'orderPendingSync': 'Awaiting upload',
+      'orderSyncFailed': 'Not uploaded',
       'selectFormat': 'Select format',
       'imagePng': 'Image (.png)',
       'goToCompany': 'Go to company',

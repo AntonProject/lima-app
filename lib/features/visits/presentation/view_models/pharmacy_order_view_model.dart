@@ -67,6 +67,7 @@ class PharmacyOrderViewModelConfig {
   final int? paymentVariantId;
   final int? marginId;
   final int? marginPercent;
+  final int? contractId;
   final Map<int, int> initialQuantities;
   final Map<int, Drug> initialDrugs;
   final List<CartItemSnapshot> cartItems;
@@ -83,6 +84,7 @@ class PharmacyOrderViewModelConfig {
     this.paymentVariantId,
     this.marginId,
     this.marginPercent,
+    this.contractId,
     required this.initialQuantities,
     required this.initialDrugs,
     required this.cartItems,
@@ -94,6 +96,7 @@ class PharmacyOrderViewModelConfig {
     if (item.pharmacyId != pharmacyId) return false;
     if ((item.prepaymentPercent ?? 100) != prepaymentPercent) return false;
     if ((item.buyerType ?? 0) != buyerType) return false;
+    if (contractId != null && item.contractId != contractId) return false;
     return item.plannedVisitId == plannedVisitId;
   }
 }
@@ -310,6 +313,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
       prepaymentPercent: config.prepaymentPercent,
       isWholesaler: config.buyerType == 1,
       companyId: companyId,
+      contractId: config.contractId,
       orderTotal: state.total,
       lines: lines.lines,
     );
@@ -345,6 +349,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
           paymentVariantId: config.paymentVariantId ?? 1,
           marginId: config.marginId!,
           marginPercent: config.marginPercent,
+          contractId: config.contractId,
           prepaymentPercent: config.prepaymentPercent,
           isWholesaler: config.buyerType == 1,
         );
@@ -354,6 +359,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
             prepaymentPercent: config.prepaymentPercent,
             isWholesaler: config.buyerType == 1,
             companyId: context.userCompanyId,
+            contractId: config.contractId,
             orderTotal: state.total,
             lines: orderLines,
           );

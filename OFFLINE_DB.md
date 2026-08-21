@@ -38,7 +38,7 @@ view models. Pull не является условием отображения:
 - `lib/core/providers/app_collections_provider.dart` — локальные коллекции для экранов.
 - `lib/features/offline/screens/sync_screen.dart` — ручной sync и диагностика.
 
-Текущая версия схемы `lima.db` — 22.
+Текущая версия схемы `lima.db` — 24.
 
 ## Обзор базы данных
 
@@ -142,6 +142,8 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 | `current_stock_id` | INTEGER | API id текущего остатка. |
 | `binding_drug_id` | INTEGER | API binding id для документов/материалов. |
 | `documents_count` | INTEGER | Количество связанных документов/материалов. |
+| `image_url` | TEXT | URL/relative path фото препарата из price-list. |
+| `image_cached_path` | TEXT | Путь к локальной копии фото для offline-каталога. |
 | `updated_at` | TEXT | Время обновления на сервере. |
 | `sync_id` | INTEGER | Cursor/id для delta sync. |
 | `raw_json` | TEXT | Исходный API payload. |
@@ -390,6 +392,16 @@ Reconciliation запускается, когда:
 
 - `local_path` — путь/source, известный из seed/API/bundled данных;
 - `cached_path` — путь к скачанной локальной копии, если файл кеширован.
+
+Фото упаковок хранятся отдельно в `drugs.image_cached_path`. Полный snapshot и
+delta upsert сохраняют непустой cached path; `MaterialCacheService` проверяет
+наличие файла и повторно скачивает отсутствующую копию. Очистка кеша очищает и
+`drug_materials.cached_path`, и `drugs.image_cached_path`.
+
+`pending_workday_events` — FIFO-очередь start/end. Помимо `attempts` она хранит
+`status` (`pending`, `retryScheduled`, `parked`), `next_retry_at`, `parked_at` и
+`http_status`; припаркованные записи остаются доступными для диагностики, но не
+блокируют следующие события.
 
 Для production крупные скачанные файлы лучше хранить в app-controlled директории через `path_provider`, например в application documents/support directory.
 

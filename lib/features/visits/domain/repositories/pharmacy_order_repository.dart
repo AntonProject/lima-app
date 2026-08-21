@@ -1,6 +1,14 @@
 import '../entities/pharmacy_order.dart';
+import '../../../../core/models/client_contract.dart';
+import '../../../../core/models/order_term_option.dart';
 
 abstract interface class PharmacyOrderRepository {
+  Future<List<OrderTermOption>> getOrderTermOptions({int? companyId});
+
+  Future<bool?> getPrepaymentFeatureFlag();
+
+  Future<List<ClientContract>> getClientContracts(int clientInn);
+
   Future<bool> supportsWholesaleOrders({int? companyId});
 
   Future<PharmacyOrderPricingPreview?> calculatePricing({
@@ -9,6 +17,7 @@ abstract interface class PharmacyOrderRepository {
     required PharmacyOrderLines lines,
     int? companyId,
     int paymentVariantId = 1,
+    int? contractId,
     double? orderTotal,
   });
 
@@ -18,6 +27,7 @@ abstract interface class PharmacyOrderRepository {
     required double orderTotal,
     int paymentVariantId = 1,
     int? companyId,
+    int? contractId,
   });
 
   Future<PharmacyOrderSubmission> submit({

@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lima/core/models/client_contract.dart';
+import 'package:lima/core/models/order_term_option.dart';
 import 'package:lima/core/models/models.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/features/knowledge/domain/repositories/drug_catalogue_repository.dart';
@@ -27,12 +29,31 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
   Future<bool> supportsWholesaleOrders({int? companyId}) async => true;
 
   @override
+  Future<List<OrderTermOption>> getOrderTermOptions({int? companyId}) async =>
+      const [
+        OrderTermOption(
+          marginId: 22,
+          prepaymentPercent: 100,
+          wholesaler: true,
+          retail: true,
+        ),
+      ];
+
+  @override
+  Future<bool?> getPrepaymentFeatureFlag() async => true;
+
+  @override
+  Future<List<ClientContract>> getClientContracts(int clientInn) async =>
+      const [];
+
+  @override
   Future<PharmacyOrderPricingPreview?> calculatePricing({
     required int prepaymentPercent,
     required bool isWholesaler,
     required PharmacyOrderLines lines,
     int? companyId,
     int paymentVariantId = 1,
+    int? contractId,
     double? orderTotal,
   }) async {
     if (returnNoPriceMatrix) return null;
@@ -56,6 +77,7 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
     required double orderTotal,
     int paymentVariantId = 1,
     int? companyId,
+    int? contractId,
   }) async {
     if (returnNoPriceMatrix) return null;
     return PharmacyOrderPricingTerms(

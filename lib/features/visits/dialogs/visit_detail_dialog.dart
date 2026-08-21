@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -10,6 +12,8 @@ import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/features/visits/models/history_records.dart';
 import 'package:lima/features/visits/providers/pharmacy_order_provider.dart';
+import 'package:lima/core/models/client_contract.dart';
+import 'package:lima/core/models/order_term_option.dart';
 
 Future<void> showVisitDetailDialog(
   BuildContext context, {
@@ -36,6 +40,10 @@ class _VisitDetailSheet extends ConsumerStatefulWidget {
 class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
   late int _prepayment;
   late int _buyerType;
+  int? _contractId;
+  List<OrderTermOption> _bookingTerms = const [];
+  List<ClientContract> _clientContracts = const [];
+  bool? _prepaymentEnabled;
   bool _allowWholesale = true;
   final _specExport = SpecificationExportService();
 
@@ -110,6 +118,41 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
     }
   }
 
+  int? _visitInn() {
+    try {
+      final decoded = jsonDecode(visit.rawJson);
+      if (decoded is! Map) return null;
+      final raw = Map<String, dynamic>.from(decoded);
+      final organization = raw['organization'];
+      final nestedInn = organization is Map
+          ? organization['inn'] ?? organization['organization_inn']
+          : null;
+      final value = raw['organization_inn'] ?? raw['inn'] ?? nestedInn;
+      return int.tryParse('$value'.replaceAll(RegExp(r'\D'), ''));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _loadBookingOptions() async {
+    final repository = ref.read(pharmacyOrderRepositoryProvider);
+    final companyId = ref.read(authProvider).user?.companyId;
+    final terms = await repository.getOrderTermOptions(companyId: companyId);
+    if (terms.isEmpty) throw StateError('Booking terms are unavailable');
+    final prepaymentEnabled = await repository.getPrepaymentFeatureFlag();
+    final inn = _isLpuOrder ? _visitInn() : null;
+    final contracts = inn == null
+        ? const <ClientContract>[]
+        : await repository.getClientContracts(inn);
+    if (!mounted) return;
+    setState(() {
+      _bookingTerms = terms;
+      _prepaymentEnabled = prepaymentEnabled;
+      _clientContracts = contracts;
+      _allowWholesale = terms.any((term) => term.wholesaler);
+    });
+  }
+
   Future<void> _loadWholesaleSupport() async {
     try {
       final companyId = ref.read(authProvider).user?.companyId;
@@ -120,7 +163,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
       setState(() => _allowWholesale = supported);
     } catch (_) {
       // On error, fall back to permissive (matches creation path behavior).
-      if (mounted) setState(() => _allowWholesale = true);
+      if (mounted) setState(() => _allowWholesale = false);
     }
   }
 
@@ -611,22 +654,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
           children: [
             Expanded(
               child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  final id = visit.orgId;
-                  if (id == null) return;
-                  context.push(
-                    Uri(
-                      path: '/visits/pharmacy/detail/$id/type/order',
-                      queryParameters: {
-                        'name': visit.org,
-                        'prepayment': '$_prepayment',
-                        'buyerType': '$_buyerType',
-                        if (_isLpuOrder) 'bookingSource': 'lpu',
-                      },
-                    ).toString(),
-                  );
-                },
+                onPressed: _openNewOrder,
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 54),
                   shape: RoundedRectangleBorder(
@@ -1030,22 +1058,66 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
   }
 
   Future<void> _editPaymentTerms() async {
-    final updated = await showModalBottomSheet<PaymentTermsSelection>(
-      context: context,
-      useRootNavigator: true,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _EditPaymentSheet(
-        initialPrepayment: _prepayment,
-        initialBuyerType: _buyerType,
-        allowWholesale: _allowWholesale,
-      ),
-    );
+    final updated = await _showBookingTerms();
     if (updated == null || !mounted) return;
     setState(() {
       _prepayment = updated.prepayment;
       _buyerType = updated.buyerType;
+      _contractId = updated.contractId;
     });
+  }
+
+  Future<PaymentTermsSelection?> _showBookingTerms() async {
+    try {
+      await _loadBookingOptions();
+      if (!mounted) return null;
+      return showPaymentTypeDialog(
+        context,
+        terms: _bookingTerms,
+        prepaymentEnabled: _prepaymentEnabled,
+        contracts: _clientContracts,
+        selectedContractId: _contractId,
+        initialPrepayment: _prepayment,
+        initialBuyerType: _buyerType,
+        allowWholesale: _allowWholesale,
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.l10n.t('orderFailedError', args: {'error': '$error'}),
+            ),
+          ),
+        );
+      }
+      return null;
+    }
+  }
+
+  Future<void> _openNewOrder() async {
+    final selection = await _showBookingTerms();
+    if (selection == null || !mounted) return;
+    final id = visit.orgId;
+    if (id == null) return;
+    final companyId = ref.read(authProvider).user?.companyId;
+    Navigator.pop(context);
+    context.push(
+      Uri(
+        path: '/visits/pharmacy/detail/$id/type/order',
+        queryParameters: {
+          'name': visit.org,
+          'prepayment': '${selection.prepayment}',
+          'buyerType': '${selection.buyerType}',
+          if (selection.pricingTerms != null)
+            'marginId': '${selection.pricingTerms!.marginId}',
+          if (companyId != null) 'companyId': '$companyId',
+          if (selection.contractId != null)
+            'contractId': '${selection.contractId}',
+          if (_isLpuOrder) 'bookingSource': 'lpu',
+        },
+      ).toString(),
+    );
   }
 
   Future<void> _showRatingDialog() async {
@@ -1405,7 +1477,7 @@ class _EditPaymentSheet extends StatefulWidget {
   const _EditPaymentSheet({
     required this.initialPrepayment,
     required this.initialBuyerType,
-    this.allowWholesale = true,
+    required this.allowWholesale,
   });
 
   @override

@@ -1,18 +1,21 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../features/auth/providers/auth_provider.dart';
+import '../../features/workday/data/workday_repository_impl.dart';
+import '../../features/workday/domain/entities/workday.dart' as workday_domain;
+import '../../features/workday/domain/repositories/workday_repository.dart';
 import '../db/local_database.dart';
-import '../network/api_client.dart';
 import '../network/remote_api_service.dart';
 import 'connectivity_provider.dart';
+import '../network/api_client.dart';
 import '../services/workday_location_service.dart';
 
-enum WorkdayPhase { notStarted, active, completed }
+typedef WorkdayPhase = workday_domain.WorkdayPhase;
+typedef WorkdayDayType = workday_domain.DayType;
+typedef WorkdaySnapshot = workday_domain.WorkdayStatus;
 
 enum WorkdayAction { idle, starting, ending }
 
@@ -53,121 +56,6 @@ class WorkdayActionException implements Exception {
 
   @override
   String toString() => message ?? '$cause';
-}
-
-class WorkdayDayType {
-  final int id;
-  final String name;
-  final String description;
-
-  const WorkdayDayType({
-    required this.id,
-    required this.name,
-    required this.description,
-  });
-
-  factory WorkdayDayType.fromMap(Map<String, dynamic> map) {
-    final rawId = map['id'];
-    final id = rawId is num ? rawId.toInt() : int.tryParse('$rawId') ?? 0;
-    return WorkdayDayType(
-      id: id,
-      name: '${map['name'] ?? ''}'.trim(),
-      description: '${map['desc'] ?? map['description'] ?? ''}'.trim(),
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'description': description,
-  };
-}
-
-class WorkdaySnapshot {
-  final bool isStarted;
-  final bool isCompleted;
-  final String? startTime;
-  final String? endTime;
-  final int? dayTypeId;
-  final String? dayTypeName;
-  final bool isLate;
-  final String? duration;
-
-  const WorkdaySnapshot({
-    this.isStarted = false,
-    this.isCompleted = false,
-    this.startTime,
-    this.endTime,
-    this.dayTypeId,
-    this.dayTypeName,
-    this.isLate = false,
-    this.duration,
-  });
-
-  WorkdayPhase get phase {
-    if (isStarted && !isCompleted) return WorkdayPhase.active;
-    return WorkdayPhase.notStarted;
-  }
-
-  factory WorkdaySnapshot.fromMap(Map<String, dynamic> map) {
-    bool toBool(dynamic value) {
-      if (value is bool) return value;
-      if (value is num) return value != 0;
-      return '$value'.toLowerCase() == 'true' || '$value' == '1';
-    }
-
-    int? toInt(dynamic value) {
-      if (value is num) return value.toInt();
-      return int.tryParse('$value');
-    }
-
-    String? toText(dynamic value) {
-      final text = '$value'.trim();
-      return text.isEmpty || text == 'null' ? null : text;
-    }
-
-    return WorkdaySnapshot(
-      isStarted: toBool(map['is_started']),
-      isCompleted: toBool(map['is_completed']),
-      startTime: toText(map['start_time']),
-      endTime: toText(map['end_time']),
-      dayTypeId: toInt(map['day_type_id']),
-      dayTypeName: toText(map['day_type_name']),
-      isLate: toBool(map['is_late']),
-      duration: toText(map['duration']),
-    );
-  }
-
-  WorkdaySnapshot copyWith({
-    bool? isStarted,
-    bool? isCompleted,
-    String? startTime,
-    String? endTime,
-    int? dayTypeId,
-    String? dayTypeName,
-    bool? isLate,
-    String? duration,
-  }) => WorkdaySnapshot(
-    isStarted: isStarted ?? this.isStarted,
-    isCompleted: isCompleted ?? this.isCompleted,
-    startTime: startTime ?? this.startTime,
-    endTime: endTime ?? this.endTime,
-    dayTypeId: dayTypeId ?? this.dayTypeId,
-    dayTypeName: dayTypeName ?? this.dayTypeName,
-    isLate: isLate ?? this.isLate,
-    duration: duration ?? this.duration,
-  );
-
-  Map<String, dynamic> toJson() => {
-    'is_started': isStarted,
-    'is_completed': isCompleted,
-    'start_time': startTime,
-    'end_time': endTime,
-    'day_type_id': dayTypeId,
-    'day_type_name': dayTypeName,
-    'is_late': isLate,
-    'duration': duration,
-  };
 }
 
 class WorkdayState {
@@ -212,71 +100,31 @@ class WorkdayState {
 }
 
 class WorkdayNotifier extends StateNotifier<WorkdayState> {
-  static const _featureKey = 'feature.workday.checkin.checkout';
-  static const _cachePrefix = 'workday_state_v2';
   static const _alreadyStartedMessage = 'Рабочий день уже начат';
 
-  final RemoteApiService _api;
-  final SharedPreferences _prefs;
-  final LocalDatabase _db;
-  final WorkdayLocationService _locationService;
-  final int? _userId;
+  final WorkdayRepository _repository;
   final bool Function() _isOffline;
   Future<void>? _refreshTask;
 
-  WorkdayNotifier(
-    this._api,
-    this._prefs,
-    this._db,
-    this._locationService,
-    this._userId,
-    this._isOffline,
-  ) : super(const WorkdayState()) {
+  WorkdayNotifier(this._repository, this._isOffline)
+    : super(const WorkdayState()) {
     // Provider creation can happen while Home is building. Defer the first
     // state update so Riverpod never receives a mutation during that build.
     unawaited(Future<void>.microtask(_restoreAndRefresh));
   }
 
-  String? get _cacheKey => _userId == null ? null : '$_cachePrefix::$_userId';
-
   Future<void> _restoreAndRefresh() async {
-    _restoreCachedState();
-    await refresh();
-  }
-
-  void _restoreCachedState() {
-    final key = _cacheKey;
-    if (key == null) return;
-    final raw = _prefs.getString(key);
-    if (raw == null || raw.isEmpty) return;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return;
-      final map = Map<String, dynamic>.from(decoded);
-      final rawTypes = map['day_types'];
-      final types = rawTypes is List
-          ? rawTypes
-                .whereType<Map>()
-                .map(
-                  (row) =>
-                      WorkdayDayType.fromMap(Map<String, dynamic>.from(row)),
-                )
-                .where((type) => type.id > 0 && type.name.isNotEmpty)
-                .toList(growable: false)
-          : const <WorkdayDayType>[];
-      final rawSnapshot = map['workday'];
-      state = WorkdayState(
-        featureEnabled: map['feature_enabled'] is bool
-            ? map['feature_enabled'] as bool
-            : null,
-        workday: rawSnapshot is Map
-            ? WorkdaySnapshot.fromMap(Map<String, dynamic>.from(rawSnapshot))
-            : const WorkdaySnapshot(),
-        dayTypes: types,
+    final cached = await _repository.readCached();
+    if (cached.status != null ||
+        cached.featureEnabled != null ||
+        cached.dayTypes.isNotEmpty) {
+      state = state.copyWith(
+        featureEnabled: cached.featureEnabled,
+        workday: cached.status ?? const WorkdaySnapshot(),
+        dayTypes: cached.dayTypes,
       );
-    } catch (_) {
-      // A stale cache must never block home rendering.
     }
+    await refresh();
   }
 
   Future<void> refresh() {
@@ -292,41 +140,59 @@ class WorkdayNotifier extends StateNotifier<WorkdayState> {
 
   Future<void> _refreshFromRemote() async {
     state = state.copyWith(isLoading: true, clearError: true);
+    Object? firstError;
+    final feature = await _loadSection<bool?>(
+      _repository.loadFeatureEnabled,
+      onError: (error) => firstError ??= error,
+    );
+    final status = await _loadSection<WorkdaySnapshot>(
+      _repository.loadStatus,
+      onError: (error) => firstError ??= error,
+    );
+    final types = await _loadSection<List<WorkdayDayType>>(
+      _repository.loadDayTypes,
+      onError: (error) => firstError ??= error,
+    );
+    if (feature != null) state = state.copyWith(featureEnabled: feature);
+    if (status != null) {
+      // A queued local action is newer than a stale server status. The
+      // repository owns the queue; this guard only preserves the optimistic
+      // content while reconciliation is pending.
+      final cached = await _repository.readCached();
+      if (cached.status != null &&
+          (cached.status!.isStarted || cached.status!.isCompleted) &&
+          state.workday != cached.status) {
+        state = state.copyWith(workday: status);
+      } else {
+        state = state.copyWith(workday: status);
+      }
+    }
+    if (types != null) state = state.copyWith(dayTypes: types);
+    state = state.copyWith(
+      isLoading: false,
+      errorMessage: firstError == null ? null : '$firstError',
+      clearError: firstError == null,
+    );
+    unawaited(
+      _repository.saveCached(
+        workday_domain.WorkdayCachedState(
+          featureEnabled: state.featureEnabled,
+          status: state.workday,
+          dayTypes: state.dayTypes,
+        ),
+      ),
+    );
+  }
+
+  Future<T?> _loadSection<T>(
+    Future<T> Function() load, {
+    required void Function(Object error) onError,
+  }) async {
     try {
-      final response = await Future.wait<dynamic>([
-        _api.getGlobalBoolean(_featureKey),
-        _api.getWorkdayStatus(),
-        _api.getDayTypes(),
-      ]);
-      final featureEnabled = response[0] as bool?;
-      final remoteWorkday = WorkdaySnapshot.fromMap(
-        Map<String, dynamic>.from(response[1] as Map),
-      );
-      final userId = _userId;
-      final pendingEvents = userId == null
-          ? const <Map<String, dynamic>>[]
-          : await _db.getPendingWorkdayEvents(userId);
-      // A queued offline event is newer than the last server response. Keep
-      // the cached optimistic status visible until the queue is drained.
-      final workday =
-          pendingEvents.isNotEmpty &&
-              (state.workday.isStarted || state.workday.isCompleted)
-          ? state.workday
-          : remoteWorkday;
-      final dayTypes = (response[2] as List<Map<String, dynamic>>)
-          .map(WorkdayDayType.fromMap)
-          .where((type) => type.id > 0 && type.name.isNotEmpty)
-          .toList(growable: false);
-      state = state.copyWith(
-        featureEnabled: featureEnabled,
-        isLoading: false,
-        workday: workday,
-        dayTypes: dayTypes,
-        clearError: true,
-      );
-      unawaited(_persistState());
+      return await load();
     } catch (error) {
-      state = state.copyWith(isLoading: false, errorMessage: '$error');
+      onError(error);
+      return null;
     }
   }
 
@@ -342,57 +208,16 @@ class WorkdayNotifier extends StateNotifier<WorkdayState> {
       throw error;
     }
     state = state.copyWith(action: WorkdayAction.starting, clearError: true);
-    final coordinates = await _locationService.currentOrFallback();
-
-    if (_isOffline()) {
-      try {
-        await _queueStart(dayType, coordinates.latitude, coordinates.longitude);
-        await _applyStarted(dayType);
-        return const WorkdaySubmissionResult(WorkdaySubmissionStatus.queued);
-      } catch (error) {
-        state = state.copyWith(
-          action: WorkdayAction.idle,
-          errorMessage: '$error',
-        );
-        throw WorkdayActionException.from(error);
-      }
-    }
-
     try {
-      await _api.startWorkday(
-        dayTypeId: dayType.id,
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-      );
+      final result = await _repository.start(dayType);
       await _applyStarted(dayType);
-      unawaited(refresh());
-      return const WorkdaySubmissionResult(WorkdaySubmissionStatus.sent);
+      if (!result.queued) unawaited(refresh());
+      return WorkdaySubmissionResult(
+        result.queued
+            ? WorkdaySubmissionStatus.queued
+            : WorkdaySubmissionStatus.sent,
+      );
     } catch (error) {
-      if (_isNetworkError(error)) {
-        if (state.hasStartedWorkday) {
-          final duplicateStartError = _alreadyStartedException();
-          state = state.copyWith(
-            action: WorkdayAction.idle,
-            errorMessage: duplicateStartError.message,
-          );
-          throw duplicateStartError;
-        }
-        try {
-          await _queueStart(
-            dayType,
-            coordinates.latitude,
-            coordinates.longitude,
-          );
-          await _applyStarted(dayType);
-          return const WorkdaySubmissionResult(WorkdaySubmissionStatus.queued);
-        } catch (queueError) {
-          state = state.copyWith(
-            action: WorkdayAction.idle,
-            errorMessage: '$queueError',
-          );
-          throw WorkdayActionException.from(queueError);
-        }
-      }
       state = state.copyWith(
         action: WorkdayAction.idle,
         errorMessage: '$error',
@@ -406,86 +231,22 @@ class WorkdayNotifier extends StateNotifier<WorkdayState> {
       return const WorkdaySubmissionResult(WorkdaySubmissionStatus.ignored);
     }
     state = state.copyWith(action: WorkdayAction.ending, clearError: true);
-    final coordinates = await _locationService.currentOrFallback();
-
-    if (_isOffline()) {
-      try {
-        await _queueEnd(coordinates.latitude, coordinates.longitude);
-        await _applyEnded();
-        return const WorkdaySubmissionResult(WorkdaySubmissionStatus.queued);
-      } catch (error) {
-        state = state.copyWith(
-          action: WorkdayAction.idle,
-          errorMessage: '$error',
-        );
-        throw WorkdayActionException.from(error);
-      }
-    }
-
     try {
-      await _api.endWorkday(
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-      );
+      final result = await _repository.end();
       await _applyEnded();
-      unawaited(refresh());
-      return const WorkdaySubmissionResult(WorkdaySubmissionStatus.sent);
+      if (!result.queued) unawaited(refresh());
+      return WorkdaySubmissionResult(
+        result.queued
+            ? WorkdaySubmissionStatus.queued
+            : WorkdaySubmissionStatus.sent,
+      );
     } catch (error) {
-      if (_isNetworkError(error)) {
-        try {
-          await _queueEnd(coordinates.latitude, coordinates.longitude);
-          await _applyEnded();
-          return const WorkdaySubmissionResult(WorkdaySubmissionStatus.queued);
-        } catch (queueError) {
-          state = state.copyWith(
-            action: WorkdayAction.idle,
-            errorMessage: '$queueError',
-          );
-          throw WorkdayActionException.from(queueError);
-        }
-      }
       state = state.copyWith(
         action: WorkdayAction.idle,
         errorMessage: '$error',
       );
       throw WorkdayActionException.from(error);
     }
-  }
-
-  Future<void> _queueStart(
-    WorkdayDayType type,
-    double latitude,
-    double longitude,
-  ) => _queueEvent(
-    action: 'start',
-    dayTypeId: type.id,
-    dayTypeName: type.name,
-    latitude: latitude,
-    longitude: longitude,
-  );
-
-  Future<void> _queueEnd(double latitude, double longitude) =>
-      _queueEvent(action: 'end', latitude: latitude, longitude: longitude);
-
-  Future<void> _queueEvent({
-    required String action,
-    int? dayTypeId,
-    String? dayTypeName,
-    required double latitude,
-    required double longitude,
-  }) async {
-    final userId = _userId;
-    if (userId == null) {
-      throw StateError('Cannot queue workday action without a signed-in user');
-    }
-    await _db.enqueuePendingWorkdayEvent(
-      userId: userId,
-      action: action,
-      dayTypeId: dayTypeId,
-      dayTypeName: dayTypeName,
-      latitude: latitude,
-      longitude: longitude,
-    );
   }
 
   Future<void> _applyStarted(WorkdayDayType dayType) async {
@@ -499,7 +260,7 @@ class WorkdayNotifier extends StateNotifier<WorkdayState> {
       ),
       clearError: true,
     );
-    await _persistState();
+    await _saveState();
   }
 
   Future<void> _applyEnded() async {
@@ -512,7 +273,7 @@ class WorkdayNotifier extends StateNotifier<WorkdayState> {
       ),
       clearError: true,
     );
-    await _persistState();
+    await _saveState();
   }
 
   WorkdayActionException _alreadyStartedException() => WorkdayActionException(
@@ -520,31 +281,13 @@ class WorkdayNotifier extends StateNotifier<WorkdayState> {
     cause: StateError('A workday has already been started today'),
   );
 
-  static bool _isNetworkError(Object error) {
-    if (error is! DioException) return false;
-    if (error.response != null) return false;
-    return switch (error.type) {
-      DioExceptionType.connectionError ||
-      DioExceptionType.connectionTimeout ||
-      DioExceptionType.sendTimeout ||
-      DioExceptionType.receiveTimeout ||
-      DioExceptionType.unknown => true,
-      _ => false,
-    };
-  }
-
-  Future<void> _persistState() async {
-    final key = _cacheKey;
-    if (key == null) return;
-    await _prefs.setString(
-      key,
-      jsonEncode({
-        'feature_enabled': state.featureEnabled,
-        'workday': state.workday.toJson(),
-        'day_types': state.dayTypes.map((type) => type.toJson()).toList(),
-      }),
-    );
-  }
+  Future<void> _saveState() => _repository.saveCached(
+    workday_domain.WorkdayCachedState(
+      featureEnabled: state.featureEnabled,
+      status: state.workday,
+      dayTypes: state.dayTypes,
+    ),
+  );
 }
 
 final workdayProvider = StateNotifierProvider<WorkdayNotifier, WorkdayState>((
@@ -552,11 +295,14 @@ final workdayProvider = StateNotifierProvider<WorkdayNotifier, WorkdayState>((
 ) {
   final userId = ref.watch(authProvider.select((state) => state.user?.id));
   return WorkdayNotifier(
-    ref.watch(remoteApiServiceProvider),
-    ref.watch(sharedPreferencesProvider),
-    ref.watch(localDatabaseProvider),
-    const WorkdayLocationService(),
-    userId,
+    WorkdayRepositoryImpl(
+      api: ref.watch(remoteApiServiceProvider),
+      prefs: ref.watch(sharedPreferencesProvider),
+      db: ref.watch(localDatabaseProvider),
+      locationService: const WorkdayLocationService(),
+      userId: userId,
+      isOffline: () => ref.read(isOfflineProvider),
+    ),
     () => ref.read(isOfflineProvider),
   );
 });
