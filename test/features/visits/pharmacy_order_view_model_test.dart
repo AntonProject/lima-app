@@ -186,6 +186,27 @@ PharmacyOrderViewModelConfig _submissionConfig({
 }
 
 void main() {
+  test('calculates amount due from the selected prepayment percent', () {
+    const state = PharmacyOrderViewState(
+      drugs: {
+        5: Drug(
+          id: 5,
+          name: 'Drug',
+          manufacturer: 'Manufacturer',
+          price: 120000,
+        ),
+      },
+      quantities: {5: 10},
+    );
+
+    expect(state.total, 1200000);
+    expect(state.payableTotal(50), 600000);
+    expect(state.payableTotal(0), 0);
+    expect(state.payableTotal(100), 1200000);
+    expect(state.payableTotal(120), 1200000);
+    expect(state.payableTotal(-5), 0);
+  });
+
   test('loads cart snapshot first and merges the local catalogue', () async {
     const cartItem = CartItemSnapshot(
       drugId: 5,

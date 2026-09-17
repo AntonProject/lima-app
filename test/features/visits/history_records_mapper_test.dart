@@ -60,4 +60,43 @@ void main() {
     expect(records.single.syncStatus, 'pending');
     expect(records.single.status, 'pending');
   });
+
+  test('keeps order quantities, totals and product metadata for export', () {
+    final records = HistoryRecordsMapper.fromRows([
+      {
+        'remote_id': 42,
+        'org_id': 8,
+        'org_name': 'INTERFARMED',
+        'visit_type': 'order',
+        'status': 'completed',
+        'is_synced': 1,
+        'created_at': '2026-09-17T10:00:00',
+        'updated_at': '2026-09-17T10:00:00',
+        'raw_json': jsonEncode({
+          'visit_type': 1,
+          'total_sum': 1200000,
+          'drugs': [
+            {
+              'drug': {
+                'name': 'ЭССЕНИКС',
+                'producer': {'name': 'TEMUR MED'},
+              },
+              'package': 10,
+              'sale_price': 120000,
+              'serial_no': 'S-10',
+              'expire_date': '2027-09-17',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    final item = records.single.orderItems.single;
+    expect(item.name, 'ЭССЕНИКС');
+    expect(item.manufacturer, 'TEMUR MED');
+    expect(item.quantity, 10);
+    expect(item.total, 1200000);
+    expect(item.serialNumber, 'S-10');
+    expect(item.expiryDate, '2027-09-17');
+  });
 }

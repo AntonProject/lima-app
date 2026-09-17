@@ -38,7 +38,7 @@ view models. Pull не является условием отображения:
 - `lib/core/providers/app_collections_provider.dart` — локальные коллекции для экранов.
 - `lib/features/offline/screens/sync_screen.dart` — ручной sync и диагностика.
 
-Текущая версия схемы `lima.db` — 24.
+Текущая версия схемы `lima.db` — 25.
 
 ## Обзор базы данных
 
@@ -57,6 +57,15 @@ view models. Pull не является условием отображения:
 - `pending_doctors` — врачи, созданные локально и ожидающие отправки на API.
 - `pending_org_updates` — локальные изменения организаций, ожидающие отправки на API.
 - `pending_workday_events` — FIFO-очередь локальных start/end рабочего дня.
+- `pending_plans` — планы визитов, ожидающие отправки, с retry/parking.
+- `pending_organizations` — созданные offline организации, ожидающие отправки.
+
+Пользовательские `visits`, `planned_visits`, `pending_plans` и
+`pending_organizations` содержат `owner_user_id`. Запросы и push-обработчики
+видят только записи текущего аккаунта. При смене аккаунта pending-данные не
+удаляются и не передаются под новой авторизацией; они снова становятся доступны
+после возврата владельца. Миграция v25 привязывает существующие записи к
+владельцу, уже сохранённому в `sync_meta`.
 
 ## Связи
 
@@ -148,6 +157,11 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 | `sync_id` | INTEGER | Cursor/id для delta sync. |
 | `raw_json` | TEXT | Исходный API payload. |
 
+Непустой ответ price-list применяется как актуальный снимок доступных для
+заказа цен и остатков. Позиции, исчезнувшие из нового снимка, остаются в
+offline-справочнике вместе с документами и кешированным изображением, но их
+цена и остаток обнуляются, поэтому оформить их в новую бронь нельзя.
+
 ### `drug_materials`
 
 Хранит metadata презентаций, документов, изображений упаковок и кешированных файлов.
@@ -174,6 +188,7 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 | Поле | Тип | Описание |
 | --- | --- | --- |
 | `id` | INTEGER PK AUTOINCREMENT | Локальный id. |
+| `owner_user_id` | INTEGER | Владелец локальной/серверной копии. |
 | `remote_id` | INTEGER | Серверный id визита. `NULL` означает локальную/offline запись. |
 | `org_id` | INTEGER | Ссылка на `organisations.id`. |
 | `org_name` | TEXT NOT NULL | Дублируется для отображения без JOIN. |
@@ -226,6 +241,7 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 | Поле | Тип | Описание |
 | --- | --- | --- |
 | `id` | INTEGER PK AUTOINCREMENT | Локальный id. |
+| `owner_user_id` | INTEGER | Владелец локальной/серверной копии. |
 | `remote_id` | INTEGER UNIQUE | Серверный id плана/визита. |
 | `org_id` | INTEGER | id организации. |
 | `org_name` | TEXT NOT NULL | Название организации. |
@@ -238,6 +254,14 @@ organisations ──< planned_visits     organisations.id = planned_visits.org_i
 | `status` | TEXT | Статус плана/визита. |
 | `comment` | TEXT | Комментарий. |
 | `raw_json` | TEXT | Исходный API payload. |
+
+### `pending_plans` и `pending_organizations`
+
+Обе offline-очереди содержат `owner_user_id` и выбираются только для текущего
+аккаунта. `pending_plans` дополнительно хранит `attempts`, `last_error`,
+`status`, `next_retry_at`, `parked_at` и `http_status`: временные ошибки
+повторяются с backoff, а постоянные 4xx и исчерпавшие лимит записи остаются в
+parking для диагностики вместо безвозвратного удаления.
 
 #### Открытый вопрос: завершение планового визита
 

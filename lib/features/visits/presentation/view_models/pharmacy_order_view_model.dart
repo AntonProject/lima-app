@@ -132,6 +132,11 @@ class PharmacyOrderViewState {
     return sum + (drug?.price ?? 0) * (quantities[id] ?? 0);
   });
 
+  double payableTotal(int prepaymentPercent) {
+    final normalizedPercent = prepaymentPercent.clamp(0, 100);
+    return total * normalizedPercent / 100;
+  }
+
   bool get hasInvalidQuantities => selectedIds.any(isOverStock);
 
   bool isOverStock(int id) {
@@ -231,7 +236,11 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
             config.fromCart && state.quantities.containsKey(incoming.id);
         if (!belongsToCatalog && !belongsToCart) continue;
         final existing = merged[incoming.id];
-        merged[incoming.id] = _mergeDrug(incoming, existing);
+        merged[incoming.id] = _mergeDrug(
+          incoming,
+          existing,
+          preserveExistingPrice: config.marginId != null,
+        );
       }
       state = state.copyWith(drugs: Map.unmodifiable(merged), isLoading: false);
     } catch (error) {
@@ -276,27 +285,18 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
   }
 
   PharmacyOrderLinesResult buildSelectedLines() {
-    final cartById = config.fromCart
-        ? {
-            for (final item in config.cartItems.where(
-              config.cartItemBelongsToCurrentOrder,
-            ))
-              item.drugId: item,
-          }
-        : const <int, CartItemSnapshot>{};
     final lineInputs = state.selectedIds.map((id) {
       final drug = state.drugs[id];
       if (drug == null) return null;
       final quantity = state.quantities[id] ?? 0;
       if (quantity <= 0) return null;
-      final cart = cartById[id];
       return PharmacyOrderLineInput(
         drugId: drug.id,
         drugName: drug.name,
         quantity: quantity,
         salePrice: drug.price,
-        incomeDetailingId: cart?.currentStockId ?? drug.currentStockId,
-        bindingDrugId: cart?.bindingDrugId ?? drug.bindingDrugId ?? drug.id,
+        incomeDetailingId: drug.currentStockId,
+        bindingDrugId: drug.bindingDrugId,
         serialNumber: drug.serialNumber,
         expiryDate: drug.expiryDate,
       );
@@ -330,7 +330,8 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
     );
 
     final orderLinesResult = buildSelectedLines();
-    if (orderLinesResult.lines.isEmpty) {
+    if (orderLinesResult.lines.isEmpty ||
+        orderLinesResult.skippedInvalidItems > 0) {
       return _finishSubmission(
         PharmacyOrderSubmissionState(
           status: PharmacyOrderSubmissionStatus.invalidLines,
@@ -340,20 +341,20 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
     }
 
     var orderLines = orderLinesResult.lines;
-    PharmacyOrderPricingTerms? pricingTerms;
+    PharmacyOrderPricingTerms? pricingTerms = config.marginId == null
+        ? null
+        : PharmacyOrderPricingTerms(
+            companyId: config.selectedCompanyId ?? context.userCompanyId,
+            paymentVariantId: config.paymentVariantId ?? 1,
+            marginId: config.marginId!,
+            marginPercent: config.marginPercent,
+            contractId: config.contractId,
+            prepaymentPercent: config.prepaymentPercent,
+            isWholesaler: config.buyerType == 1,
+          );
     var pricesAlreadyCalculated = config.marginId != null;
     if (!context.isOffline) {
-      if (config.marginId != null) {
-        pricingTerms = PharmacyOrderPricingTerms(
-          companyId: config.selectedCompanyId ?? context.userCompanyId,
-          paymentVariantId: config.paymentVariantId ?? 1,
-          marginId: config.marginId!,
-          marginPercent: config.marginPercent,
-          contractId: config.contractId,
-          prepaymentPercent: config.prepaymentPercent,
-          isWholesaler: config.buyerType == 1,
-        );
-      } else {
+      if (pricingTerms == null) {
         try {
           final pricingPreview = await _submitPharmacyOrder.calculatePricing(
             prepaymentPercent: config.prepaymentPercent,
@@ -494,14 +495,20 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
     if (mounted) state = state.copyWith(submission: submission);
   }
 
-  static Drug _mergeDrug(Drug incoming, Drug? existing) {
+  static Drug _mergeDrug(
+    Drug incoming,
+    Drug? existing, {
+    required bool preserveExistingPrice,
+  }) {
     return Drug(
       id: incoming.id,
       name: incoming.name,
       manufacturer: incoming.manufacturer,
       serialNumber: incoming.serialNumber ?? existing?.serialNumber,
       expiryDate: incoming.expiryDate ?? existing?.expiryDate,
-      price: incoming.price > 0 ? incoming.price : (existing?.price ?? 0),
+      price: preserveExistingPrice && (existing?.price ?? 0) > 0
+          ? existing!.price
+          : (incoming.price > 0 ? incoming.price : (existing?.price ?? 0)),
       mainStock: incoming.mainStock ?? existing?.mainStock,
       stock: incoming.stock ?? existing?.stock,
       remainsStock: incoming.remainsStock ?? existing?.remainsStock,

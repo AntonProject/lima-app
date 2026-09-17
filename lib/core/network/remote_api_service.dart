@@ -1249,21 +1249,6 @@ class RemoteApiService {
     throw const FormatException('Expected JSON object response');
   }
 
-  static List<Map<String, dynamic>> _extractMarkupDetailings(
-    Map<String, dynamic> markup,
-  ) {
-    final raw =
-        markup['markup_detailings'] ??
-        markup['detailings'] ??
-        markup['details'] ??
-        markup['items'];
-    if (raw is! List) return const <Map<String, dynamic>>[];
-    return raw
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-  }
-
   static List<Map<String, dynamic>> _sanitizeOrderDrugs(
     dynamic raw, {
     int? defaultMarginPercent,
@@ -2926,12 +2911,17 @@ class RemoteApiService {
   }
 
   Future<List<Drug>> getStockPriceListDrugs() async {
-    final rows = await _getListAny([
-      '/stock/price-list',
-      '/Stock/price-list',
-      '/api/stock/price-list',
-      '/api/Stock/price-list',
-    ]);
+    // The order catalogue is rebuilt from this response, so a server-side page
+    // limit would quietly drop drugs from бронь — ask for the full list.
+    final rows = await _getListAnyWithQuery(
+      [
+        '/stock/price-list',
+        '/Stock/price-list',
+        '/api/stock/price-list',
+        '/api/Stock/price-list',
+      ],
+      queryParameters: {'_no_limit': true},
+    );
 
     if (rows.isNotEmpty && kDebugMode) {
       debugPrint(
@@ -2953,10 +2943,7 @@ class RemoteApiService {
 
       // drug.id is the binding ID — used by Documents API
       // drug.drug_id is the dict drug ID
-      final id =
-          _toInt(drugMap['id']) ??
-          _toInt(drugMap['drug_id']) ??
-          _toInt(m['income_detailing_id']);
+      final id = _toInt(drugMap['id']);
       final name = _toString(drugMap['name']) ?? _toString(m['name']);
       if (id == null || name == null || name.isEmpty) continue;
       if (seen.contains(id)) continue;
@@ -3030,7 +3017,7 @@ class RemoteApiService {
 
       // Top-level `id` is the binding id — the value the server expects in
       // talked_about_drugs[].drug_id. `drug.id` is the dict drug_id.
-      final id = _toInt(m['id']) ?? _toInt(drugMap['id']);
+      final id = _toInt(m['id']);
       final name = _toString(drugMap['name']) ?? _toString(m['name']);
       if (id == null || name == null || name.isEmpty) continue;
       if (seen.contains(id)) continue;
@@ -3042,7 +3029,7 @@ class RemoteApiService {
           name: name,
           manufacturer: _toString(producerMap['name']) ?? '',
           price: 0,
-          bindingDrugId: _toInt(drugMap['id']),
+          bindingDrugId: id,
           imageUrl: _drugImageUrl(drugMap),
         ),
       );
@@ -3158,10 +3145,7 @@ class RemoteApiService {
         final producer = binding['producer'] is Map
             ? Map<String, dynamic>.from(binding['producer'] as Map)
             : const <String, dynamic>{};
-        final drugId =
-            _toInt(binding['binding_id']) ??
-            _toInt(binding['id']) ??
-            _toInt(drug['id']);
+        final drugId = _toInt(binding['binding_id']) ?? _toInt(binding['id']);
         if (drugId == null) continue;
         result.add({
           'drug_id': drugId,

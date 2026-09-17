@@ -8,10 +8,11 @@ import 'package:lima/core/utils/swallowed.dart';
 
 /// Drains locally queued planned visits without owning sync screen state.
 ///
-/// A malformed or rejected (4xx) queue row is removed because retrying it
-/// cannot make the payload valid. Network and 5xx failures stay queued for a
-/// later reconcile.
+/// Retryable failures use backoff; malformed/permanently rejected rows are
+/// parked with diagnostics instead of being deleted silently.
 class PendingPlanSyncService {
+  static const maxAttempts = 10;
+
   final LocalDatabase _db;
   final RemoteApiService _remoteApi;
   final bool Function() _isOffline;
@@ -25,7 +26,7 @@ class PendingPlanSyncService {
        _isOffline = isOffline;
 
   Future<void> sync() async {
-    final pending = await _db.getPendingPlans();
+    final pending = await _db.getPendingPlans(readyOnly: true);
     debugPrint(
       '[PLAN PUSH] pending_plan_sync: offline=${_isOffline()} '
       'pending=${pending.length}',
@@ -50,7 +51,14 @@ class PendingPlanSyncService {
         orgId == null ||
         visitFormatId == null ||
         startDateRaw == null) {
-      if (pendingId != null) await _db.deletePendingPlan(pendingId);
+      if (pendingId != null) {
+        await _db.recordPendingPlanFailure(
+          id: pendingId,
+          error: 'Invalid queued plan payload',
+          status: 'parked',
+          parkedAt: DateTime.now(),
+        );
+      }
       return;
     }
 
@@ -81,15 +89,39 @@ class PendingPlanSyncService {
       }
       await _db.deletePendingPlan(pendingId);
     } catch (error) {
-      if (error is RemotePushException) {
-        final status = error.response['status'];
-        if (status is int && status >= 400 && status < 500) {
-          await _db.deletePendingPlan(pendingId);
-        }
-      }
-      // Network and server failures remain queued for the next reconcile.
+      final httpStatus = error is RemotePushException
+          ? (error.response['status'] as num?)?.toInt()
+          : null;
+      final retryable4xx =
+          httpStatus == 401 ||
+          httpStatus == 403 ||
+          httpStatus == 408 ||
+          httpStatus == 429;
+      final permanent =
+          httpStatus != null &&
+          httpStatus >= 400 &&
+          httpStatus < 500 &&
+          !retryable4xx;
+      final attempts = ((row['attempts'] as num?)?.toInt() ?? 0) + 1;
+      final shouldPark = permanent || attempts >= maxAttempts;
+      final now = DateTime.now();
+      await _db.recordPendingPlanFailure(
+        id: pendingId,
+        error: '$error',
+        status: shouldPark ? 'parked' : 'retryScheduled',
+        nextRetryAt: shouldPark ? null : now.add(_backoff(attempts)),
+        parkedAt: shouldPark ? now : null,
+        httpStatus: httpStatus,
+      );
     }
   }
+
+  static Duration _backoff(int attempts) => switch (attempts) {
+    1 => const Duration(minutes: 1),
+    2 => const Duration(minutes: 5),
+    3 => const Duration(minutes: 30),
+    _ => const Duration(hours: 1),
+  };
 
   @visibleForTesting
   static List<int> parseDoctorIds(String? raw) {

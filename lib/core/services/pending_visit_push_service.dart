@@ -69,6 +69,13 @@ class PendingVisitPushService {
           'PendingVisitPushService.repair',
         );
       }
+      final repairedOrders = await _db.repairParkedPharmacyOrderStockIds();
+      if (repairedOrders > 0) {
+        logSwallowed(
+          're-queued $repairedOrders parked order(s) with refreshed stock ids',
+          'PendingVisitPushService.repair',
+        );
+      }
     } catch (error) {
       failures.add(
         PendingVisitPushFailure(

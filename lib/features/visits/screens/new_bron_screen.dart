@@ -132,7 +132,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
   Map<int, int> get _qtyByDrugId => _orderState.quantities;
   List<int> get _ids => _orderState.selectedIds;
   bool get _hasInvalidQuantities => _orderState.hasInvalidQuantities;
-  double get _total => _orderState.total;
+  double get _orderTotal => _orderState.total;
+  double get _payableTotal => _orderState.payableTotal(_prepayment);
   bool get _actionLocked => _orderState.isActionLocked;
 
   String get _organizationDetailPath => widget.routeData.isLpuBooking
@@ -260,7 +261,16 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       switch (result.status) {
         case PharmacyOrderSubmissionStatus.invalidLines:
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(context.l10n.t('loadingDrugData'))),
+            SnackBar(
+              content: Text(
+                result.skippedInvalidItems > 0
+                    ? context.l10n.t(
+                        'skippedNoStockN',
+                        args: {'count': '${result.skippedInvalidItems}'},
+                      )
+                    : context.l10n.t('loadingDrugData'),
+              ),
+            ),
           );
           return;
         case PharmacyOrderSubmissionStatus.noPriceMatrix:
@@ -381,6 +391,15 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value.toString().replaceAll(RegExp(r'\D'), ''));
+  }
+
+  /// Seller name for the specification document: the current medrep's own
+  /// company (e.g. "SIRIUS"), not the parent brand — each of the group's
+  /// companies sells under its own name. Falls back to "LIMA" only if the
+  /// profile has no company on file.
+  String get _sellerCompanyName {
+    final company = ref.read(authProvider).user?.company?.trim();
+    return (company == null || company.isEmpty) ? 'LIMA' : company;
   }
 
   bool _isLineOverStock(int id) => _orderState.isOverStock(id);
@@ -546,25 +565,57 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                 color: const Color(0xFFE6894A),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    context.l10n.t('toPayColon'),
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
+                  Row(
+                    children: [
+                      Text(
+                        context.l10n.t('toPayColon'),
+                        style: GoogleFonts.manrope(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        formatUzs(_payableTotal),
+                        style: GoogleFonts.manrope(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
                   ),
-                  const Spacer(),
-                  Text(
-                    formatUzs(_total),
-                    style: GoogleFonts.manrope(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
+                  // At 100% prepayment both figures are the same, so the order
+                  // sum only earns its line when part of it is due later —
+                  // without it a 0% booking would read as a zero-value order.
+                  if (_prepayment != 100) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Text(
+                          context.l10n.t('totalColon'),
+                          style: GoogleFonts.manrope(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white70,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          formatUzs(_orderTotal),
+                          style: GoogleFonts.manrope(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

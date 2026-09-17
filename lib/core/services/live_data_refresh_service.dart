@@ -91,7 +91,7 @@ class LiveDataRefreshService {
         final stockDrugs = await _remoteApi.getStockPriceListDrugs();
         if (stockDrugs.isNotEmpty) {
           final now = DateTime.now().toIso8601String();
-          await _db.upsertDrugs(
+          final replaced = await _db.replaceOrderPriceList(
             stockDrugs
                 .map(
                   (drug) => <String, dynamic>{
@@ -112,6 +112,13 @@ class LiveDataRefreshService {
                 )
                 .toList(),
           );
+          if (!replaced) {
+            logSwallowed(
+              'price-list looked truncated (${stockDrugs.length} rows) — '
+              'merged instead of replacing the order catalogue',
+              'LiveDataRefreshService.stock',
+            );
+          }
         }
       } catch (error) {
         logSwallowed(error, 'LiveDataRefreshService.stock');

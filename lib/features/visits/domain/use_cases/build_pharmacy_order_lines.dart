@@ -97,8 +97,10 @@ class BuildPharmacyOrderLines {
       if (input.quantity <= 0) continue;
 
       final incomeDetailingId = input.incomeDetailingId;
-      final bindingDrugId = input.bindingDrugId ?? input.drugId;
-      if (incomeDetailingId == null || bindingDrugId <= 0) {
+      final bindingDrugId = input.bindingDrugId;
+      if (incomeDetailingId == null ||
+          bindingDrugId == null ||
+          bindingDrugId <= 0) {
         skippedInvalidItems++;
         continue;
       }

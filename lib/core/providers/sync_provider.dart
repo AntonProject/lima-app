@@ -1005,7 +1005,14 @@ class SyncNotifier extends StateNotifier<SyncState> {
             )
             .toList();
         changedDrugRows.addAll(rows);
-        await _db.upsertDrugs(rows);
+        final replaced = await _db.replaceOrderPriceList(rows);
+        if (!replaced) {
+          logSwallowed(
+            'price-list looked truncated (${rows.length} rows) — merged '
+            'instead of replacing the order catalogue',
+            'Sync._syncDrugsAndMaterialsLayer.priceList',
+          );
+        }
         drugsCount = drugsCount == 0 ? rows.length : drugsCount;
       }
     } catch (e) {

@@ -56,6 +56,111 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
   String _visitTitle(String base) =>
       visit.hasServerId ? '$base №${visit.id}' : base;
 
+  /// Seller for a historical order: the company stored on the record wins over
+  /// the current profile, because a supervisor re-exporting someone else's
+  /// booking must not re-sign it with their own company.
+  String get _sellerCompanyName {
+    final recordedCompany = _sellerFromRecord();
+    if (recordedCompany != null) return recordedCompany;
+    final currentCompany = ref.read(authProvider).user?.company?.trim();
+    if (currentCompany != null && currentCompany.isNotEmpty) {
+      return currentCompany;
+    }
+    return 'LIMA';
+  }
+
+  String? _sellerFromRecord() {
+    try {
+      final decoded = jsonDecode(visit.rawJson);
+      if (decoded is! Map) return null;
+      final raw = Map<String, dynamic>.from(decoded);
+      for (final key in const [
+        'seller_name',
+        'company_name',
+        'seller',
+        'company',
+      ]) {
+        final value = raw[key];
+        if (value is String && value.trim().isNotEmpty) {
+          return value.trim();
+        }
+        if (value is Map) {
+          final name = value['name']?.toString().trim();
+          if (name != null && name.isNotEmpty) return name;
+        }
+      }
+    } catch (_) {
+      // Malformed legacy payload — fall back to the current profile.
+    }
+    return null;
+  }
+
+  List<SpecificationItem> _specificationItems() {
+    final markupPercent = (visit.markupPercent ?? 20).toDouble();
+    final items = visit.orderItems
+        .where((item) => item.quantity > 0)
+        .map(
+          (item) => SpecificationItem(
+            name: item.name,
+            manufacturer: item.manufacturer == '—' ? '' : item.manufacturer,
+            quantity: item.quantity,
+            serialNumber: item.serialNumber,
+            expiryDate: item.expiryDate,
+            basePrice: SpecificationExportService.basePriceFromGross(
+              grossPrice: item.total / item.quantity,
+              markupPercent: markupPercent,
+            ),
+            markupPercent: markupPercent,
+          ),
+        )
+        .toList(growable: false);
+    if (items.isNotEmpty) return items;
+
+    // Records without per-line order data still have to list every product, so
+    // the order sum is split evenly here. This is the only place that invents
+    // per-line prices — anything with orderItems takes the branch above.
+    if (visit.presentations.isNotEmpty) {
+      final perLineGross = visit.orderTotal > 0
+          ? visit.orderTotal / visit.presentations.length
+          : 0.0;
+      return visit.presentations
+          .map(
+            (presentation) => SpecificationItem(
+              name: presentation.name,
+              manufacturer: presentation.manufacturer == '—'
+                  ? ''
+                  : presentation.manufacturer,
+              quantity: 1,
+              serialNumber: visit.serialNumber.isEmpty
+                  ? '—'
+                  : visit.serialNumber,
+              expiryDate: '—',
+              basePrice: SpecificationExportService.basePriceFromGross(
+                grossPrice: perLineGross,
+                markupPercent: markupPercent,
+              ),
+              markupPercent: markupPercent,
+            ),
+          )
+          .toList(growable: false);
+    }
+
+    final quantity = visit.quantity > 0 ? visit.quantity : 1;
+    return [
+      SpecificationItem(
+        name: visit.drug,
+        quantity: quantity,
+        serialNumber: visit.serialNumber.isEmpty ? '—' : visit.serialNumber,
+        expiryDate: '—',
+        basePrice: SpecificationExportService.basePriceFromGross(
+          grossPrice: visit.orderTotal > 0 ? visit.orderTotal / quantity : 0,
+          markupPercent: markupPercent,
+        ),
+        markupPercent: markupPercent,
+      ),
+    ];
+  }
+
   /// Unified header for every visit/order dialog: only a centered drag handle
   /// (no close button; the sheet is dismissed by swiping down), then the title
   /// ("Заказ/Визит №NNN") on the left edge and the type/status chip on the
@@ -881,42 +986,9 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
         final data = SpecificationData(
           orderId: int.tryParse(visit.id) ?? 0,
           date: DateTime.now(),
-          seller: 'LIMA',
+          seller: _sellerCompanyName,
           buyer: visit.org,
-          items: visit.presentations.isEmpty
-              ? [
-                  SpecificationItem(
-                    name: visit.drug,
-                    manufacturer: '',
-                    quantity: visit.quantity > 0 ? visit.quantity : 1,
-                    serialNumber: visit.serialNumber.isEmpty
-                        ? '—'
-                        : visit.serialNumber,
-                    expiryDate: '—',
-                    basePrice: visit.orderTotal > 0
-                        ? (visit.orderTotal / 1.2)
-                        : 0,
-                    markupPercent: visit.markupPercent ?? 20,
-                  ),
-                ]
-              : visit.presentations
-                    .map(
-                      (p) => SpecificationItem(
-                        name: p.name,
-                        manufacturer: p.manufacturer,
-                        quantity: 1,
-                        serialNumber: visit.serialNumber.isEmpty
-                            ? '—'
-                            : visit.serialNumber,
-                        expiryDate: '—',
-                        basePrice: visit.orderTotal > 0
-                            ? ((visit.orderTotal / visit.presentations.length) /
-                                  1.2)
-                            : 0,
-                        markupPercent: visit.markupPercent ?? 20,
-                      ),
-                    )
-                    .toList(),
+          items: _specificationItems(),
         );
         _specExport.export(
           context,

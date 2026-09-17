@@ -1,6 +1,37 @@
 part of '../screens/new_bron_screen.dart';
 
 extension _NewBronScreenUi on _NewBronScreenState {
+  SpecificationData _buildSpecificationData() {
+    final markupPercent = (_marginPercent ?? 20).toDouble();
+    final items = <SpecificationItem>[];
+    for (final id in _ids) {
+      final drug = _drugById[id];
+      final quantity = _qtyByDrugId[id] ?? 0;
+      if (drug == null || quantity <= 0) continue;
+      items.add(
+        SpecificationItem(
+          name: drug.name,
+          manufacturer: drug.manufacturer,
+          quantity: quantity,
+          serialNumber: drug.serialNumber ?? '—',
+          expiryDate: drug.expiryDate ?? '—',
+          basePrice: SpecificationExportService.basePriceFromGross(
+            grossPrice: drug.price,
+            markupPercent: markupPercent,
+          ),
+          markupPercent: markupPercent,
+        ),
+      );
+    }
+    return SpecificationData(
+      orderId: DateTime.now().millisecondsSinceEpoch % 100000,
+      date: DateTime.now(),
+      seller: _sellerCompanyName,
+      buyer: widget.pharmacyName,
+      items: items,
+    );
+  }
+
   Future<void> _showSpecFormatDialog() async {
     await showDialog<void>(
       context: context,
@@ -37,27 +68,9 @@ extension _NewBronScreenUi on _NewBronScreenState {
               ElevatedButton(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  final data = SpecificationData(
-                    orderId: DateTime.now().millisecondsSinceEpoch % 100000,
-                    date: DateTime.now(),
-                    seller: 'LIMA',
-                    buyer: widget.pharmacyName,
-                    items: _ids
-                        .map(
-                          (id) => SpecificationItem(
-                            name: _drugById[id]?.name ?? '—',
-                            manufacturer: _drugById[id]?.manufacturer ?? '',
-                            quantity: _qtyByDrugId[id] ?? 1,
-                            serialNumber: _drugById[id]?.serialNumber ?? '—',
-                            expiryDate: _drugById[id]?.expiryDate ?? '—',
-                            basePrice: (_drugById[id]?.price ?? 0) / 1.2,
-                          ),
-                        )
-                        .toList(),
-                  );
                   _specExport.export(
                     context,
-                    data: data,
+                    data: _buildSpecificationData(),
                     format: SpecificationFormat.xlsx,
                   );
                 },
@@ -79,27 +92,9 @@ extension _NewBronScreenUi on _NewBronScreenState {
               ElevatedButton(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  final data = SpecificationData(
-                    orderId: DateTime.now().millisecondsSinceEpoch % 100000,
-                    date: DateTime.now(),
-                    seller: 'LIMA',
-                    buyer: widget.pharmacyName,
-                    items: _ids
-                        .map(
-                          (id) => SpecificationItem(
-                            name: _drugById[id]?.name ?? '—',
-                            manufacturer: _drugById[id]?.manufacturer ?? '',
-                            quantity: _qtyByDrugId[id] ?? 1,
-                            serialNumber: _drugById[id]?.serialNumber ?? '—',
-                            expiryDate: _drugById[id]?.expiryDate ?? '—',
-                            basePrice: (_drugById[id]?.price ?? 0) / 1.2,
-                          ),
-                        )
-                        .toList(),
-                  );
                   _specExport.export(
                     context,
-                    data: data,
+                    data: _buildSpecificationData(),
                     format: SpecificationFormat.png,
                   );
                 },

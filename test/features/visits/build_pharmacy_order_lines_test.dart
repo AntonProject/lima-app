@@ -35,7 +35,7 @@ void main() {
     });
   });
 
-  test('falls back to dictionary drug id when binding id is absent', () {
+  test('rejects a line when binding id is absent', () {
     final result = builder([
       const PharmacyOrderLineInput(
         drugId: 109,
@@ -46,7 +46,8 @@ void main() {
       ),
     ]);
 
-    expect(result.lines.single.drugId, 109);
+    expect(result.lines, isEmpty);
+    expect(result.skippedInvalidItems, 1);
   });
 
   test('skips a line without stock binding and reports it', () {

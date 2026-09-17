@@ -63,8 +63,13 @@ class PendingWorkdaySyncService {
     final userId = owner.userId;
     if (userId == null) return true;
 
-    final pending = await _db.getPendingWorkdayEvents(userId, readyOnly: true);
+    final pending = await _db.getPendingWorkdayEvents(userId);
     for (final event in pending) {
+      if (event['status']?.toString() == 'parked') continue;
+      final nextRetryAt = DateTime.tryParse(
+        event['next_retry_at']?.toString() ?? '',
+      );
+      if (nextRetryAt != null && nextRetryAt.isAfter(_now())) return false;
       final canContinue = await _syncEvent(event);
       if (!canContinue) return false;
     }

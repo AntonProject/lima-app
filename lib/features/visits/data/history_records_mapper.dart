@@ -3,14 +3,14 @@ import '../models/history_records.dart';
 class HistoryRecordsMapper {
   const HistoryRecordsMapper._();
 
-  static List<HistoryVisitRecord> fromRows(
-    List<Map<String, dynamic>> rows,
-  ) {
+  static List<HistoryVisitRecord> fromRows(List<Map<String, dynamic>> rows) {
     final merged = <String, HistoryVisitRecord>{};
     for (final row in rows) {
       final record = HistoryVisitRecord.fromVisitMap(row);
       final key = record.id != '—' && record.id.trim().isNotEmpty
           ? '${record.id}_${record.type}_${record.subType}'
+          : row['id'] != null
+          ? 'local_${row['id']}_${record.type}_${record.subType}'
           : '${record.type}_${record.orgId}_${record.dateTime}';
       final previous = merged[key];
       if (previous == null || _score(record) >= _score(previous)) {

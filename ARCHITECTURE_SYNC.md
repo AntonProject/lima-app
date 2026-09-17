@@ -43,8 +43,10 @@ Repair справочника врачей, cursor, связи врач–ЛПУ
 
 Очередь запланированных визитов вынесена в `PendingPlanSyncService`: сервис
 собирает payload, вызывает `/api/visits/plans`, сохраняет `remote_id` и
-различает удаление 4xx-записей и повтор сетевых/5xx ошибок. `SyncNotifier`
-только запускает этот сервис из push-before-pull и reconcile flow.
+применяет retry/backoff для сети, 5xx, 401/403/408/429. Постоянные 4xx и записи,
+исчерпавшие лимит попыток, переводятся в `parked` с причиной и HTTP-кодом, а не
+удаляются. `SyncNotifier` только запускает этот сервис из push-before-pull и
+reconcile flow.
 
 Очереди избранного, feedback, новых врачей и организаций вынесены в
 `PendingMutationSyncService`. Он возвращает типизированные ошибки очереди, а

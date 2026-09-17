@@ -529,6 +529,7 @@ class AppI18n {
       'prepayments': 'Предоплаты',
       'wholesaleUnavailable':
           'Оптовый тип покупателя недоступен для вашей компании',
+      'selectPrepaymentFirst': 'Сначала выберите предоплату',
       'continueAction': 'Продолжить',
       'rating': 'Рейтинг',
       'rateEffectiveness': 'Оцените эффективность работы',
@@ -1173,6 +1174,7 @@ class AppI18n {
       'prepayments': "Oldindan to'lovlar",
       'wholesaleUnavailable':
           "Ulgurji xaridor turi sizning kompaniyangiz uchun mavjud emas",
+      'selectPrepaymentFirst': 'Avval oldindan to‘lovni tanlang',
       'continueAction': 'Davom etish',
       'rating': 'Reyting',
       'rateEffectiveness': 'Ish samaradorligini baholang',
@@ -1813,6 +1815,7 @@ class AppI18n {
       'prepayments': 'Олдиндан тўловлар',
       'wholesaleUnavailable':
           'Улгуржи харидор тури сизнинг компаниянгиз учун мавжуд эмас',
+      'selectPrepaymentFirst': 'Аввал олдиндан тўловни танланг',
       'continueAction': 'Давом этиш',
       'rating': 'Рейтинг',
       'rateEffectiveness': 'Иш самарадорлигини баҳоланг',
@@ -2445,6 +2448,7 @@ class AppI18n {
       'prepayments': 'Prepayments',
       'wholesaleUnavailable':
           'Wholesale buyer type is not available for your company',
+      'selectPrepaymentFirst': 'Select the prepayment first',
       'continueAction': 'Continue',
       'rating': 'Rating',
       'rateEffectiveness': 'Rate work effectiveness',

@@ -624,21 +624,47 @@ class HistoryVisitRecord {
     for (final item in list) {
       if (item is! Map) continue;
       final map = Map<String, dynamic>.from(item);
+      final drugMap = map['drug'] is Map
+          ? Map<String, dynamic>.from(map['drug'] as Map)
+          : const <String, dynamic>{};
+      final producerValue = map['producer'] ?? drugMap['producer'];
+      final producerMap = producerValue is Map
+          ? Map<String, dynamic>.from(producerValue)
+          : const <String, dynamic>{};
       final quantity =
           _toInt(map['package'] ?? map['quantity'] ?? map['qty']) ?? 1;
       final directTotal = _toDouble(
         map['total_sum'] ?? map['sum'] ?? map['amount'],
       );
       final salePrice = _toDouble(map['sale_price'] ?? map['price']) ?? 0;
+      final directName = _pick(map, const ['drug_name', 'name', 'title']);
+      final directManufacturer = _pick(map, const [
+        'manufacturer',
+        'producer_name',
+        'producer',
+        'company',
+        'drug_manufacturer',
+        'manufacturer_name',
+      ]);
       result.add(
         HistoryOrderItemRecord(
-          name: _pick(map, const ['drug_name', 'name', 'title']),
+          name: directName == '—'
+              ? _pick(drugMap, const ['name', 'drug_name', 'title'])
+              : directName,
           quantity: quantity,
           serialNumber: _pick(map, const [
             'serial_no',
             'serial_number',
             'series',
             'series_number',
+          ]),
+          manufacturer: directManufacturer == '—'
+              ? _pick(producerMap, const ['name', 'title'])
+              : directManufacturer,
+          expiryDate: _pick(map, const [
+            'expire_date',
+            'expiry_date',
+            'expiration_date',
           ]),
           total: directTotal ?? salePrice * quantity,
         ),
@@ -895,12 +921,16 @@ class HistoryOrderItemRecord {
   final String name;
   final int quantity;
   final String serialNumber;
+  final String manufacturer;
+  final String expiryDate;
   final double total;
 
   const HistoryOrderItemRecord({
     required this.name,
     required this.quantity,
     required this.serialNumber,
+    this.manufacturer = '—',
+    this.expiryDate = '—',
     required this.total,
   });
 }

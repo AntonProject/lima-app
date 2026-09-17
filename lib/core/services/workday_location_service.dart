@@ -17,7 +17,20 @@ class WorkdayCoordinates {
 class WorkdayLocationService {
   const WorkdayLocationService();
 
+  /// Total budget for the whole lookup. Only the position request used to be
+  /// bounded, so a permission prompt that never returns left the workday action
+  /// in progress forever and every further tap was ignored as a duplicate.
+  static const _budget = Duration(seconds: 10);
+
   Future<WorkdayCoordinates> currentOrFallback() async {
+    try {
+      return await _resolve().timeout(_budget);
+    } catch (_) {
+      return const WorkdayCoordinates.fallback();
+    }
+  }
+
+  Future<WorkdayCoordinates> _resolve() async {
     try {
       final isEnabled = await Geolocator.isLocationServiceEnabled();
       if (!isEnabled) return const WorkdayCoordinates.fallback();

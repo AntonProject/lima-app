@@ -82,6 +82,24 @@ class _PaymentTypeSheetState extends State<_PaymentTypeSheet> {
     _prepayment = widget.initialPrepayment;
     _buyerType = widget.initialBuyerType;
     _contractId = widget.selectedContractId;
+    _syncBuyerType();
+  }
+
+  /// Keeps the buyer type consistent with the chosen prepayment, and picks it
+  /// outright when the terms leave only one option — an unavoidable choice is
+  /// not a choice, and leaving it unselected blocks "Продолжить" for no reason.
+  void _syncBuyerType() {
+    if (_effectivePrepayment == null) {
+      _buyerType = null;
+      return;
+    }
+    final current = _buyerType;
+    if (current != null && _supportsBuyer(current)) return;
+    final supported = const [
+      0,
+      1,
+    ].where(_supportsBuyer).toList(growable: false);
+    _buyerType = supported.length == 1 ? supported.single : null;
   }
 
   List<OrderTermOption> get _availableTerms {
@@ -224,10 +242,7 @@ class _PaymentTypeSheetState extends State<_PaymentTypeSheet> {
                     child: GestureDetector(
                       onTap: () => setState(() {
                         _prepayment = pct;
-                        if (_buyerType != null &&
-                            !_supportsBuyer(_buyerType!)) {
-                          _buyerType = null;
-                        }
+                        _syncBuyerType();
                       }),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
@@ -301,10 +316,16 @@ class _PaymentTypeSheetState extends State<_PaymentTypeSheet> {
               ],
             ),
           ),
-          if (!_supportsBuyer(1)) ...[
+          if (_effectivePrepayment == null || !_supportsBuyer(1)) ...[
             const SizedBox(height: 10),
             Text(
-              context.l10n.t('wholesaleUnavailable'),
+              // Both buyer chips are disabled until a prepayment is picked, so
+              // blaming the company for it would point at the wrong cause.
+              context.l10n.t(
+                _effectivePrepayment == null
+                    ? 'selectPrepaymentFirst'
+                    : 'wholesaleUnavailable',
+              ),
               style: GoogleFonts.manrope(
                 fontSize: 12,
                 color: AppColors.hintText,

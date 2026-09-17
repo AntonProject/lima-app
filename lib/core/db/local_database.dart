@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
@@ -38,6 +39,8 @@ class LocalDatabase {
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
+  static const _schemaVersion = 25;
+
   Future<void> init() async {
     if (_db != null) return;
     final dbPath = await getDatabasesPath();
@@ -45,7 +48,22 @@ class LocalDatabase {
 
     _db = await openDatabase(
       path,
-      version: 24,
+      version: _schemaVersion,
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
+    );
+    await _ensureOptionalColumns();
+  }
+
+  /// Opens the full schema at [path] — tests pass sqflite's in-memory path to
+  /// get a clean database per case, which [init] cannot give them because this
+  /// class is a singleton that keeps the app's on-disk database open.
+  @visibleForTesting
+  Future<void> initForTesting(String path) async {
+    await _db?.close();
+    _db = await openDatabase(
+      path,
+      version: _schemaVersion,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -166,6 +184,7 @@ class LocalDatabase {
     await db.execute('''
       CREATE TABLE visits (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_user_id INTEGER,
         remote_id   INTEGER,
         org_id      INTEGER,
         org_name    TEXT NOT NULL,
@@ -194,6 +213,7 @@ class LocalDatabase {
     await db.execute('''
       CREATE TABLE planned_visits (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_user_id INTEGER,
         remote_id    INTEGER UNIQUE,
         org_id       INTEGER,
         org_name     TEXT NOT NULL,
@@ -283,6 +303,7 @@ class LocalDatabase {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS pending_plans (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_user_id   INTEGER,
         local_plan_id   INTEGER NOT NULL,
         org_id          INTEGER NOT NULL,
         org_type        TEXT,
@@ -292,6 +313,12 @@ class LocalDatabase {
         end_date        TEXT NOT NULL,
         comment         TEXT,
         created_at      TEXT NOT NULL,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        last_error      TEXT,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        next_retry_at   TEXT,
+        parked_at       TEXT,
+        http_status     INTEGER,
         UNIQUE(local_plan_id)
       )
     ''');
@@ -329,6 +356,7 @@ class LocalDatabase {
   static const String _createPendingOrganizationsSql = '''
       CREATE TABLE IF NOT EXISTS pending_organizations (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_user_id   INTEGER,
         temp_local_id   INTEGER NOT NULL,
         name            TEXT NOT NULL,
         inn             TEXT NOT NULL,
@@ -352,66 +380,29 @@ class LocalDatabase {
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      try {
-        await db.execute('ALTER TABLE organisations ADD COLUMN latitude REAL');
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
-      try {
-        await db.execute('ALTER TABLE organisations ADD COLUMN longitude REAL');
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
-      try {
-        await db.execute(
-          'ALTER TABLE organisations ADD COLUMN distance_m REAL',
-        );
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
+      await _addColumnIfMissing(db, 'organisations', 'latitude', 'REAL');
+      await _addColumnIfMissing(db, 'organisations', 'longitude', 'REAL');
+      await _addColumnIfMissing(db, 'organisations', 'distance_m', 'REAL');
     }
     if (oldVersion < 3) {
       await _ensureRawAndSyncColumns(db);
     }
     if (oldVersion < 4) {
-      try {
-        await db.execute('ALTER TABLE organisations ADD COLUMN phone TEXT');
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
+      await _addColumnIfMissing(db, 'organisations', 'phone', 'TEXT');
     }
     if (oldVersion < 5) {
-      try {
-        await db.execute('ALTER TABLE organisations ADD COLUMN district TEXT');
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
-      try {
-        await db.execute('ALTER TABLE organisations ADD COLUMN inn TEXT');
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
-      try {
-        await db.execute('ALTER TABLE organisations ADD COLUMN category TEXT');
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
-      try {
-        await db.execute(
-          'ALTER TABLE organisations ADD COLUMN responsible TEXT',
-        );
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
+      await _addColumnIfMissing(db, 'organisations', 'district', 'TEXT');
+      await _addColumnIfMissing(db, 'organisations', 'inn', 'TEXT');
+      await _addColumnIfMissing(db, 'organisations', 'category', 'TEXT');
+      await _addColumnIfMissing(db, 'organisations', 'responsible', 'TEXT');
     }
     if (oldVersion < 6) {
-      try {
-        await db.execute(
-          'ALTER TABLE organisations ADD COLUMN is_favorite INTEGER DEFAULT 0',
-        );
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
+      await _addColumnIfMissing(
+        db,
+        'organisations',
+        'is_favorite',
+        'INTEGER DEFAULT 0',
+      );
       try {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS planned_visits (
@@ -577,20 +568,15 @@ class LocalDatabase {
     if (oldVersion < 20) {
       // Park pending_doctors rows that can never be pushed (see
       // markPendingDoctorFailed) instead of deleting them silently.
-      try {
-        await db.execute(
-          'ALTER TABLE pending_doctors ADD COLUMN failed INTEGER DEFAULT 0',
-        );
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
+      await _addColumnIfMissing(
+        db,
+        'pending_doctors',
+        'failed',
+        'INTEGER DEFAULT 0',
+      );
     }
     if (oldVersion < 21) {
-      try {
-        await db.execute('ALTER TABLE drugs ADD COLUMN image_url TEXT');
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
+      await _addColumnIfMissing(db, 'drugs', 'image_url', 'TEXT');
     }
     if (oldVersion < 22) {
       try {
@@ -616,114 +602,139 @@ class LocalDatabase {
       }
     }
     if (oldVersion < 24) {
-      try {
-        await db.execute('ALTER TABLE drugs ADD COLUMN image_cached_path TEXT');
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._onUpgrade');
-      }
+      await _addColumnIfMissing(db, 'drugs', 'image_cached_path', 'TEXT');
+    }
+    if (oldVersion < 25) {
+      await _ensureOwnerColumns(db);
+      await _ensurePendingPlanRetryColumns(db);
+      await _assignUnownedRowsToStoredOwner(db);
+    }
+  }
+
+  /// Idempotent `ADD COLUMN`: SQLite has no `IF NOT EXISTS` for columns, so
+  /// these migrations used to re-run on every launch and swallow a
+  /// duplicate-column error each time, which buried genuine migration
+  /// failures in the same log noise.
+  Future<void> _addColumnIfMissing(
+    DatabaseExecutor executor,
+    String table,
+    String column,
+    String definition,
+  ) async {
+    try {
+      final columns = await executor.rawQuery('PRAGMA table_info($table)');
+      if (columns.any((row) => row['name'] == column)) return;
+      await executor.execute(
+        'ALTER TABLE $table ADD COLUMN $column $definition',
+      );
+    } catch (e) {
+      logSwallowed(e, 'LocalDatabase._addColumnIfMissing($table.$column)');
     }
   }
 
   Future<void> _ensureOptionalColumns() async {
-    try {
-      await db.execute('ALTER TABLE organisations ADD COLUMN latitude REAL');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE organisations ADD COLUMN longitude REAL');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE organisations ADD COLUMN distance_m REAL');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE organisations ADD COLUMN phone TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE organisations ADD COLUMN district TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
+    await _addColumnIfMissing(db, 'organisations', 'latitude', 'REAL');
+    await _addColumnIfMissing(db, 'organisations', 'longitude', 'REAL');
+    await _addColumnIfMissing(db, 'organisations', 'distance_m', 'REAL');
+    await _addColumnIfMissing(db, 'organisations', 'phone', 'TEXT');
+    await _addColumnIfMissing(db, 'organisations', 'district', 'TEXT');
     await _ensureRegionColumns(db);
-    try {
-      await db.execute('ALTER TABLE organisations ADD COLUMN inn TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE organisations ADD COLUMN category TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE organisations ADD COLUMN responsible TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE drugs ADD COLUMN serial_number TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE drugs ADD COLUMN expiry_date TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE drugs ADD COLUMN stock INTEGER');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE drugs ADD COLUMN main_stock INTEGER');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE drugs ADD COLUMN remains_stock INTEGER');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE drugs ADD COLUMN current_stock_id INTEGER');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE drugs ADD COLUMN binding_drug_id INTEGER');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
-    try {
-      await db.execute('ALTER TABLE drugs ADD COLUMN image_url TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-    }
+    await _addColumnIfMissing(db, 'organisations', 'inn', 'TEXT');
+    await _addColumnIfMissing(db, 'organisations', 'category', 'TEXT');
+    await _addColumnIfMissing(db, 'organisations', 'responsible', 'TEXT');
+    await _addColumnIfMissing(db, 'drugs', 'serial_number', 'TEXT');
+    await _addColumnIfMissing(db, 'drugs', 'expiry_date', 'TEXT');
+    await _addColumnIfMissing(db, 'drugs', 'stock', 'INTEGER');
+    await _addColumnIfMissing(db, 'drugs', 'main_stock', 'INTEGER');
+    await _addColumnIfMissing(db, 'drugs', 'remains_stock', 'INTEGER');
+    await _addColumnIfMissing(db, 'drugs', 'current_stock_id', 'INTEGER');
+    await _addColumnIfMissing(db, 'drugs', 'binding_drug_id', 'INTEGER');
+    await _addColumnIfMissing(db, 'drugs', 'image_url', 'TEXT');
     // Full add-doctor payload for the offline queue (matches the web API).
-    for (final col in const [
-      'ALTER TABLE pending_doctors ADD COLUMN specialization_id INTEGER',
-      'ALTER TABLE pending_doctors ADD COLUMN hobby TEXT',
-      'ALTER TABLE pending_doctors ADD COLUMN interests TEXT',
-      'ALTER TABLE pending_doctors ADD COLUMN birthday TEXT',
-    ]) {
-      try {
-        await db.execute(col);
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._ensureOptionalColumns');
-      }
+    for (final column in const {
+      'specialization_id': 'INTEGER',
+      'hobby': 'TEXT',
+      'interests': 'TEXT',
+      'birthday': 'TEXT',
+    }.entries) {
+      await _addColumnIfMissing(
+        db,
+        'pending_doctors',
+        column.key,
+        column.value,
+      );
     }
     await _ensureRawAndSyncColumns(db);
     await _ensureDoctorOrganisationTable(db);
     await _ensureVisitRetryColumns(db);
     await _ensureSyncFailureColumns(db);
+    await _ensureOwnerColumns(db);
+    await _ensurePendingPlanRetryColumns(db);
   }
+
+  Future<void> _ensurePendingPlanRetryColumns(Database database) async {
+    for (final entry in const {
+      'attempts': 'INTEGER NOT NULL DEFAULT 0',
+      'last_error': 'TEXT',
+      'status': "TEXT NOT NULL DEFAULT 'pending'",
+      'next_retry_at': 'TEXT',
+      'parked_at': 'TEXT',
+      'http_status': 'INTEGER',
+    }.entries) {
+      await _addColumnIfMissing(
+        database,
+        'pending_plans',
+        entry.key,
+        entry.value,
+      );
+    }
+  }
+
+  Future<void> _ensureOwnerColumns(Database database) async {
+    for (final table in const [
+      'visits',
+      'planned_visits',
+      'pending_plans',
+      'pending_organizations',
+    ]) {
+      await _addColumnIfMissing(database, table, 'owner_user_id', 'INTEGER');
+    }
+  }
+
+  Future<int?> _storedOwnerUserId([DatabaseExecutor? executor]) async {
+    final rows = await (executor ?? db).query(
+      'sync_meta',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: [_ownerUserIdKey],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return int.tryParse('${rows.first['value'] ?? ''}');
+  }
+
+  Future<void> _assignUnownedRowsToStoredOwner(
+    DatabaseExecutor executor,
+  ) async {
+    final ownerUserId = await _storedOwnerUserId(executor);
+    if (ownerUserId == null) return;
+    for (final table in const [
+      'visits',
+      'planned_visits',
+      'pending_plans',
+      'pending_organizations',
+    ]) {
+      await executor.update(table, {
+        'owner_user_id': ownerUserId,
+      }, where: 'owner_user_id IS NULL');
+    }
+  }
+
+  String _ownerWhere(int? ownerUserId, {String column = 'owner_user_id'}) =>
+      ownerUserId == null ? '$column IS NULL' : '$column = ?';
+
+  List<Object?> _ownerWhereArgs(int? ownerUserId) =>
+      ownerUserId == null ? const <Object?>[] : <Object?>[ownerUserId];
 
   Future<void> _ensureDoctorOrganisationTable(Database database) async {
     await database.execute('''
@@ -741,20 +752,13 @@ class LocalDatabase {
   /// [push_attempts] counts failed push tries; [next_retry_at] holds the ISO
   /// timestamp before which a visit should not be retried.
   Future<void> _ensureVisitRetryColumns(Database database) async {
-    try {
-      await database.execute(
-        'ALTER TABLE visits ADD COLUMN push_attempts INTEGER DEFAULT 0',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureVisitRetryColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE visits ADD COLUMN next_retry_at TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureVisitRetryColumns');
-    }
+    await _addColumnIfMissing(
+      database,
+      'visits',
+      'push_attempts',
+      'INTEGER DEFAULT 0',
+    );
+    await _addColumnIfMissing(database, 'visits', 'next_retry_at', 'TEXT');
   }
 
   /// Columns supporting "failed, kept for the user" semantics (schema v16).
@@ -764,137 +768,73 @@ class LocalDatabase {
   /// [pending_favorites]/[pending_feedback] gain the same attempts/failed pair
   /// so their queue items stop retrying forever but are never silently lost.
   Future<void> _ensureSyncFailureColumns(Database database) async {
-    try {
-      await database.execute(
-        'ALTER TABLE visits ADD COLUMN sync_failed INTEGER DEFAULT 0',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureSyncFailureColumns');
-    }
+    await _addColumnIfMissing(
+      database,
+      'visits',
+      'sync_failed',
+      'INTEGER DEFAULT 0',
+    );
     for (final table in ['pending_favorites', 'pending_feedback']) {
-      try {
-        await database.execute(
-          'ALTER TABLE $table ADD COLUMN attempts INTEGER DEFAULT 0',
-        );
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._ensureSyncFailureColumns');
-      }
-      try {
-        await database.execute(
-          'ALTER TABLE $table ADD COLUMN failed INTEGER DEFAULT 0',
-        );
-      } catch (e) {
-        logSwallowed(e, 'LocalDatabase._ensureSyncFailureColumns');
-      }
+      await _addColumnIfMissing(
+        database,
+        table,
+        'attempts',
+        'INTEGER DEFAULT 0',
+      );
+      await _addColumnIfMissing(database, table, 'failed', 'INTEGER DEFAULT 0');
     }
   }
 
   Future<void> _ensureRegionColumns(Database database) async {
-    try {
-      await database.execute(
-        'ALTER TABLE organisations ADD COLUMN region_id INTEGER',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRegionColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE organisations ADD COLUMN area_id INTEGER',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRegionColumns');
-    }
+    await _addColumnIfMissing(
+      database,
+      'organisations',
+      'region_id',
+      'INTEGER',
+    );
+    await _addColumnIfMissing(database, 'organisations', 'area_id', 'INTEGER');
   }
 
   Future<void> _ensureRawAndSyncColumns(Database database) async {
-    try {
-      await database.execute(
-        'ALTER TABLE organisations ADD COLUMN sync_id INTEGER',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE organisations ADD COLUMN raw_json TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute('ALTER TABLE doctors ADD COLUMN sync_id INTEGER');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute('ALTER TABLE doctors ADD COLUMN raw_json TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute('ALTER TABLE drugs ADD COLUMN sync_id INTEGER');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute('ALTER TABLE drugs ADD COLUMN raw_json TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE drug_materials ADD COLUMN raw_json TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE organisations ADD COLUMN is_favorite INTEGER DEFAULT 0',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute('ALTER TABLE visits ADD COLUMN raw_json TEXT');
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE visits ADD COLUMN last_push_request_json TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE visits ADD COLUMN last_push_response_json TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE drug_materials ADD COLUMN cached_path TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE drug_materials ADD COLUMN uploaded_at TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE visits ADD COLUMN medical_rep_name TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
+    await _addColumnIfMissing(database, 'organisations', 'sync_id', 'INTEGER');
+    await _addColumnIfMissing(database, 'organisations', 'raw_json', 'TEXT');
+    await _addColumnIfMissing(database, 'doctors', 'sync_id', 'INTEGER');
+    await _addColumnIfMissing(database, 'doctors', 'raw_json', 'TEXT');
+    await _addColumnIfMissing(database, 'drugs', 'sync_id', 'INTEGER');
+    await _addColumnIfMissing(database, 'drugs', 'raw_json', 'TEXT');
+    await _addColumnIfMissing(database, 'drug_materials', 'raw_json', 'TEXT');
+    await _addColumnIfMissing(
+      database,
+      'organisations',
+      'is_favorite',
+      'INTEGER DEFAULT 0',
+    );
+    await _addColumnIfMissing(database, 'visits', 'raw_json', 'TEXT');
+    await _addColumnIfMissing(
+      database,
+      'visits',
+      'last_push_request_json',
+      'TEXT',
+    );
+    await _addColumnIfMissing(
+      database,
+      'visits',
+      'last_push_response_json',
+      'TEXT',
+    );
+    await _addColumnIfMissing(
+      database,
+      'drug_materials',
+      'cached_path',
+      'TEXT',
+    );
+    await _addColumnIfMissing(
+      database,
+      'drug_materials',
+      'uploaded_at',
+      'TEXT',
+    );
+    await _addColumnIfMissing(database, 'visits', 'medical_rep_name', 'TEXT');
     try {
       await database.execute('''
         CREATE TABLE IF NOT EXISTS pending_feedback (
@@ -925,6 +865,7 @@ class LocalDatabase {
       await database.execute('''
         CREATE TABLE IF NOT EXISTS pending_plans (
           id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          owner_user_id   INTEGER,
           local_plan_id   INTEGER NOT NULL,
           org_id          INTEGER NOT NULL,
           org_type        TEXT,
@@ -934,26 +875,25 @@ class LocalDatabase {
           end_date        TEXT NOT NULL,
           comment         TEXT,
           created_at      TEXT NOT NULL,
+          attempts        INTEGER NOT NULL DEFAULT 0,
+          last_error      TEXT,
+          status          TEXT NOT NULL DEFAULT 'pending',
+          next_retry_at   TEXT,
+          parked_at       TEXT,
+          http_status     INTEGER,
           UNIQUE(local_plan_id)
         )
       ''');
     } catch (e) {
       logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
     }
-    try {
-      await database.execute(
-        'ALTER TABLE planned_visits ADD COLUMN district TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
-    try {
-      await database.execute(
-        'ALTER TABLE planned_visits ADD COLUMN visit_format TEXT',
-      );
-    } catch (e) {
-      logSwallowed(e, 'LocalDatabase._ensureRawAndSyncColumns');
-    }
+    await _addColumnIfMissing(database, 'planned_visits', 'district', 'TEXT');
+    await _addColumnIfMissing(
+      database,
+      'planned_visits',
+      'visit_format',
+      'TEXT',
+    );
     try {
       await database.execute('''
         CREATE TABLE IF NOT EXISTS visit_formats (
@@ -1185,7 +1125,9 @@ class LocalDatabase {
     double? latitude,
     double? longitude,
   }) async {
+    final ownerUserId = await _storedOwnerUserId();
     await db.insert('pending_organizations', {
+      'owner_user_id': ownerUserId,
       'temp_local_id': tempLocalId,
       'name': name,
       'inn': inn,
@@ -1208,7 +1150,13 @@ class LocalDatabase {
   }
 
   Future<List<Map<String, dynamic>>> getPendingOrganizations() async {
-    return db.query('pending_organizations', orderBy: 'id ASC');
+    final ownerUserId = await _storedOwnerUserId();
+    return db.query(
+      'pending_organizations',
+      where: _ownerWhere(ownerUserId),
+      whereArgs: _ownerWhereArgs(ownerUserId),
+      orderBy: 'id ASC',
+    );
   }
 
   Future<void> deletePendingOrganization(int id) async {
@@ -1284,6 +1232,7 @@ class LocalDatabase {
     List<Map> dayTypes = const [],
     Map<String, dynamic>? dailyStats,
   }) async {
+    final ownerUserId = await _storedOwnerUserId();
     final batch = db.batch();
 
     for (final org in orgs) {
@@ -1344,13 +1293,16 @@ class LocalDatabase {
     for (final visit in visits) {
       final v = Map<String, dynamic>.from(visit);
       v['is_synced'] = 1;
+      v['owner_user_id'] = ownerUserId;
       batch.insert('visits', v, conflictAlgorithm: ConflictAlgorithm.replace);
     }
 
     for (final pv in plannedVisits) {
+      final row = Map<String, dynamic>.from(pv);
+      row['owner_user_id'] = ownerUserId;
       batch.insert(
         'planned_visits',
-        Map<String, dynamic>.from(pv),
+        row,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
@@ -1423,9 +1375,10 @@ class LocalDatabase {
 
   Future<void> upsertPlannedVisits(List<Map<String, dynamic>> rows) async {
     if (rows.isEmpty) return;
+    final ownerUserId = await _storedOwnerUserId();
     final batch = db.batch();
     for (final row in rows) {
-      final r = Map<String, dynamic>.from(row);
+      final r = Map<String, dynamic>.from(row)..['owner_user_id'] = ownerUserId;
       // Server plan rows often omit doctor/format fields. Because remote_id is
       // UNIQUE, ConflictAlgorithm.replace would otherwise delete the local row
       // (with its doctor_id/doctor_name/visit_format) and reinsert a stripped
@@ -1443,8 +1396,8 @@ class LocalDatabase {
             'visit_format',
             'raw_json',
           ],
-          where: 'remote_id = ?',
-          whereArgs: [remoteId],
+          where: 'remote_id = ? AND ${_ownerWhere(ownerUserId)}',
+          whereArgs: [remoteId, ..._ownerWhereArgs(ownerUserId)],
           limit: 1,
         );
         if (existing.isNotEmpty) {
@@ -1473,7 +1426,7 @@ class LocalDatabase {
           // consequently left the locally-created row without remote_id, and
           // a later pull inserted a second server row. Stamp the matching
           // local row instead so completing the visit consumes one identity.
-          final localTwin = await _findUnstampedPlanTwin(r);
+          final localTwin = await _findUnstampedPlanTwin(r, ownerUserId);
           if (localTwin != null) {
             batch.update(
               'planned_visits',
@@ -1495,7 +1448,10 @@ class LocalDatabase {
     _notifyChanged(['planned_visits']);
   }
 
-  Future<int?> _findUnstampedPlanTwin(Map<String, dynamic> incoming) async {
+  Future<int?> _findUnstampedPlanTwin(
+    Map<String, dynamic> incoming,
+    int? ownerUserId,
+  ) async {
     final orgId = (incoming['org_id'] as num?)?.toInt();
     final visitDate = DateTime.tryParse('${incoming['visit_date'] ?? ''}');
     if (orgId == null || visitDate == null) return null;
@@ -1503,8 +1459,10 @@ class LocalDatabase {
     final candidates = await db.query(
       'planned_visits',
       columns: ['id', 'visit_date', 'visit_format'],
-      where: "remote_id IS NULL AND org_id = ? AND status != 'completed'",
-      whereArgs: [orgId],
+      where:
+          "remote_id IS NULL AND org_id = ? AND status != 'completed' "
+          'AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: [orgId, ..._ownerWhereArgs(ownerUserId)],
       orderBy: 'id DESC',
     );
     final incomingFormat = '${incoming['visit_format'] ?? ''}'.trim();
@@ -1536,10 +1494,12 @@ class LocalDatabase {
   /// Pass the full set of remote ids the server currently returns (may be
   /// empty — then all stale server rows are removed).
   Future<void> reconcileServerPlannedVisits(Set<int> serverRemoteIds) async {
+    final ownerUserId = await _storedOwnerUserId();
     final localServerRows = await db.query(
       'planned_visits',
       columns: ['remote_id'],
-      where: 'remote_id IS NOT NULL',
+      where: 'remote_id IS NOT NULL AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: _ownerWhereArgs(ownerUserId),
     );
     final toDelete = <int>[];
     for (final row in localServerRows) {
@@ -1549,7 +1509,11 @@ class LocalDatabase {
     if (toDelete.isEmpty) return;
     final batch = db.batch();
     for (final rid in toDelete) {
-      batch.delete('planned_visits', where: 'remote_id = ?', whereArgs: [rid]);
+      batch.delete(
+        'planned_visits',
+        where: 'remote_id = ? AND ${_ownerWhere(ownerUserId)}',
+        whereArgs: [rid, ..._ownerWhereArgs(ownerUserId)],
+      );
     }
     await batch.commit(noResult: true);
     _notifyChanged(['planned_visits']);
@@ -1558,9 +1522,13 @@ class LocalDatabase {
   Future<List<Map<String, dynamic>>> getPlannedVisits({
     bool? completedOnly,
   }) async {
-    String where = '';
-    if (completedOnly == true) where = "WHERE pv.status = 'completed'";
-    if (completedOnly == false) where = "WHERE pv.status != 'completed'";
+    final ownerUserId = await _storedOwnerUserId();
+    final conditions = <String>[
+      _ownerWhere(ownerUserId, column: 'pv.owner_user_id'),
+      if (completedOnly == true) "pv.status = 'completed'",
+      if (completedOnly == false) "pv.status != 'completed'",
+    ];
+    final where = 'WHERE ${conditions.join(' AND ')}';
     // JOIN with organisations to enrich city/district when not present in planned_visits.
     return db.rawQuery('''
       SELECT
@@ -1573,19 +1541,27 @@ class LocalDatabase {
       LEFT JOIN organisations o ON pv.org_id = o.id
       $where
       ORDER BY pv.visit_date DESC
-    ''');
+    ''', _ownerWhereArgs(ownerUserId));
   }
 
   Future<void> clearPlannedVisits() async {
-    await db.delete('planned_visits');
+    final ownerUserId = await _storedOwnerUserId();
+    await db.delete(
+      'planned_visits',
+      where: _ownerWhere(ownerUserId),
+      whereArgs: _ownerWhereArgs(ownerUserId),
+    );
     _notifyChanged(['planned_visits']);
   }
 
   /// Inserts a locally-created planned visit row. Returns its local autoincrement id.
   Future<int> insertLocalPlannedVisit(Map<String, dynamic> row) async {
+    final ownerUserId = await _storedOwnerUserId();
+    final values = Map<String, dynamic>.from(row)
+      ..['owner_user_id'] = ownerUserId;
     final id = await db.insert(
       'planned_visits',
-      Map<String, dynamic>.from(row),
+      values,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
     _notifyChanged(['planned_visits']);
@@ -1598,23 +1574,25 @@ class LocalDatabase {
     required int remoteId,
     Map<String, dynamic>? rawJson,
   }) async {
+    final ownerUserId = await _storedOwnerUserId();
     final values = <String, dynamic>{'remote_id': remoteId};
     if (rawJson != null) values['raw_json'] = jsonEncode(rawJson);
     await db.update(
       'planned_visits',
       values,
-      where: 'id = ?',
-      whereArgs: [localId],
+      where: 'id = ? AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: [localId, ..._ownerWhereArgs(ownerUserId)],
     );
     _notifyChanged(['planned_visits']);
   }
 
   Future<int?> getPlannedVisitRemoteId(int visitId) async {
+    final ownerUserId = await _storedOwnerUserId();
     final rows = await db.query(
       'planned_visits',
       columns: ['remote_id'],
-      where: 'remote_id = ? OR id = ?',
-      whereArgs: [visitId, visitId],
+      where: '(remote_id = ? OR id = ?) AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: [visitId, visitId, ..._ownerWhereArgs(ownerUserId)],
       limit: 1,
     );
     if (rows.isEmpty) return null;
@@ -1622,25 +1600,32 @@ class LocalDatabase {
   }
 
   Future<void> deleteLocalPlannedVisit(int localId) async {
-    await db.delete('planned_visits', where: 'id = ?', whereArgs: [localId]);
+    final ownerUserId = await _storedOwnerUserId();
+    await db.delete(
+      'planned_visits',
+      where: 'id = ? AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: [localId, ..._ownerWhereArgs(ownerUserId)],
+    );
     _notifyChanged(['planned_visits']);
   }
 
   Future<void> deletePlannedVisitByRemoteId(int remoteId) async {
+    final ownerUserId = await _storedOwnerUserId();
     await db.delete(
       'planned_visits',
-      where: 'remote_id = ? OR id = ?',
-      whereArgs: [remoteId, remoteId],
+      where: '(remote_id = ? OR id = ?) AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: [remoteId, remoteId, ..._ownerWhereArgs(ownerUserId)],
     );
     _notifyChanged(['planned_visits']);
   }
 
   Future<void> completePlannedVisitById(int visitId) async {
+    final ownerUserId = await _storedOwnerUserId();
     await db.update(
       'planned_visits',
       {'status': 'completed'},
-      where: 'remote_id = ? OR id = ?',
-      whereArgs: [visitId, visitId],
+      where: '(remote_id = ? OR id = ?) AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: [visitId, visitId, ..._ownerWhereArgs(ownerUserId)],
     );
     _notifyChanged(['planned_visits']);
   }
@@ -1657,7 +1642,9 @@ class LocalDatabase {
     String? comment,
   }) async {
     final isoDate = _isoYmd(visitDate);
+    final ownerUserId = await _storedOwnerUserId();
     await db.insert('pending_plans', {
+      'owner_user_id': ownerUserId,
       'local_plan_id': localPlanId,
       'org_id': orgId,
       'org_type': orgType,
@@ -1671,8 +1658,56 @@ class LocalDatabase {
     _notifyChanged(['pending_plans']);
   }
 
-  Future<List<Map<String, dynamic>>> getPendingPlans() async {
-    return db.query('pending_plans', orderBy: 'id ASC');
+  Future<List<Map<String, dynamic>>> getPendingPlans({
+    bool readyOnly = false,
+  }) async {
+    final ownerUserId = await _storedOwnerUserId();
+    final conditions = <String>[_ownerWhere(ownerUserId)];
+    final args = <Object?>[..._ownerWhereArgs(ownerUserId)];
+    if (readyOnly) {
+      conditions.add("(status IS NULL OR status != 'parked')");
+      conditions.add('(next_retry_at IS NULL OR next_retry_at <= ?)');
+      args.add(DateTime.now().toIso8601String());
+    }
+    return db.query(
+      'pending_plans',
+      where: conditions.join(' AND '),
+      whereArgs: args,
+      orderBy: 'id ASC',
+    );
+  }
+
+  Future<void> recordPendingPlanFailure({
+    required int id,
+    required String error,
+    required String status,
+    DateTime? nextRetryAt,
+    DateTime? parkedAt,
+    int? httpStatus,
+  }) async {
+    final rows = await db.query(
+      'pending_plans',
+      columns: ['attempts'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    final attempts =
+        ((rows.isEmpty ? null : rows.first['attempts']) as num?)?.toInt() ?? 0;
+    await db.update(
+      'pending_plans',
+      {
+        'attempts': attempts + 1,
+        'last_error': error,
+        'status': status,
+        'next_retry_at': nextRetryAt?.toIso8601String(),
+        'parked_at': parkedAt?.toIso8601String(),
+        'http_status': httpStatus,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    _notifyChanged(['pending_plans']);
   }
 
   Future<void> deletePendingPlan(int id) async {
@@ -1681,7 +1716,13 @@ class LocalDatabase {
   }
 
   Future<int> pendingPlansCount() async {
-    final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM pending_plans');
+    final ownerUserId = await _storedOwnerUserId();
+    final rows = await db.query(
+      'pending_plans',
+      columns: ['COUNT(*) AS c'],
+      where: _ownerWhere(ownerUserId),
+      whereArgs: _ownerWhereArgs(ownerUserId),
+    );
     return (rows.first['c'] as int?) ?? 0;
   }
 
@@ -1941,7 +1982,21 @@ class LocalDatabase {
     List<Map> dayTypes = const [],
     Map<String, dynamic>? dailyStats,
   }) async {
+    final ownerUserId = await _storedOwnerUserId();
     final unsynced = await getVisits(unsyncedOnly: true);
+    final pendingPlanRows = await getPendingPlans();
+    final pendingPlanIds = pendingPlanRows
+        .map((row) => (row['local_plan_id'] as num?)?.toInt())
+        .whereType<int>()
+        .toList(growable: false);
+    final pendingLocalPlans = pendingPlanIds.isEmpty
+        ? const <Map<String, dynamic>>[]
+        : await db.query(
+            'planned_visits',
+            where:
+                'id IN (${List.filled(pendingPlanIds.length, '?').join(', ')})',
+            whereArgs: pendingPlanIds,
+          );
     // Offline-created orgs/doctors (negative id, awaiting push in
     // pending_organizations/pending_doctors) live only as mirror rows in
     // these tables — capture them before the wipe so they don't vanish from
@@ -1958,6 +2013,18 @@ class LocalDatabase {
     final cachedDrugImageById = <Object?, Object?>{
       for (final row in cachedDrugImages) row['id']: row['image_cached_path'],
     };
+    final cachedMaterials = await db.query(
+      'drug_materials',
+      columns: ['drug_id', 'local_path', 'title', 'file_type', 'cached_path'],
+      where: "cached_path IS NOT NULL AND TRIM(cached_path) != ''",
+    );
+    String materialCacheKey(Map row) =>
+        '${row['drug_id']}|${row['local_path'] ?? ''}|'
+        '${row['title'] ?? ''}|${row['file_type'] ?? ''}';
+    final cachedMaterialPathByKey = <String, Object?>{
+      for (final row in cachedMaterials)
+        materialCacheKey(row): row['cached_path'],
+    };
 
     await db.transaction((txn) async {
       await txn.delete('organisations');
@@ -1967,8 +2034,16 @@ class LocalDatabase {
       }
       await txn.delete('drugs');
       await txn.delete('drug_materials');
-      await txn.delete('visits');
-      await txn.delete('planned_visits');
+      await txn.delete(
+        'visits',
+        where: _ownerWhere(ownerUserId),
+        whereArgs: _ownerWhereArgs(ownerUserId),
+      );
+      await txn.delete(
+        'planned_visits',
+        where: _ownerWhere(ownerUserId),
+        whereArgs: _ownerWhereArgs(ownerUserId),
+      );
       await txn.delete('day_types');
       await txn.delete('managers');
 
@@ -2039,9 +2114,15 @@ class LocalDatabase {
       }
 
       for (final material in materials) {
+        final row = Map<String, dynamic>.from(material);
+        final incomingCachedPath = row['cached_path']?.toString().trim();
+        if (incomingCachedPath == null || incomingCachedPath.isEmpty) {
+          final preserved = cachedMaterialPathByKey[materialCacheKey(row)];
+          if (preserved != null) row['cached_path'] = preserved;
+        }
         await txn.insert(
           'drug_materials',
-          Map<String, dynamic>.from(material),
+          row,
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
@@ -2049,6 +2130,7 @@ class LocalDatabase {
       for (final visit in visits) {
         final v = Map<String, dynamic>.from(visit);
         v['is_synced'] = 1;
+        v['owner_user_id'] = ownerUserId;
         await txn.insert(
           'visits',
           v,
@@ -2060,13 +2142,27 @@ class LocalDatabase {
         final v = Map<String, dynamic>.from(row);
         v.remove('id');
         v['is_synced'] = 0;
+        v['owner_user_id'] = ownerUserId;
         await txn.insert('visits', v);
       }
 
-      for (final pv in plannedVisits) {
+      // Keep the original local ids referenced by pending_plans. Restoring
+      // these before server rows also prevents AUTOINCREMENT from reusing a
+      // pending id for an unrelated remote plan.
+      for (final localPlan in pendingLocalPlans) {
         await txn.insert(
           'planned_visits',
-          Map<String, dynamic>.from(pv),
+          Map<String, dynamic>.from(localPlan),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      for (final pv in plannedVisits) {
+        final row = Map<String, dynamic>.from(pv);
+        row['owner_user_id'] = ownerUserId;
+        await txn.insert(
+          'planned_visits',
+          row,
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
@@ -2120,8 +2216,9 @@ class LocalDatabase {
   /// SQL belongs to the local data source; repositories should expose this
   /// operation without knowing table names or column predicates.
   Future<Map<String, int>> getLocalTotals() async {
-    Future<int> count(String sql) async {
-      final rows = await db.rawQuery(sql);
+    final ownerUserId = await _storedOwnerUserId();
+    Future<int> count(String sql, [List<Object?> args = const []]) async {
+      final rows = await db.rawQuery(sql, args);
       if (rows.isEmpty) return 0;
       return (rows.first['c'] as num?)?.toInt() ?? 0;
     }
@@ -2138,8 +2235,15 @@ class LocalDatabase {
         "SELECT COUNT(*) AS c FROM organisations WHERE type = 'distributor'",
       ),
       'doctors': await count('SELECT COUNT(*) AS c FROM doctors'),
-      'visits': await count('SELECT COUNT(*) AS c FROM visits'),
-      'plannedVisits': await count('SELECT COUNT(*) AS c FROM planned_visits'),
+      'visits': await count(
+        'SELECT COUNT(*) AS c FROM visits WHERE ${_ownerWhere(ownerUserId)}',
+        _ownerWhereArgs(ownerUserId),
+      ),
+      'plannedVisits': await count(
+        'SELECT COUNT(*) AS c FROM planned_visits '
+        'WHERE ${_ownerWhere(ownerUserId)}',
+        _ownerWhereArgs(ownerUserId),
+      ),
       'drugs': await count('SELECT COUNT(*) AS c FROM drugs'),
       'materials': await count('SELECT COUNT(*) AS c FROM drug_materials'),
     };
@@ -2150,9 +2254,16 @@ class LocalDatabase {
     required String login,
     required String role,
   }) async {
+    final previousOwnerId = await _storedOwnerUserId();
     await setSyncMeta(_ownerUserIdKey, '$userId');
     await setSyncMeta(_ownerLoginKey, login);
     await setSyncMeta(_ownerRoleKey, role);
+    // Databases upgraded from the unscoped schema can contain rows created
+    // before an owner was recorded. The first authenticated user owns them;
+    // later account switches never reassign already-scoped data.
+    if (previousOwnerId == null) {
+      await _assignUnownedRowsToStoredOwner(db);
+    }
   }
 
   Future<({int? userId, String? login, String? role})>
@@ -2198,8 +2309,6 @@ class LocalDatabase {
       await txn.update('drugs', {'documents_count': 0});
       for (final table in const [
         'drug_materials',
-        'visits',
-        'planned_visits',
         'day_types',
         'managers',
         'cached_stats',
@@ -2456,6 +2565,7 @@ class LocalDatabase {
   /// Falls back to the `doctor_organisations` link table, then to the most
   /// recent visit's org. Returns null when no association can be found.
   Future<int?> getPrimaryOrgIdForDoctor(int doctorId) async {
+    final ownerUserId = await _storedOwnerUserId();
     final direct = await db.query(
       'doctors',
       columns: ['organisation_id'],
@@ -2477,8 +2587,9 @@ class LocalDatabase {
 
     final fromVisit = await db.rawQuery(
       'SELECT org_id FROM visits WHERE doctor_id = ? AND org_id IS NOT NULL '
+      'AND ${_ownerWhere(ownerUserId)} '
       'ORDER BY created_at DESC LIMIT 1',
-      [doctorId],
+      [doctorId, ..._ownerWhereArgs(ownerUserId)],
     );
     final visitOrg =
         (fromVisit.isEmpty ? null : fromVisit.first['org_id']) as num?;
@@ -2533,78 +2644,129 @@ class LocalDatabase {
   Future<void> upsertDrugs(List<Map<String, dynamic>> drugs) async {
     if (drugs.isEmpty) return;
     await db.transaction((txn) async {
-      for (final row in drugs) {
-        final r = Map<String, dynamic>.from(row);
-        final id = r['id'];
-        if (id == null) continue;
-        final existingImage = await txn.query(
-          'drugs',
-          columns: ['image_cached_path'],
-          where: 'id = ?',
-          whereArgs: [id],
-          limit: 1,
-        );
-        final incomingCachedPath = r['image_cached_path']?.toString().trim();
-        if ((incomingCachedPath == null || incomingCachedPath.isEmpty) &&
-            existingImage.isNotEmpty) {
-          r['image_cached_path'] = existingImage.first['image_cached_path'];
-        }
-
-        // Preserve current_stock_id / binding_drug_id if the incoming row
-        // doesn't have them (delta-sync rows don't include price-list fields).
-        if (!r.containsKey('current_stock_id') ||
-            r['current_stock_id'] == null) {
-          r.remove('current_stock_id');
-        }
-        if (!r.containsKey('binding_drug_id') || r['binding_drug_id'] == null) {
-          r.remove('binding_drug_id');
-        }
-        for (final stockKey in ['stock', 'main_stock', 'remains_stock']) {
-          if (!r.containsKey(stockKey) || r[stockKey] == null) {
-            r.remove(stockKey);
-          }
-        }
-        final imageUrl = r['image_url']?.toString().trim();
-        if (imageUrl == null || imageUrl.isEmpty) {
-          r.remove('image_url');
-        }
-        // Catalogue (bindings) rows carry no price; never overwrite an existing
-        // price-list price with a missing/zero value.
-        final priceVal = r['price'];
-        final priceNum = priceVal is num
-            ? priceVal.toDouble()
-            : double.tryParse('${priceVal ?? ''}');
-        if (priceNum == null || priceNum <= 0) {
-          r.remove('price');
-        }
-        final documentsCount = r['documents_count'];
-        final documentsCountValue = documentsCount is num
-            ? documentsCount.toInt()
-            : int.tryParse('${documentsCount ?? ''}');
-        if (!r.containsKey('documents_count') ||
-            documentsCountValue == null ||
-            documentsCountValue <= 0) {
-          r.remove('documents_count');
-        }
-
-        final existing = await txn.query(
-          'drugs',
-          columns: ['id'],
-          where: 'id = ?',
-          whereArgs: [id],
-        );
-        if (existing.isEmpty) {
-          await txn.insert(
-            'drugs',
-            r,
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        } else {
-          await txn.update('drugs', r, where: 'id = ?', whereArgs: [id]);
-        }
-      }
+      await _upsertDrugRows(txn, drugs);
     });
     _notifyChanged(['drugs']);
+  }
+
+  /// A snapshot covering less than this share of the currently orderable rows
+  /// is treated as truncated rather than as a shrunken catalogue.
+  static const _priceListReplaceMinRatio = 0.5;
+
+  /// Applies a non-empty price-list response as the authoritative order
+  /// catalogue while preserving drug metadata and cached images for offline
+  /// knowledge/detailing screens.
+  ///
+  /// Returns false when the snapshot looked truncated and was merged instead of
+  /// replacing: zeroing rows the response never covered would silently drop
+  /// them from [getDrugs], which filters on `price > 0`.
+  Future<bool> replaceOrderPriceList(List<Map<String, dynamic>> drugs) async {
+    if (drugs.isEmpty) return false;
+    var replaced = false;
+    await db.transaction((txn) async {
+      final orderable =
+          Sqflite.firstIntValue(
+            await txn.rawQuery('''
+          SELECT COUNT(*) FROM drugs
+          WHERE price > 0 OR current_stock_id IS NOT NULL
+        '''),
+          ) ??
+          0;
+      replaced =
+          orderable == 0 ||
+          drugs.length >= orderable * _priceListReplaceMinRatio;
+      if (replaced) {
+        await txn.rawUpdate('''
+          UPDATE drugs
+          SET price = 0,
+              serial_number = NULL,
+              expiry_date = NULL,
+              main_stock = 0,
+              stock = 0,
+              remains_stock = 0,
+              current_stock_id = NULL
+          WHERE price > 0 OR current_stock_id IS NOT NULL
+        ''');
+      }
+      await _upsertDrugRows(txn, drugs);
+    });
+    _notifyChanged(['drugs']);
+    return replaced;
+  }
+
+  Future<void> _upsertDrugRows(
+    DatabaseExecutor executor,
+    List<Map<String, dynamic>> drugs,
+  ) async {
+    for (final row in drugs) {
+      final r = Map<String, dynamic>.from(row);
+      final id = r['id'];
+      if (id == null) continue;
+      final existingImage = await executor.query(
+        'drugs',
+        columns: ['image_cached_path'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      final incomingCachedPath = r['image_cached_path']?.toString().trim();
+      if ((incomingCachedPath == null || incomingCachedPath.isEmpty) &&
+          existingImage.isNotEmpty) {
+        r['image_cached_path'] = existingImage.first['image_cached_path'];
+      }
+
+      // Preserve current_stock_id / binding_drug_id if the incoming row
+      // doesn't have them (delta-sync rows don't include price-list fields).
+      if (!r.containsKey('current_stock_id') || r['current_stock_id'] == null) {
+        r.remove('current_stock_id');
+      }
+      if (!r.containsKey('binding_drug_id') || r['binding_drug_id'] == null) {
+        r.remove('binding_drug_id');
+      }
+      for (final stockKey in ['stock', 'main_stock', 'remains_stock']) {
+        if (!r.containsKey(stockKey) || r[stockKey] == null) {
+          r.remove(stockKey);
+        }
+      }
+      final imageUrl = r['image_url']?.toString().trim();
+      if (imageUrl == null || imageUrl.isEmpty) {
+        r.remove('image_url');
+      }
+      // Catalogue (bindings) rows carry no price; never overwrite an existing
+      // price-list price with a missing/zero value.
+      final priceVal = r['price'];
+      final priceNum = priceVal is num
+          ? priceVal.toDouble()
+          : double.tryParse('${priceVal ?? ''}');
+      if (priceNum == null || priceNum <= 0) {
+        r.remove('price');
+      }
+      final documentsCount = r['documents_count'];
+      final documentsCountValue = documentsCount is num
+          ? documentsCount.toInt()
+          : int.tryParse('${documentsCount ?? ''}');
+      if (!r.containsKey('documents_count') ||
+          documentsCountValue == null ||
+          documentsCountValue <= 0) {
+        r.remove('documents_count');
+      }
+
+      final existing = await executor.query(
+        'drugs',
+        columns: ['id'],
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (existing.isEmpty) {
+        await executor.insert(
+          'drugs',
+          r,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      } else {
+        await executor.update('drugs', r, where: 'id = ?', whereArgs: [id]);
+      }
+    }
   }
 
   Future<void> upsertDrugMaterials(List<Map<String, dynamic>> materials) async {
@@ -2752,6 +2914,9 @@ class LocalDatabase {
     bool? unsyncedOnly,
     bool dueForRetryOnly = false,
   }) async {
+    final ownerUserId = await _storedOwnerUserId();
+    final ownerWhere = _ownerWhere(ownerUserId);
+    final ownerArgs = _ownerWhereArgs(ownerUserId);
     if (unsyncedOnly == true) {
       // When [dueForRetryOnly] is set, skip visits whose backoff window has not
       // elapsed yet (next_retry_at in the future) so the push loop does not
@@ -2764,30 +2929,43 @@ class LocalDatabase {
           'visits',
           where:
               'is_synced = ? AND (sync_failed IS NULL OR sync_failed = 0) '
-              'AND (next_retry_at IS NULL OR next_retry_at <= ?)',
-          whereArgs: [0, nowIso],
+              'AND (next_retry_at IS NULL OR next_retry_at <= ?) '
+              'AND $ownerWhere',
+          whereArgs: [0, nowIso, ...ownerArgs],
           orderBy: 'created_at DESC',
         );
       }
       return db.query(
         'visits',
-        where: 'is_synced = ? AND (sync_failed IS NULL OR sync_failed = 0)',
-        whereArgs: [0],
+        where:
+            'is_synced = ? AND (sync_failed IS NULL OR sync_failed = 0) '
+            'AND $ownerWhere',
+        whereArgs: [0, ...ownerArgs],
         orderBy: 'created_at DESC',
       );
     }
-    return db.query('visits', orderBy: 'created_at DESC');
+    return db.query(
+      'visits',
+      where: ownerWhere,
+      whereArgs: ownerArgs,
+      orderBy: 'created_at DESC',
+    );
   }
 
   Future<Map<int, int>> getVisitCountsByDoctorIds(List<int> doctorIds) async {
     if (doctorIds.isEmpty) return const <int, int>{};
+    final ownerUserId = await _storedOwnerUserId();
     final placeholders = doctorIds.map((_) => '?').join(', ');
-    final rows = await db.rawQuery('''
+    final rows = await db.rawQuery(
+      '''
       SELECT doctor_id, COUNT(*) AS cnt
       FROM visits
       WHERE doctor_id IS NOT NULL AND doctor_id IN ($placeholders)
+        AND ${_ownerWhere(ownerUserId)}
       GROUP BY doctor_id
-      ''', doctorIds);
+      ''',
+      [...doctorIds, ..._ownerWhereArgs(ownerUserId)],
+    );
 
     final result = <int, int>{};
     for (final row in rows) {
@@ -2801,8 +2979,10 @@ class LocalDatabase {
   }
 
   Future<int> insertVisit(Map<String, dynamic> visit) async {
+    final ownerUserId = await _storedOwnerUserId();
     final v = Map<String, dynamic>.from(visit);
     v['is_synced'] = 0;
+    v['owner_user_id'] = ownerUserId;
     final id = await db.insert(
       'visits',
       v,
@@ -2843,9 +3023,11 @@ class LocalDatabase {
   }
 
   Future<List<Map<String, dynamic>>> getFailedVisits() async {
+    final ownerUserId = await _storedOwnerUserId();
     return db.query(
       'visits',
-      where: 'sync_failed = 1',
+      where: 'sync_failed = 1 AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: _ownerWhereArgs(ownerUserId),
       orderBy: 'created_at DESC',
     );
   }
@@ -2857,6 +3039,7 @@ class LocalDatabase {
   /// server format `{drug_id, status_id, ...}` and re-queues them for push.
   /// Returns the number of visits repaired.
   Future<int> repairLegacyVisitDrugPayloads() async {
+    final ownerUserId = await _storedOwnerUserId();
     // Map known drug names → binding id, to recover drug_id for legacy rows.
     final drugRows = await db.query('drugs', columns: ['id', 'name']);
     final nameToId = <String, int>{};
@@ -2916,8 +3099,10 @@ class LocalDatabase {
     // Candidates: unsynced visits (parked or not) that have a raw_json.
     final rows = await db.query(
       'visits',
-      where: 'is_synced = 0 AND raw_json IS NOT NULL AND raw_json != ?',
-      whereArgs: [''],
+      where:
+          'is_synced = 0 AND raw_json IS NOT NULL AND raw_json != ? '
+          'AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: ['', ..._ownerWhereArgs(ownerUserId)],
     );
 
     var repaired = 0;
@@ -2965,19 +3150,140 @@ class LocalDatabase {
     return repaired;
   }
 
+  /// Re-resolves stock ids on parked pharmacy orders. Builds that could put a
+  /// dictionary drug id where the server expects the binding id left orders
+  /// frozen with ids the CRM rejects ("Товар с ID=… не найден"), and a plain
+  /// retry re-sends the same payload, so those orders can never drain without
+  /// this rewrite. Orders whose products are no longer in the price list stay
+  /// parked. Returns the number of orders repaired.
+  Future<int> repairParkedPharmacyOrderStockIds() async {
+    final ownerUserId = await _storedOwnerUserId();
+    final drugRows = await db.query(
+      'drugs',
+      columns: ['id', 'name', 'binding_drug_id', 'current_stock_id'],
+      where: 'current_stock_id IS NOT NULL',
+    );
+    if (drugRows.isEmpty) return 0;
+
+    final byBindingId = <int, Map<String, Object?>>{};
+    final byName = <String, Map<String, Object?>>{};
+    for (final row in drugRows) {
+      final bindingId =
+          (row['binding_drug_id'] as num?)?.toInt() ??
+          (row['id'] as num?)?.toInt();
+      if (bindingId != null) byBindingId[bindingId] = row;
+      final name = (row['name'] as String?)?.trim().toLowerCase();
+      if (name != null && name.isNotEmpty) byName.putIfAbsent(name, () => row);
+    }
+
+    final rows = await db.query(
+      'visits',
+      where:
+          "visit_type = 'order' AND sync_failed = 1 AND raw_json IS NOT NULL "
+          "AND raw_json != ? AND ${_ownerWhere(ownerUserId)}",
+      whereArgs: ['', ..._ownerWhereArgs(ownerUserId)],
+    );
+
+    var repaired = 0;
+    for (final row in rows) {
+      final id = (row['id'] as num?)?.toInt();
+      final rawJson = row['raw_json'] as String?;
+      if (id == null || rawJson == null || rawJson.isEmpty) continue;
+      Map<String, dynamic> parsed;
+      try {
+        final decoded = jsonDecode(rawJson);
+        if (decoded is! Map) continue;
+        parsed = Map<String, dynamic>.from(decoded);
+      } catch (_) {
+        continue;
+      }
+
+      final lines = parsed['drugs'] ?? parsed['items'];
+      if (lines is! List || lines.isEmpty) continue;
+
+      var changed = false;
+      var unresolved = false;
+      final rebuilt = <dynamic>[];
+      for (final line in lines) {
+        if (line is! Map) {
+          rebuilt.add(line);
+          continue;
+        }
+        final m = Map<String, dynamic>.from(line);
+        final drugId = (m['drug_id'] as num?)?.toInt();
+        final name = (m['drug_name'] as String?)?.trim().toLowerCase();
+        final match =
+            (drugId == null ? null : byBindingId[drugId]) ??
+            (name == null || name.isEmpty ? null : byName[name]);
+        if (match == null) {
+          unresolved = true;
+          rebuilt.add(m);
+          continue;
+        }
+        final stockId = (match['current_stock_id'] as num?)?.toInt();
+        final bindingId =
+            (match['binding_drug_id'] as num?)?.toInt() ??
+            (match['id'] as num?)?.toInt();
+        if (stockId != null && m['income_detailing_id'] != stockId) {
+          m['income_detailing_id'] = stockId;
+          changed = true;
+        }
+        if (bindingId != null && drugId != bindingId) {
+          m['drug_id'] = bindingId;
+          changed = true;
+        }
+        rebuilt.add(m);
+      }
+
+      // A partially repaired order would be submitted with the same rejected
+      // line, so leave it parked until its products are back in the price list.
+      if (!changed || unresolved) continue;
+
+      parsed['drugs'] = rebuilt;
+      if (parsed.containsKey('items')) parsed['items'] = rebuilt;
+
+      await db.update(
+        'visits',
+        {
+          'raw_json': jsonEncode(parsed),
+          'sync_failed': 0,
+          'push_attempts': 0,
+          'next_retry_at': null,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      repaired++;
+    }
+    if (repaired > 0) _notifyChanged(['visits']);
+    return repaired;
+  }
+
   Future<int> failedVisitsCount() async {
-    final rows = await db.rawQuery(
-      'SELECT COUNT(*) AS cnt FROM visits WHERE sync_failed = 1',
+    final ownerUserId = await _storedOwnerUserId();
+    final rows = await db.query(
+      'visits',
+      columns: ['COUNT(*) AS cnt'],
+      where: 'sync_failed = 1 AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: _ownerWhereArgs(ownerUserId),
     );
     return Sqflite.firstIntValue(rows) ?? 0;
   }
 
   Future<int> deleteLegacyTestVisits() async {
+    final ownerUserId = await _storedOwnerUserId();
     final count = await db.delete(
       'visits',
       where:
-          "org_name = ? OR notes LIKE ? OR (visit_type = ? AND doctor_id IS NULL AND remote_id IS NULL)",
-      whereArgs: ['Тестовая организация', 'Офлайн визит %', 'lpu'],
+          '(org_name = ? OR notes LIKE ? OR '
+          '(visit_type = ? AND doctor_id IS NULL AND remote_id IS NULL)) '
+          'AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: [
+        'Тестовая организация',
+        'Офлайн визит %',
+        'lpu',
+        ..._ownerWhereArgs(ownerUserId),
+      ],
     );
     if (count > 0) _notifyChanged(['visits']);
     return count;
@@ -3116,19 +3422,30 @@ class LocalDatabase {
   }
 
   Future<int> unsyncedCount() async {
+    final ownerUserId = await _storedOwnerUserId();
     // Parked (sync_failed) visits are counted separately via
     // [failedVisitsCount] — they need user attention, not another auto-push.
-    final visits = await db.rawQuery(
-      'SELECT COUNT(*) AS cnt FROM visits '
-      'WHERE is_synced = 0 AND (sync_failed IS NULL OR sync_failed = 0)',
+    final visits = await db.query(
+      'visits',
+      columns: ['COUNT(*) AS cnt'],
+      where:
+          'is_synced = 0 AND (sync_failed IS NULL OR sync_failed = 0) '
+          'AND ${_ownerWhere(ownerUserId)}',
+      whereArgs: _ownerWhereArgs(ownerUserId),
     );
     // Pending plan submissions also count as "ожидают отправки" so the badge
     // accurately reflects everything that still needs to reach the server.
-    final plans = await db.rawQuery(
-      'SELECT COUNT(*) AS cnt FROM pending_plans',
+    final plans = await db.query(
+      'pending_plans',
+      columns: ['COUNT(*) AS cnt'],
+      where: _ownerWhere(ownerUserId),
+      whereArgs: _ownerWhereArgs(ownerUserId),
     );
-    final workdayEvents = await db.rawQuery(
-      'SELECT COUNT(*) AS cnt FROM pending_workday_events',
+    final workdayEvents = await db.query(
+      'pending_workday_events',
+      columns: ['COUNT(*) AS cnt'],
+      where: _ownerWhere(ownerUserId, column: 'user_id'),
+      whereArgs: _ownerWhereArgs(ownerUserId),
     );
     return (Sqflite.firstIntValue(visits) ?? 0) +
         (Sqflite.firstIntValue(plans) ?? 0) +

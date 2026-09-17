@@ -31,7 +31,7 @@ class SpecificationItem {
     required this.expiryDate,
     required this.basePrice,
     this.markupPercent = 20,
-    this.unit = '',
+    this.unit = 'шт.',
   });
 }
 
@@ -54,6 +54,33 @@ class SpecificationData {
 }
 
 class SpecificationExportService {
+  static double basePriceFromGross({
+    required double grossPrice,
+    required double markupPercent,
+    double vatRatePercent = 12,
+  }) {
+    if (grossPrice <= 0) return 0;
+    final markupMultiplier = 1 + markupPercent / 100;
+    final vatMultiplier = 1 + vatRatePercent / 100;
+    if (markupMultiplier <= 0 || vatMultiplier <= 0) return 0;
+    return grossPrice / markupMultiplier / vatMultiplier;
+  }
+
+  /// Measures the product description exactly as it is rendered in the PNG.
+  /// The minimum preserves the compact template for short rows, while long
+  /// names grow the row instead of hiding the serial number or expiry date.
+  static int pngRowHeightForItem(SpecificationItem item) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: _itemDescription(item),
+        style: const TextStyle(fontSize: 16, height: 1.1),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 274);
+    final measured = painter.height.ceil() + 8;
+    return measured < 79 ? 79 : measured;
+  }
+
   Future<void> export(
     BuildContext context, {
     required SpecificationData data,
@@ -105,11 +132,11 @@ class SpecificationExportService {
     }
 
     if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(AppI18n.tr('exportFileSaved', args: {'path': saved.path})),
+        content: Text(
+          AppI18n.tr('exportFileSaved', args: {'path': saved.path}),
+        ),
       ),
     );
   }
@@ -354,13 +381,14 @@ class SpecificationExportService {
             ),
           ]
         : data.items;
-    final extraRows = (items.length - 1).clamp(0, 999);
-    const rowHeight = 79;
+    final rowHeights = items.map(pngRowHeightForItem).toList(growable: false);
+    final totalItemsHeight = rowHeights.fold<int>(0, (sum, row) => sum + row);
+    final extraHeight = totalItemsHeight - 79;
     // Base height must leave room below the signature-name row (drawn at
     // signNameY = 546 + extraRows*rowHeight, ~26px tall at fontSize 24) plus a
     // bottom margin — otherwise the buyer/seller names are clipped (PNG cut off
     // at the bottom). 546 + 26 ≈ 572, +28px margin → 600.
-    final canvasHeight = 600 + (extraRows * rowHeight);
+    final canvasHeight = 600 + extraHeight;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const pageWidth = 1600.0;
@@ -376,10 +404,16 @@ class SpecificationExportService {
     final tableTop = 205;
     final headerBottom = 274;
     final itemTop = headerBottom;
-    final totalTop = itemTop + (items.length * rowHeight);
+    final rowTops = <int>[];
+    var nextRowTop = itemTop;
+    for (final height in rowHeights) {
+      rowTops.add(nextRowTop);
+      nextRowTop += height;
+    }
+    final totalTop = nextRowTop;
     final tableBottom = totalTop + 30;
-    final signY = 500 + (extraRows * rowHeight);
-    final signNameY = 546 + (extraRows * rowHeight);
+    final signY = 500 + extraHeight;
+    final signNameY = 546 + extraHeight;
 
     _drawText(
       canvas,
@@ -430,7 +464,7 @@ class SpecificationExportService {
       linePaint,
     );
     for (var i = 1; i < items.length; i++) {
-      final y = itemTop + (i * rowHeight);
+      final y = rowTops[i];
       canvas.drawLine(
         Offset(5, y.toDouble()),
         Offset(1590, y.toDouble()),
@@ -602,32 +636,40 @@ class SpecificationExportService {
       totalVat += vat;
       totalWithVat += total;
 
-      final rowY = itemTop + (i * rowHeight);
+      final rowY = rowTops[i];
+      final centeredTextY = rowY + ((rowHeights[i] - 20) / 2);
       _drawText(
         canvas,
         text: '${i + 1}',
         x: 8,
-        y: rowY + 28,
+        y: centeredTextY,
         width: 84,
         align: TextAlign.center,
         fontSize: 18,
       );
       _drawText(
         canvas,
-        text:
-            '${item.name}\nПроизводитель: ${item.manufacturer.isEmpty ? '—' : item.manufacturer}\nСерия:${item.serialNumber}\nСрок годности: ${item.expiryDate}',
+        text: _itemDescription(item),
         x: 108,
         y: rowY + 4,
         width: 274,
         align: TextAlign.left,
         fontSize: 16,
-        maxLines: 4,
+      );
+      _drawText(
+        canvas,
+        text: item.unit,
+        x: 390,
+        y: centeredTextY,
+        width: 97,
+        align: TextAlign.center,
+        fontSize: 18,
       );
       _drawText(
         canvas,
         text: '${item.quantity}',
         x: 495,
-        y: rowY + 28,
+        y: centeredTextY,
         width: 80,
         align: TextAlign.center,
         fontSize: 18,
@@ -636,7 +678,7 @@ class SpecificationExportService {
         canvas,
         text: _money(item.basePrice),
         x: 591,
-        y: rowY + 28,
+        y: centeredTextY,
         width: 111,
         align: TextAlign.center,
         fontSize: 18,
@@ -645,7 +687,7 @@ class SpecificationExportService {
         canvas,
         text: '${item.markupPercent.toStringAsFixed(2)}%',
         x: 718,
-        y: rowY + 28,
+        y: centeredTextY,
         width: 80,
         align: TextAlign.center,
         fontSize: 18,
@@ -654,7 +696,7 @@ class SpecificationExportService {
         canvas,
         text: _money(supplyPrice),
         x: 814,
-        y: rowY + 28,
+        y: centeredTextY,
         width: 177,
         align: TextAlign.center,
         fontSize: 18,
@@ -663,7 +705,7 @@ class SpecificationExportService {
         canvas,
         text: _money(supplySum),
         x: 1007,
-        y: rowY + 28,
+        y: centeredTextY,
         width: 177,
         align: TextAlign.center,
         fontSize: 18,
@@ -672,7 +714,7 @@ class SpecificationExportService {
         canvas,
         text: '${data.vatRatePercent.toStringAsFixed(0)}%',
         x: 1200,
-        y: rowY + 28,
+        y: centeredTextY,
         width: 82,
         align: TextAlign.center,
         fontSize: 18,
@@ -681,7 +723,7 @@ class SpecificationExportService {
         canvas,
         text: _money(vat),
         x: 1298,
-        y: rowY + 28,
+        y: centeredTextY,
         width: 95,
         align: TextAlign.center,
         fontSize: 18,
@@ -690,7 +732,7 @@ class SpecificationExportService {
         canvas,
         text: _money(total),
         x: 1409,
-        y: rowY + 28,
+        y: centeredTextY,
         width: 173,
         align: TextAlign.center,
         fontSize: 18,
@@ -839,6 +881,31 @@ class SpecificationExportService {
     ];
     final month = months[date.month - 1];
     return '${date.day} $month ${date.year} г.';
+  }
+
+  /// Product cell text. Serial and expiry are skipped when the item has none,
+  /// because a bare "Срок годности:" label reads as missing data on a document
+  /// the pharmacy signs.
+  static String _itemDescription(SpecificationItem item) {
+    final manufacturer = item.manufacturer.trim();
+    final serial = item.serialNumber.trim();
+    final expiry = item.expiryDate.trim();
+    return [
+      item.name,
+      'Производитель: ${manufacturer.isEmpty ? '—' : manufacturer}',
+      if (serial.isNotEmpty && serial != '—') 'Серия: $serial',
+      if (expiry.isNotEmpty && expiry != '—')
+        'Срок годности: ${_shortExpiry(expiry)}',
+    ].join('\n');
+  }
+
+  /// A full ISO timestamp overflows the product cell and gets cut off by the
+  /// line limit, leaving a bare label. Month and year is what the document
+  /// needs anyway, and it matches the quantity dialog.
+  static String _shortExpiry(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return raw;
+    return '${parsed.month.toString().padLeft(2, '0')}.${parsed.year}';
   }
 
   static String _money(double value) {
