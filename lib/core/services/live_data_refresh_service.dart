@@ -76,6 +76,7 @@ class LiveDataRefreshService {
                     'name': drug.name,
                     'manufacturer': drug.manufacturer,
                     'binding_drug_id': drug.bindingDrugId,
+                    'units_per_package': drug.unitsPerPackage,
                     'image_url': drug.imageUrl,
                     'updated_at': now,
                   },
@@ -115,7 +116,7 @@ class LiveDataRefreshService {
           if (!replaced) {
             logSwallowed(
               'price-list looked truncated (${stockDrugs.length} rows) — '
-              'merged instead of replacing the order catalogue',
+                  'merged instead of replacing the order catalogue',
               'LiveDataRefreshService.stock',
             );
           }

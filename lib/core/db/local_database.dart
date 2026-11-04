@@ -157,6 +157,7 @@ class LocalDatabase {
         remains_stock    INTEGER,
         current_stock_id INTEGER,
         binding_drug_id  INTEGER,
+        units_per_package INTEGER,
         image_url        TEXT,
         image_cached_path TEXT,
         documents_count  INTEGER DEFAULT 0,
@@ -649,6 +650,7 @@ class LocalDatabase {
     await _addColumnIfMissing(db, 'drugs', 'remains_stock', 'INTEGER');
     await _addColumnIfMissing(db, 'drugs', 'current_stock_id', 'INTEGER');
     await _addColumnIfMissing(db, 'drugs', 'binding_drug_id', 'INTEGER');
+    await _addColumnIfMissing(db, 'drugs', 'units_per_package', 'INTEGER');
     await _addColumnIfMissing(db, 'drugs', 'image_url', 'TEXT');
     // Full add-doctor payload for the offline queue (matches the web API).
     for (final column in const {

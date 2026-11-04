@@ -2,12 +2,12 @@ part of '../screens/new_bron_screen.dart';
 
 extension _NewBronScreenUi on _NewBronScreenState {
   SpecificationData _buildSpecificationData() {
-    final markupPercent = (_marginPercent ?? 20).toDouble();
     final items = <SpecificationItem>[];
     for (final id in _ids) {
       final drug = _drugById[id];
       final quantity = _qtyByDrugId[id] ?? 0;
       if (drug == null || quantity <= 0) continue;
+      final markupPercent = _marginByDrugId[id] ?? _marginPercent?.toDouble();
       items.add(
         SpecificationItem(
           name: drug.name,
@@ -24,7 +24,6 @@ extension _NewBronScreenUi on _NewBronScreenState {
       );
     }
     return SpecificationData(
-      orderId: DateTime.now().millisecondsSinceEpoch % 100000,
       date: DateTime.now(),
       seller: _sellerCompanyName,
       buyer: widget.pharmacyName,
@@ -32,7 +31,34 @@ extension _NewBronScreenUi on _NewBronScreenState {
     );
   }
 
+  Future<Uint8List> Function()? _serverSpecification(
+    SpecificationFormat format,
+  ) {
+    final marginId = _marginId;
+    if (marginId == null) return null;
+    final documents = ref.read(specificationDocumentSourceProvider);
+    final lines = _orderViewModel.buildSelectedLines().lines;
+    return () => documents.forDraft(
+      organizationId: widget.pharmacyId,
+      organizationName: widget.pharmacyName,
+      marginId: marginId,
+      paymentVariantId: _paymentVariantId ?? 1,
+      contractId: _contractId,
+      isWholesaler: _buyerType == 1,
+      lines: lines,
+      format: format,
+    );
+  }
+
   Future<void> _showSpecFormatDialog() async {
+    // Offline lines hold catalogue prices; the server reprices them on send, so
+    // a document printed now would state amounts the pharmacy will not be billed.
+    if (ref.read(isOfflineProvider)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.t('specificationNeedsPricing'))),
+      );
+      return;
+    }
     await showDialog<void>(
       context: context,
       builder: (ctx) => Dialog(
@@ -72,6 +98,9 @@ extension _NewBronScreenUi on _NewBronScreenState {
                     context,
                     data: _buildSpecificationData(),
                     format: SpecificationFormat.xlsx,
+                    serverDocument: _serverSpecification(
+                      SpecificationFormat.xlsx,
+                    ),
                   );
                 },
                 style: ElevatedButton.styleFrom(
@@ -96,6 +125,9 @@ extension _NewBronScreenUi on _NewBronScreenState {
                     context,
                     data: _buildSpecificationData(),
                     format: SpecificationFormat.png,
+                    serverDocument: _serverSpecification(
+                      SpecificationFormat.png,
+                    ),
                   );
                 },
                 style: ElevatedButton.styleFrom(
@@ -382,7 +414,10 @@ extension _NewBronScreenUi on _NewBronScreenState {
                       children: [
                         _qtyButton(
                           icon: Icons.remove_rounded,
-                          onTap: () => _orderViewModel.decrement(id),
+                          onTap: () {
+                            _orderViewModel.decrement(id);
+                            _repriceAfterQuantityChange();
+                          },
                         ),
                         const SizedBox(width: 8),
                         Text(
@@ -399,7 +434,10 @@ extension _NewBronScreenUi on _NewBronScreenState {
                         _qtyButton(
                           icon: Icons.add_rounded,
                           onTap: _canIncreaseQty(id)
-                              ? () => _orderViewModel.increment(id)
+                              ? () {
+                                  _orderViewModel.increment(id);
+                                  _repriceAfterQuantityChange();
+                                }
                               : null,
                         ),
                       ],

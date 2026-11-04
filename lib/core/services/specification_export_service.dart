@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:lima/core/i18n/app_i18n.dart';
+import 'package:lima/core/utils/swallowed.dart';
 
 enum SpecificationFormat { xlsx, png }
 
@@ -20,7 +21,10 @@ class SpecificationItem {
   final String serialNumber;
   final String expiryDate;
   final double basePrice;
-  final double markupPercent;
+
+  /// Null when the server gave no markup for the line: the document then shows
+  /// a dash, because a guessed percentage changes the printed base price.
+  final double? markupPercent;
   final String unit;
 
   const SpecificationItem({
@@ -30,13 +34,15 @@ class SpecificationItem {
     required this.serialNumber,
     required this.expiryDate,
     required this.basePrice,
-    this.markupPercent = 20,
+    this.markupPercent,
     this.unit = 'шт.',
   });
 }
 
 class SpecificationData {
-  final int orderId;
+  /// Null until the server has assigned a number: an unsent booking has none,
+  /// and a made-up one reads as a real document reference.
+  final int? orderId;
   final DateTime date;
   final String seller;
   final String buyer;
@@ -44,7 +50,7 @@ class SpecificationData {
   final double vatRatePercent;
 
   const SpecificationData({
-    required this.orderId,
+    this.orderId,
     required this.date,
     required this.seller,
     required this.buyer,
@@ -56,11 +62,11 @@ class SpecificationData {
 class SpecificationExportService {
   static double basePriceFromGross({
     required double grossPrice,
-    required double markupPercent,
+    required double? markupPercent,
     double vatRatePercent = 12,
   }) {
     if (grossPrice <= 0) return 0;
-    final markupMultiplier = 1 + markupPercent / 100;
+    final markupMultiplier = 1 + (markupPercent ?? 0) / 100;
     final vatMultiplier = 1 + vatRatePercent / 100;
     if (markupMultiplier <= 0 || vatMultiplier <= 0) return 0;
     return grossPrice / markupMultiplier / vatMultiplier;
@@ -81,17 +87,49 @@ class SpecificationExportService {
     return measured < 79 ? 79 : measured;
   }
 
+  /// The server document is the one the web client issues. Null falls back to
+  /// local rendering; the signature check keeps a JSON error body from being
+  /// saved as a document.
+  Future<Uint8List?> _serverBytes(
+    Future<Uint8List> Function()? serverDocument,
+    SpecificationFormat format,
+  ) async {
+    if (serverDocument == null) return null;
+    try {
+      final bytes = await serverDocument();
+      return isDocumentOfFormat(bytes, format) ? bytes : null;
+    } catch (error) {
+      logSwallowed(error, 'SpecificationExportService.serverDocument');
+      return null;
+    }
+  }
+
+  static bool isDocumentOfFormat(Uint8List bytes, SpecificationFormat format) {
+    final signature = switch (format) {
+      SpecificationFormat.xlsx => const [0x50, 0x4B],
+      SpecificationFormat.png => const [0x89, 0x50, 0x4E, 0x47],
+    };
+    if (bytes.length < signature.length) return false;
+    for (var i = 0; i < signature.length; i++) {
+      if (bytes[i] != signature[i]) return false;
+    }
+    return true;
+  }
+
   Future<void> export(
     BuildContext context, {
     required SpecificationData data,
     required SpecificationFormat format,
+    Future<Uint8List> Function()? serverDocument,
   }) async {
     late final File saved;
     try {
-      final bytes = switch (format) {
-        SpecificationFormat.xlsx => await _buildXlsx(data),
-        SpecificationFormat.png => await _buildPng(data),
-      };
+      final bytes =
+          await _serverBytes(serverDocument, format) ??
+          switch (format) {
+            SpecificationFormat.xlsx => await _buildXlsx(data),
+            SpecificationFormat.png => await _buildPng(data),
+          };
       saved = await _saveFile(
         bytes,
         '${_sanitize(data.buyer)}.${format == SpecificationFormat.xlsx ? 'xlsx' : 'png'}',
@@ -179,7 +217,7 @@ class SpecificationExportService {
     final sellerBottomStyle = cell('A22').cellStyle;
     final buyerBottomStyle = cell('L22').cellStyle;
 
-    cell('A2').value = ex.TextCellValue('СПЕЦИФИКАЦИЯ №${data.orderId}');
+    cell('A2').value = ex.TextCellValue(_title(data));
     cell('A3').value = ex.TextCellValue('от ${_russianDate(data.date)}');
     cell('C6').value = ex.TextCellValue(data.seller);
     cell('C8').value = ex.TextCellValue(data.buyer);
@@ -230,7 +268,8 @@ class SpecificationExportService {
     for (var i = 0; i < items.length; i++) {
       final row = 13 + i;
       final item = items[i];
-      final supplyPrice = item.basePrice * (1 + item.markupPercent / 100);
+      final supplyPrice =
+          item.basePrice * (1 + (item.markupPercent ?? 0) / 100);
       final supplySum = supplyPrice * item.quantity;
       final vatSum = supplySum * (data.vatRatePercent / 100);
       final withVat = supplySum + vatSum;
@@ -251,19 +290,12 @@ class SpecificationExportService {
 
       // Write values AFTER styles.
       cell('A$row').value = ex.IntCellValue(i + 1);
-      cell('B$row').value = ex.TextCellValue(
-        '${item.name}\n'
-        'Производитель: ${item.manufacturer.isEmpty ? '—' : item.manufacturer}\n'
-        'Серия:${item.serialNumber}\n'
-        'Срок годности: ${item.expiryDate}',
-      );
+      cell('B$row').value = ex.TextCellValue(_itemDescription(item));
       sheet.setRowHeight(row, _rowHeightForItem(item));
       cell('E$row').value = ex.TextCellValue(item.unit);
       cell('F$row').value = ex.IntCellValue(item.quantity);
       cell('G$row').value = ex.DoubleCellValue(item.basePrice);
-      cell('H$row').value = ex.TextCellValue(
-        '${item.markupPercent.toStringAsFixed(2)}%',
-      );
+      cell('H$row').value = ex.TextCellValue(_markupLabel(item));
       cell('I$row').value = ex.DoubleCellValue(supplyPrice);
       cell('K$row').value = ex.DoubleCellValue(supplySum);
       cell('M$row').value = ex.TextCellValue(
@@ -417,7 +449,7 @@ class SpecificationExportService {
 
     _drawText(
       canvas,
-      text: 'СПЕЦИФИКАЦИЯ №${data.orderId}',
+      text: _title(data),
       x: 0,
       y: 22,
       width: pageWidth,
@@ -627,7 +659,8 @@ class SpecificationExportService {
     double totalWithVat = 0;
     for (var i = 0; i < items.length; i++) {
       final item = items[i];
-      final supplyPrice = item.basePrice * (1 + item.markupPercent / 100);
+      final supplyPrice =
+          item.basePrice * (1 + (item.markupPercent ?? 0) / 100);
       final supplySum = supplyPrice * item.quantity;
       final vat = supplySum * (data.vatRatePercent / 100);
       final total = supplySum + vat;
@@ -677,6 +710,7 @@ class SpecificationExportService {
       _drawText(
         canvas,
         text: _money(item.basePrice),
+        singleLine: true,
         x: 591,
         y: centeredTextY,
         width: 111,
@@ -685,7 +719,7 @@ class SpecificationExportService {
       );
       _drawText(
         canvas,
-        text: '${item.markupPercent.toStringAsFixed(2)}%',
+        text: _markupLabel(item),
         x: 718,
         y: centeredTextY,
         width: 80,
@@ -695,6 +729,7 @@ class SpecificationExportService {
       _drawText(
         canvas,
         text: _money(supplyPrice),
+        singleLine: true,
         x: 814,
         y: centeredTextY,
         width: 177,
@@ -704,6 +739,7 @@ class SpecificationExportService {
       _drawText(
         canvas,
         text: _money(supplySum),
+        singleLine: true,
         x: 1007,
         y: centeredTextY,
         width: 177,
@@ -722,6 +758,7 @@ class SpecificationExportService {
       _drawText(
         canvas,
         text: _money(vat),
+        singleLine: true,
         x: 1298,
         y: centeredTextY,
         width: 95,
@@ -731,6 +768,7 @@ class SpecificationExportService {
       _drawText(
         canvas,
         text: _money(total),
+        singleLine: true,
         x: 1409,
         y: centeredTextY,
         width: 173,
@@ -752,6 +790,7 @@ class SpecificationExportService {
     _drawText(
       canvas,
       text: _money(totalSupply),
+      singleLine: true,
       x: 1007,
       y: totalTop + 6,
       width: 177,
@@ -762,6 +801,7 @@ class SpecificationExportService {
     _drawText(
       canvas,
       text: _money(totalVat),
+      singleLine: true,
       x: 1298,
       y: totalTop + 6,
       width: 95,
@@ -772,6 +812,7 @@ class SpecificationExportService {
     _drawText(
       canvas,
       text: _money(totalWithVat),
+      singleLine: true,
       x: 1409,
       y: totalTop + 6,
       width: 173,
@@ -835,22 +876,33 @@ class SpecificationExportService {
     bool bold = false,
     TextAlign align = TextAlign.left,
     int? maxLines,
+    bool singleLine = false,
   }) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          color: const Color(0xFF191919),
-          fontSize: fontSize,
-          fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
-          height: 1.1,
+    TextPainter layout(double size, {double? maxWidth}) {
+      return TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            color: const Color(0xFF191919),
+            fontSize: size,
+            fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
+            height: 1.1,
+          ),
         ),
-      ),
-      textDirection: TextDirection.ltr,
-      textAlign: align,
-      maxLines: maxLines,
-    );
-    painter.layout(maxWidth: width ?? double.infinity);
+        textDirection: TextDirection.ltr,
+        textAlign: align,
+        maxLines: maxLines,
+      )..layout(maxWidth: maxWidth ?? double.infinity);
+    }
+
+    // A sum wrapped at its thousands separator reads as two numbers, and in the
+    // fixed-height total row the second half lands outside the cell.
+    var effectiveSize = fontSize;
+    if (singleLine && width != null) {
+      final natural = layout(fontSize).width;
+      if (natural > width) effectiveSize = fontSize * width / natural;
+    }
+    final painter = layout(effectiveSize, maxWidth: width);
     // TextPainter.width reflects the text's natural width, not maxWidth.
     // For center/right alignment we must manually offset within the given width.
     double dx = x;
@@ -906,6 +958,16 @@ class SpecificationExportService {
     final parsed = DateTime.tryParse(raw);
     if (parsed == null) return raw;
     return '${parsed.month.toString().padLeft(2, '0')}.${parsed.year}';
+  }
+
+  static String _title(SpecificationData data) {
+    final orderId = data.orderId;
+    return orderId == null ? 'СПЕЦИФИКАЦИЯ' : 'СПЕЦИФИКАЦИЯ №$orderId';
+  }
+
+  static String _markupLabel(SpecificationItem item) {
+    final markup = item.markupPercent;
+    return markup == null ? '—' : '${markup.toStringAsFixed(2)}%';
   }
 
   static String _money(double value) {

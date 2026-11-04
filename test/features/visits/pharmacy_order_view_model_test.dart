@@ -20,10 +20,16 @@ class _FakeDrugCatalogueRepository implements DrugCatalogueRepository {
 }
 
 class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
+  PharmacyOrderLocation location = const PharmacyOrderLocation(
+    latitude: 41.3,
+    longitude: 69.2,
+  );
   bool returnNoPriceMatrix = false;
   PharmacyOrderSubmissionFailure? failure;
   PharmacyOrderPricingTerms? submittedTerms;
   bool? submittedWholesale;
+  double? calculatedPrice;
+  double? submittedLatitude;
 
   @override
   Future<bool> supportsWholesaleOrders({int? companyId}) async => true;
@@ -66,7 +72,11 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
         prepaymentPercent: prepaymentPercent,
         isWholesaler: isWholesaler,
       ),
-      lines: lines,
+      lines: calculatedPrice == null
+          ? lines
+          : lines
+                .map((line) => line.copyWith(salePrice: calculatedPrice))
+                .toList(growable: false),
     );
   }
 
@@ -91,6 +101,11 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
   }
 
   @override
+  Future<PharmacyOrderLocation> resolveLocation({
+    required bool isOffline,
+  }) async => location;
+
+  @override
   Future<PharmacyOrderSubmission> submit({
     required int orderUserId,
     required int organizationId,
@@ -100,10 +115,13 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
     required String orderComment,
     required PharmacyOrderLines lines,
     bool pricesAlreadyCalculated = false,
+    double latitude = 0,
+    double longitude = 0,
   }) async {
     if (failure != null) throw failure!;
     submittedTerms = pricingTerms;
     submittedWholesale = isWholesaler;
+    submittedLatitude = latitude;
     return const PharmacyOrderSubmission(
       request: {'ok': true},
       response: {'visit_id': 123},
@@ -161,9 +179,11 @@ PharmacyOrderViewModel _createViewModel(
 PharmacyOrderViewModelConfig _submissionConfig({
   required int prepaymentPercent,
   required int buyerType,
+  int? marginId,
 }) {
   return PharmacyOrderViewModelConfig(
     pharmacyId: 458,
+    marginId: marginId,
     organizationName: 'Pharmacy',
     fromCart: false,
     checkoutCartId: null,
@@ -328,6 +348,114 @@ void main() {
     expect(repository.submittedWholesale, isFalse);
     expect(drafts.savedDraft?.prepaymentPercent, 0);
     expect(drafts.markedSubmission?.remoteId, 123);
+  });
+
+  test('shows the server price for every selected line', () async {
+    final viewModel = PharmacyOrderViewModel(
+      const _FakeDrugCatalogueRepository([]),
+      SubmitPharmacyOrder(
+        _FakePharmacyOrderRepository()..calculatedPrice = 250,
+      ),
+      _FakePharmacyOrderDraftRepository(),
+      const PharmacyOrderViewModelConfig(
+        pharmacyId: 458,
+        organizationName: 'Pharmacy',
+        fromCart: false,
+        checkoutCartId: null,
+        prepaymentPercent: 100,
+        buyerType: 0,
+        marginId: 8,
+        initialQuantities: {1: 1, 2: 1},
+        initialDrugs: {
+          1: Drug(
+            id: 1,
+            name: 'List priced',
+            manufacturer: 'M',
+            price: 100,
+            stock: 5,
+            currentStockId: 11,
+            bindingDrugId: 1,
+          ),
+          2: Drug(
+            id: 2,
+            name: 'Base priced',
+            manufacturer: 'M',
+            price: 100,
+            stock: 5,
+            currentStockId: 22,
+            bindingDrugId: 2,
+          ),
+        },
+        cartItems: [],
+      ),
+      autoLoad: false,
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.refreshCalculatedPrices();
+
+    expect(viewModel.state.drugs[1]?.price, 250);
+    expect(viewModel.state.drugs[2]?.price, 250);
+    expect(viewModel.state.isActionLocked, isFalse);
+  });
+
+  test('stops before saving when required location is missing', () async {
+    final repository = _FakePharmacyOrderRepository()
+      ..location = const PharmacyOrderLocation(
+        latitude: 0,
+        longitude: 0,
+        isRequired: true,
+      );
+    final drafts = _FakePharmacyOrderDraftRepository();
+    final viewModel = PharmacyOrderViewModel(
+      const _FakeDrugCatalogueRepository([]),
+      SubmitPharmacyOrder(repository),
+      drafts,
+      _submissionConfig(prepaymentPercent: 100, buyerType: 0, marginId: 22),
+      autoLoad: false,
+    );
+    addTearDown(viewModel.dispose);
+
+    final result = await viewModel.submitOrder(
+      const PharmacyOrderSubmitContext(
+        orderUserId: 992,
+        medicalRepName: 'Anton Dev',
+        userCompanyId: 2,
+        organizationInn: 123,
+        isOffline: false,
+        comment: 'test',
+      ),
+    );
+
+    expect(result.status, PharmacyOrderSubmissionStatus.locationRequired);
+    expect(drafts.savedDraft, isNull);
+  });
+
+  test('sends the resolved location with the order', () async {
+    final repository = _FakePharmacyOrderRepository();
+    final drafts = _FakePharmacyOrderDraftRepository();
+    final viewModel = PharmacyOrderViewModel(
+      const _FakeDrugCatalogueRepository([]),
+      SubmitPharmacyOrder(repository),
+      drafts,
+      _submissionConfig(prepaymentPercent: 100, buyerType: 0, marginId: 22),
+      autoLoad: false,
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.submitOrder(
+      const PharmacyOrderSubmitContext(
+        orderUserId: 992,
+        medicalRepName: 'Anton Dev',
+        userCompanyId: 2,
+        organizationInn: 123,
+        isOffline: false,
+        comment: 'test',
+      ),
+    );
+
+    expect(repository.submittedLatitude, 41.3);
+    expect(drafts.savedDraft?.longitude, 69.2);
   });
 
   test('queues a local draft without pricing lookup while offline', () async {

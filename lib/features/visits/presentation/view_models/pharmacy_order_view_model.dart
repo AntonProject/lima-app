@@ -19,6 +19,7 @@ enum PharmacyOrderSubmissionStatus {
   rejected,
   noPriceMatrix,
   invalidLines,
+  locationRequired,
   failed,
 }
 
@@ -182,6 +183,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
   final SubmitPharmacyOrder _submitPharmacyOrder;
   final PharmacyOrderDraftRepository _draftRepository;
   final PharmacyOrderViewModelConfig config;
+  int _priceRefreshGeneration = 0;
 
   PharmacyOrderViewModel(
     this._repository,
@@ -319,6 +321,39 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
     );
   }
 
+  /// Puts server prices on the selected lines after a quantity change. The
+  /// server stores an order at its own calculated price and ignores the one
+  /// sent, so a price-list `sale_price` on screen can understate the real sum.
+  /// Only the latest request applies: markup depends on the order sum, so an
+  /// older response describes quantities that no longer exist.
+  Future<void> refreshCalculatedPrices({int? companyId}) async {
+    if (state.selectedIds.isEmpty) return;
+    final generation = ++_priceRefreshGeneration;
+    setActionLocked(true);
+    try {
+      final preview = await calculateSelectedPricing(companyId: companyId);
+      if (!mounted || generation != _priceRefreshGeneration) return;
+      if (preview == null) return;
+      final byStockId = {
+        for (final line in preview.lines) line.incomeDetailingId: line,
+      };
+      final drugs = {...state.drugs};
+      for (final id in state.selectedIds) {
+        final drug = drugs[id];
+        final line = byStockId[drug?.currentStockId];
+        if (drug == null || line == null) continue;
+        drugs[id] = drug.withPrice(line.salePrice);
+      }
+      state = state.copyWith(drugs: Map.unmodifiable(drugs));
+    } catch (error) {
+      logSwallowed(error, 'PharmacyOrderViewModel.refreshCalculatedPrices');
+    } finally {
+      if (mounted && generation == _priceRefreshGeneration) {
+        setActionLocked(false);
+      }
+    }
+  }
+
   Future<PharmacyOrderSubmissionState> submitOrder(
     PharmacyOrderSubmitContext context,
   ) async {
@@ -382,6 +417,17 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
       }
     }
 
+    final location = await _submitPharmacyOrder.resolveLocation(
+      isOffline: context.isOffline,
+    );
+    if (location.isMissingRequired) {
+      return _finishSubmission(
+        const PharmacyOrderSubmissionState(
+          status: PharmacyOrderSubmissionStatus.locationRequired,
+        ),
+      );
+    }
+
     try {
       final draft = PharmacyOrderDraft(
         plannedVisitId: config.plannedVisitId,
@@ -397,6 +443,8 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
         isWholesaler: config.buyerType == 1,
         pricingTerms: pricingTerms,
         lines: orderLines,
+        latitude: location.latitude,
+        longitude: location.longitude,
       );
       final localId = await _draftRepository.saveDraft(draft);
 
@@ -419,6 +467,8 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
           orderComment: context.comment,
           lines: orderLines,
           pricesAlreadyCalculated: pricesAlreadyCalculated,
+          latitude: location.latitude,
+          longitude: location.longitude,
         );
         if (submissionResult.isFailure) {
           final original =
@@ -516,6 +566,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
       currentStockId: incoming.currentStockId ?? existing?.currentStockId,
       bindingDrugId: incoming.bindingDrugId ?? existing?.bindingDrugId,
       imageUrl: incoming.imageUrl ?? existing?.imageUrl,
+      unitsPerPackage: incoming.unitsPerPackage ?? existing?.unitsPerPackage,
     );
   }
 }

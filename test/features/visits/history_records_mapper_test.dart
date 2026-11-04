@@ -83,6 +83,7 @@ void main() {
               },
               'package': 10,
               'sale_price': 120000,
+              'margin_percent': 12,
               'serial_no': 'S-10',
               'expire_date': '2027-09-17',
             },
@@ -96,6 +97,8 @@ void main() {
     expect(item.manufacturer, 'TEMUR MED');
     expect(item.quantity, 10);
     expect(item.total, 1200000);
+    expect(item.marginPercent, 12);
+    expect(records.single.markupPercent, isNull);
     expect(item.serialNumber, 'S-10');
     expect(item.expiryDate, '2027-09-17');
   });

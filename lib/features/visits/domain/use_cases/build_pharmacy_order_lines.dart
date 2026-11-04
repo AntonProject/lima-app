@@ -31,6 +31,7 @@ class PharmacyOrderLine {
   final int quantity;
   final double salePrice;
   final double salePriceWithoutNds;
+  final double? marginPercent;
   final String? serialNumber;
   final String? expiryDate;
 
@@ -41,6 +42,7 @@ class PharmacyOrderLine {
     required this.quantity,
     required this.salePrice,
     required this.salePriceWithoutNds,
+    this.marginPercent,
     this.serialNumber,
     this.expiryDate,
   });
@@ -48,6 +50,7 @@ class PharmacyOrderLine {
   PharmacyOrderLine copyWith({
     double? salePrice,
     double? salePriceWithoutNds,
+    double? marginPercent,
   }) => PharmacyOrderLine(
     incomeDetailingId: incomeDetailingId,
     drugId: drugId,
@@ -55,6 +58,7 @@ class PharmacyOrderLine {
     quantity: quantity,
     salePrice: salePrice ?? this.salePrice,
     salePriceWithoutNds: salePriceWithoutNds ?? this.salePriceWithoutNds,
+    marginPercent: marginPercent ?? this.marginPercent,
     serialNumber: serialNumber,
     expiryDate: expiryDate,
   );
@@ -69,6 +73,7 @@ class PharmacyOrderLine {
     'quantity': quantity,
     'sale_price': salePrice,
     'sale_price_without_nds': salePriceWithoutNds,
+    'margin_percent': ?marginPercent,
     'price': salePrice,
     'serial_no': serialNumber,
     'expire_date': expiryDate,

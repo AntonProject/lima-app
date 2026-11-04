@@ -580,6 +580,9 @@ class Drug {
   final String? imageUrl;
   final String? cachedImagePath;
 
+  /// Packages per shipping box; null when the price list has no value.
+  final int? unitsPerPackage;
+
   const Drug({
     required this.id,
     required this.name,
@@ -595,7 +598,26 @@ class Drug {
     this.bindingDrugId,
     this.imageUrl,
     this.cachedImagePath,
+    this.unitsPerPackage,
   });
+
+  Drug withPrice(double value) => Drug(
+    id: id,
+    name: name,
+    manufacturer: manufacturer,
+    serialNumber: serialNumber,
+    expiryDate: expiryDate,
+    price: value,
+    mainStock: mainStock,
+    stock: stock,
+    remainsStock: remainsStock,
+    documentsCount: documentsCount,
+    currentStockId: currentStockId,
+    bindingDrugId: bindingDrugId,
+    imageUrl: imageUrl,
+    cachedImagePath: cachedImagePath,
+    unitsPerPackage: unitsPerPackage,
+  );
 
   factory Drug.fromJson(Map<String, dynamic> json) => Drug(
     id: json['id'] as int,
@@ -612,6 +634,7 @@ class Drug {
     bindingDrugId: json['binding_drug_id'] as int?,
     imageUrl: json['image_url'] as String?,
     cachedImagePath: json['image_cached_path'] as String?,
+    unitsPerPackage: (json['units_per_package'] as num?)?.toInt(),
   );
 }
 

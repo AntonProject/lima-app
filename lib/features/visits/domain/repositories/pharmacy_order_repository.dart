@@ -39,5 +39,9 @@ abstract interface class PharmacyOrderRepository {
     required String orderComment,
     required PharmacyOrderLines lines,
     bool pricesAlreadyCalculated = false,
+    double latitude = 0,
+    double longitude = 0,
   });
+
+  Future<PharmacyOrderLocation> resolveLocation({required bool isOffline});
 }

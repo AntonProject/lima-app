@@ -61,6 +61,7 @@ class PharmacyOrderRouteLine {
   final String name;
   final String manufacturer;
   final double price;
+  final double? marginPercent;
   final String? serialNumber;
   final String? expiryDate;
   final int? mainStock;
@@ -76,6 +77,7 @@ class PharmacyOrderRouteLine {
     required this.name,
     required this.manufacturer,
     required this.price,
+    this.marginPercent,
     this.serialNumber,
     this.expiryDate,
     this.mainStock,
@@ -127,6 +129,21 @@ class PharmacyOrderSubmissionFailure extends AppFailure {
 
 typedef PharmacyOrderLines = List<PharmacyOrderLine>;
 
+/// Where a booking is sent from. Zero coordinates mean location was unavailable.
+class PharmacyOrderLocation {
+  final double latitude;
+  final double longitude;
+  final bool isRequired;
+
+  const PharmacyOrderLocation({
+    required this.latitude,
+    required this.longitude,
+    this.isRequired = false,
+  });
+
+  bool get isMissingRequired => isRequired && (latitude == 0 || longitude == 0);
+}
+
 class PharmacyOrderDraft {
   final int? plannedVisitId;
   final int organizationId;
@@ -141,6 +158,8 @@ class PharmacyOrderDraft {
   final bool isWholesaler;
   final PharmacyOrderPricingTerms? pricingTerms;
   final PharmacyOrderLines lines;
+  final double latitude;
+  final double longitude;
 
   const PharmacyOrderDraft({
     this.plannedVisitId,
@@ -156,5 +175,7 @@ class PharmacyOrderDraft {
     required this.isWholesaler,
     required this.pricingTerms,
     required this.lines,
+    this.latitude = 0,
+    this.longitude = 0,
   });
 }

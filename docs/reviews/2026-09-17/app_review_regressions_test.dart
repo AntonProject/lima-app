@@ -31,6 +31,11 @@ class _Orders implements PharmacyOrderRepository {
   PharmacyOrderLines? sent;
   bool? alreadyCalculated;
   @override
+  Future<PharmacyOrderLocation> resolveLocation({
+    required bool isOffline,
+  }) async => const PharmacyOrderLocation(latitude: 41.3, longitude: 69.2);
+
+  @override
   Future<PharmacyOrderSubmission> submit({
     required int orderUserId,
     required int organizationId,
@@ -40,6 +45,8 @@ class _Orders implements PharmacyOrderRepository {
     required String orderComment,
     required PharmacyOrderLines lines,
     bool pricesAlreadyCalculated = false,
+    double latitude = 0,
+    double longitude = 0,
   }) async {
     sent = lines;
     alreadyCalculated = pricesAlreadyCalculated;

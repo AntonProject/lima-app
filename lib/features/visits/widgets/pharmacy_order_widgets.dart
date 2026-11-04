@@ -1,5 +1,18 @@
 part of '../screens/pharmacy/pharmacy_order_screen.dart';
 
+String _expiryMonthYear(String? raw) {
+  if (raw == null || raw.isEmpty) return '—';
+  final dt = DateTime.tryParse(raw);
+  if (dt == null) return raw.trim();
+  return '${dt.month.toString().padLeft(2, '0')}.${dt.year}';
+}
+
+String _inBoxValue(BuildContext context, Drug drug) {
+  final units = drug.unitsPerPackage;
+  if (units == null || units <= 0) return '—';
+  return context.l10n.t('inBoxValue', args: {'n': '$units'});
+}
+
 class _DrugCard extends StatelessWidget {
   final Drug drug;
   final int selectedQty;
@@ -93,11 +106,7 @@ class _DrugCard extends StatelessWidget {
                         Text(
                           context.l10n.t(
                             'expiryColon',
-                            args: {
-                              'value': drug.expiryDate?.isNotEmpty == true
-                                  ? drug.expiryDate!
-                                  : '—',
-                            },
+                            args: {'value': _expiryMonthYear(drug.expiryDate)},
                           ),
                           style: GoogleFonts.manrope(
                             fontSize: 12,
@@ -125,6 +134,17 @@ class _DrugCard extends StatelessWidget {
                               'value':
                                   '${drug.remainsStock ?? drug.stock ?? 0}',
                             },
+                          ),
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          context.l10n.t(
+                            'inBoxColon',
+                            args: {'value': _inBoxValue(context, drug)},
                           ),
                           style: GoogleFonts.manrope(
                             fontSize: 12,
@@ -434,6 +454,11 @@ class _QtyDialogState extends State<_QtyDialog> {
                   _qtyDialogLine(
                     context.l10n.t('remains'),
                     context.l10n.t('pcsN', args: {'n': '$available'}),
+                    showDivider: true,
+                  ),
+                  _qtyDialogLine(
+                    context.l10n.t('inBox'),
+                    _inBoxValue(context, drug),
                     showDivider: true,
                   ),
                   _qtyDialogLine(

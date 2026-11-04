@@ -999,6 +999,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
                 'remains_stock': d.remainsStock ?? d.stock ?? 0,
                 'current_stock_id': d.currentStockId,
                 'binding_drug_id': d.bindingDrugId,
+                'units_per_package': d.unitsPerPackage,
                 'image_url': d.imageUrl,
                 'updated_at': now,
               },
@@ -1009,7 +1010,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
         if (!replaced) {
           logSwallowed(
             'price-list looked truncated (${rows.length} rows) — merged '
-            'instead of replacing the order catalogue',
+                'instead of replacing the order catalogue',
             'Sync._syncDrugsAndMaterialsLayer.priceList',
           );
         }

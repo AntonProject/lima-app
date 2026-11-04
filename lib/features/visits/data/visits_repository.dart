@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lima/core/services/workday_location_service.dart';
 
 import '../../../core/db/local_database.dart';
 import '../../../core/models/local_visit.dart';
@@ -363,6 +364,7 @@ class VisitsRepositoryImpl
           return line.copyWith(
             salePrice: _toDouble(priced?['sale_price']),
             salePriceWithoutNds: _toDouble(priced?['sale_price_without_nds']),
+            marginPercent: _toDouble(priced?['margin_percent']),
           );
         })
         .toList(growable: false);
@@ -514,6 +516,8 @@ class VisitsRepositoryImpl
     String? orderExpireDate,
     required List<Map<String, dynamic>> drugs,
     bool pricesAlreadyCalculated = false,
+    double latitude = 0,
+    double longitude = 0,
   }) => _api.createOrderVisitDebug(
     orderUserId: orderUserId,
     organizationId: organizationId,
@@ -529,7 +533,34 @@ class VisitsRepositoryImpl
     orderExpireDate: orderExpireDate,
     drugs: drugs,
     pricesAlreadyCalculated: pricesAlreadyCalculated,
+    latitude: latitude,
+    longitude: longitude,
   );
+
+  @override
+  Future<PharmacyOrderLocation> resolveLocation({
+    required bool isOffline,
+  }) async {
+    final coordinates = await const WorkdayLocationService()
+        .currentOrFallback();
+    var isRequired = false;
+    if (!isOffline) {
+      try {
+        isRequired =
+            await _api.getGlobalBoolean(
+              'feature.pharmacy.visits.geo.required',
+            ) ==
+            true;
+      } catch (error) {
+        logSwallowed(error, 'VisitsRepositoryImpl.resolveLocation');
+      }
+    }
+    return PharmacyOrderLocation(
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      isRequired: isRequired,
+    );
+  }
 
   @override
   Future<PharmacyOrderSubmission> submit({
@@ -541,6 +572,8 @@ class VisitsRepositoryImpl
     required String orderComment,
     required PharmacyOrderLines lines,
     bool pricesAlreadyCalculated = false,
+    double latitude = 0,
+    double longitude = 0,
   }) async {
     try {
       final result = await _createOrderVisit(
@@ -557,12 +590,14 @@ class VisitsRepositoryImpl
         orderComment: orderComment,
         drugs: lines.map((line) => line.toApiMap()).toList(),
         pricesAlreadyCalculated: pricesAlreadyCalculated,
+        latitude: latitude,
+        longitude: longitude,
       );
       final response = result['response'];
       return PharmacyOrderSubmission(
         request: _asMap(result['request']),
         response: response,
-        remoteId: _extractRemoteId(response),
+        remoteId: remoteIdFromResponse(response),
       );
     } catch (error) {
       if (error is PharmacyOrderSubmissionFailure) rethrow;
@@ -606,7 +641,9 @@ class VisitsRepositoryImpl
     return const <String, dynamic>{};
   }
 
-  static int? _extractRemoteId(dynamic response) {
+  /// `/visits/add` answers with the bare visit id, other paths with an object.
+  static int? remoteIdFromResponse(dynamic response) {
+    if (response is num || response is String) return _toInt(response);
     final map = _asMap(response);
     return _toInt(
       map['visit_id'] ??

@@ -101,11 +101,16 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
       builder: (ctx) => _QtyDialog(
         drug: drug,
         initialQty: initial,
-        formatExpiry: _formatExpiryMonthYear,
+        formatExpiry: _expiryMonthYear,
       ),
     );
     if (result == null || !mounted) return;
     _orderViewModel.setQuantity(drug.id, result);
+    if (!ref.read(isOfflineProvider)) {
+      await _orderViewModel.refreshCalculatedPrices(
+        companyId: ref.read(authProvider).user?.companyId,
+      );
+    }
   }
 
   Future<void> _continueToBron() async {
@@ -173,6 +178,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
               name: drug.name,
               manufacturer: drug.manufacturer,
               price: line.salePrice,
+              marginPercent: line.marginPercent,
               serialNumber: line.serialNumber,
               expiryDate: line.expiryDate,
               mainStock: drug.mainStock,
@@ -218,18 +224,6 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
     } finally {
       _orderViewModel.setConfirming(false);
     }
-  }
-
-  String _formatExpiryMonthYear(String? raw) {
-    if (raw == null || raw.isEmpty) return '—';
-    final dt = DateTime.tryParse(raw);
-    if (dt == null) {
-      final m = RegExp(r'^(\d{2})\.(\d{4})$').firstMatch(raw.trim());
-      if (m != null) return '${m.group(1)}.${m.group(2)}';
-      return raw;
-    }
-    final mm = dt.month.toString().padLeft(2, '0');
-    return '$mm.${dt.year}';
   }
 
   @override

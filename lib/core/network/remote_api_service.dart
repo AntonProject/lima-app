@@ -691,6 +691,31 @@ class RemoteApiService {
     return '$y-$m-$day';
   }
 
+  Future<Uint8List> fetchVisitSpecification(
+    int visitId, {
+    required String format,
+  }) async {
+    final response = await _api.dio.get<List<int>>(
+      '/api/Visits/$visitId/specification',
+      queryParameters: {'format': format},
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return Uint8List.fromList(response.data ?? const <int>[]);
+  }
+
+  Future<Uint8List> buildVisitSpecification(
+    Map<String, dynamic> body, {
+    required String format,
+  }) async {
+    final response = await _api.dio.post<List<int>>(
+      '/api/Visits/specification',
+      data: body,
+      queryParameters: {'format': format},
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return Uint8List.fromList(response.data ?? const <int>[]);
+  }
+
   Future<List<Map<String, dynamic>>> getCompanyMarkups() async {
     List<dynamic> rows;
     try {
@@ -851,6 +876,8 @@ class RemoteApiService {
     int? contractId,
     required List<Map<String, dynamic>> drugs,
     bool pricesAlreadyCalculated = false,
+    double latitude = 0,
+    double longitude = 0,
   }) async {
     final sanitizedDrugs = _sanitizeOrderDrugs(
       drugs,
@@ -901,8 +928,8 @@ class RemoteApiService {
       'complete': true,
       'organization_id': organizationId,
       'visit_type': 1,
-      'latitude': 0,
-      'longitude': 0,
+      'latitude': latitude,
+      'longitude': longitude,
       'payment_variant_id': resolvedPaymentVariantId,
       'margin_id': resolvedMarginId,
       'is_wholesaler': isWholesaler,
@@ -1192,8 +1219,8 @@ class RemoteApiService {
       'complete': true,
       'organization_id': visit.orgId,
       'visit_type': 1,
-      'latitude': 0,
-      'longitude': 0,
+      'latitude': _toDouble(raw['latitude']) ?? 0,
+      'longitude': _toDouble(raw['longitude']) ?? 0,
       'margin_id': marginId,
       'contract_id': _toInt(raw['contract_id']),
       'is_wholesaler': isWholesaler,
@@ -2985,6 +3012,9 @@ class RemoteApiService {
           currentStockId: _toInt(m['income_detailing_id']),
           bindingDrugId: _toInt(drugMap['id']),
           imageUrl: _drugImageUrl(drugMap),
+          unitsPerPackage: _toInt(
+            drugMap['units_per_package'] ?? m['units_per_package'],
+          ),
         ),
       );
     }

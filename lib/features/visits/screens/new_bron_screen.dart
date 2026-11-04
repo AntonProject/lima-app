@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +9,7 @@ import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/features/visits/domain/entities/pharmacy_order.dart';
 import 'package:lima/features/visits/presentation/view_models/pharmacy_order_view_model.dart';
 import 'package:lima/features/visits/providers/pharmacy_order_provider.dart';
+import 'package:lima/features/visits/providers/specification_document_provider.dart';
 import 'package:lima/core/models/models.dart';
 import 'package:lima/core/providers/app_collections_provider.dart';
 import 'package:lima/core/providers/connectivity_provider.dart';
@@ -47,6 +49,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
   int? _paymentVariantId;
   int? _marginId;
   int? _marginPercent;
+  final Map<int, double> _marginByDrugId = {};
   int? _contractId;
   int? _checkoutCartId;
   bool _fromCart = false;
@@ -79,6 +82,8 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
     for (final line in routeData.lines) {
       if (line.quantity <= 0) continue;
       initialQuantities[line.id] = line.quantity;
+      final lineMargin = line.marginPercent;
+      if (lineMargin != null) _marginByDrugId[line.id] = lineMargin;
       initialDrugs[line.id] = Drug(
         id: line.id,
         name: line.name,
@@ -112,6 +117,13 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       cartItems: List.unmodifiable(ref.read(appCollectionsProvider).cartItems),
       plannedVisitId: routeData.plannedVisitId,
     );
+    // A saved cart keeps the price from when it was saved; the order will be
+    // stored at the current server price.
+    if (_fromCart) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _repriceAfterQuantityChange();
+      });
+    }
   }
 
   PharmacyOrderViewState get _orderState {
@@ -200,6 +212,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
               organizationId: widget.pharmacyId,
               marginId: _marginId,
               paymentVariantId: _paymentVariantId,
+              contractId: _contractId,
               items: serverLines,
             ),
           );
@@ -271,6 +284,11 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                     : context.l10n.t('loadingDrugData'),
               ),
             ),
+          );
+          return;
+        case PharmacyOrderSubmissionStatus.locationRequired:
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.l10n.t('orderLocationRequired'))),
           );
           return;
         case PharmacyOrderSubmissionStatus.noPriceMatrix:
@@ -400,6 +418,15 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
   String get _sellerCompanyName {
     final company = ref.read(authProvider).user?.company?.trim();
     return (company == null || company.isEmpty) ? 'LIMA' : company;
+  }
+
+  void _repriceAfterQuantityChange() {
+    if (ref.read(isOfflineProvider)) return;
+    unawaited(
+      _orderViewModel.refreshCalculatedPrices(
+        companyId: ref.read(authProvider).user?.companyId,
+      ),
+    );
   }
 
   bool _isLineOverStock(int id) => _orderState.isOverStock(id);

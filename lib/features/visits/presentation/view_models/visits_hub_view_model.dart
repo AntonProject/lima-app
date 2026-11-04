@@ -255,7 +255,7 @@ class VisitsHubViewModel extends StateNotifier<VisitsHubViewState> {
       final results = await _searchOrganisations(
         query: query,
         isLpu: wantLpu,
-        allRegions: state.allRegions,
+        allRegions: _searchesAllRegions(state),
       );
       if (!mounted ||
           generation != _remoteSearchGeneration ||
@@ -290,12 +290,12 @@ class VisitsHubViewModel extends StateNotifier<VisitsHubViewState> {
           org.name,
           org.address,
           org.city,
-          org.inn,
+          org.displayInn,
         ].whereType<Object>().join(' ').toLowerCase();
         return haystack.contains(query);
       }).toList();
     }
-    if (!source.allRegions) {
+    if (!_searchesAllRegions(source)) {
       rows = rows.where(_belongsToUserRegion).toList();
     }
     return rows;
@@ -310,7 +310,9 @@ class VisitsHubViewModel extends StateNotifier<VisitsHubViewState> {
       final merged = orgs.toList();
       for (final org in _remoteSearchResults.values) {
         if (presentIds.contains(org.id)) continue;
-        if (!current.allRegions && !_belongsToUserRegion(org)) continue;
+        if (!_searchesAllRegions(current) && !_belongsToUserRegion(org)) {
+          continue;
+        }
         merged.add(org);
       }
       orgs = merged;
@@ -331,6 +333,11 @@ class VisitsHubViewModel extends StateNotifier<VisitsHubViewState> {
     }
     return List.unmodifiable(sorted);
   }
+
+  /// An INN names one organisation, so the region filter would only hide the
+  /// exact pharmacy the user asked for.
+  bool _searchesAllRegions(VisitsHubViewState source) =>
+      source.allRegions || RegExp(r'^\d{9,}$').hasMatch(source.query.trim());
 
   bool _belongsToUserRegion(Organisation org) {
     final userRegionId = _user?.regionId;

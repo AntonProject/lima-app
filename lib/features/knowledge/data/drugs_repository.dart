@@ -82,6 +82,7 @@ class DrugsRepositoryImpl
       bindingDrugId: _toInt(row['binding_drug_id']),
       imageUrl: _localImagePath(row),
       cachedImagePath: row['image_cached_path']?.toString(),
+      unitsPerPackage: _toInt(row['units_per_package']),
     );
   }
 

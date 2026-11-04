@@ -7,6 +7,10 @@ import 'package:lima/features/visits/domain/use_cases/build_pharmacy_order_lines
 import 'package:lima/features/visits/domain/use_cases/submit_pharmacy_order.dart';
 
 class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
+  PharmacyOrderLocation location = const PharmacyOrderLocation(
+    latitude: 41.3,
+    longitude: 69.2,
+  );
   PharmacyOrderPricingTerms? resolvedTerms;
   PharmacyOrderPricingTerms? submittedTerms;
   bool? submittedWholesale;
@@ -59,6 +63,11 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
   }
 
   @override
+  Future<PharmacyOrderLocation> resolveLocation({
+    required bool isOffline,
+  }) async => location;
+
+  @override
   Future<PharmacyOrderSubmission> submit({
     required int orderUserId,
     required int organizationId,
@@ -68,6 +77,8 @@ class _FakePharmacyOrderRepository implements PharmacyOrderRepository {
     required String orderComment,
     required PharmacyOrderLines lines,
     bool pricesAlreadyCalculated = false,
+    double latitude = 0,
+    double longitude = 0,
   }) async {
     submittedTerms = pricingTerms;
     submittedWholesale = isWholesaler;

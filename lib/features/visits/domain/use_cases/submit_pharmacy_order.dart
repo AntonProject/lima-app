@@ -39,7 +39,10 @@ class SubmitPharmacyOrder {
     paymentVariantId: paymentVariantId,
     companyId: companyId,
     contractId: contractId,
-    );
+  );
+
+  Future<PharmacyOrderLocation> resolveLocation({required bool isOffline}) =>
+      _repository.resolveLocation(isOffline: isOffline);
 
   Future<PharmacyOrderSubmission> call({
     required int orderUserId,
@@ -50,6 +53,8 @@ class SubmitPharmacyOrder {
     required String orderComment,
     required PharmacyOrderLines lines,
     bool pricesAlreadyCalculated = false,
+    double latitude = 0,
+    double longitude = 0,
   }) => _repository.submit(
     orderUserId: orderUserId,
     organizationId: organizationId,
@@ -59,6 +64,8 @@ class SubmitPharmacyOrder {
     orderComment: orderComment,
     lines: lines,
     pricesAlreadyCalculated: pricesAlreadyCalculated,
+    latitude: latitude,
+    longitude: longitude,
   );
 
   Future<Result<PharmacyOrderSubmission>> submitResult({
@@ -70,6 +77,8 @@ class SubmitPharmacyOrder {
     required String orderComment,
     required PharmacyOrderLines lines,
     bool pricesAlreadyCalculated = false,
+    double latitude = 0,
+    double longitude = 0,
   }) async {
     try {
       return Result.success(
@@ -82,6 +91,8 @@ class SubmitPharmacyOrder {
           orderComment: orderComment,
           lines: lines,
           pricesAlreadyCalculated: pricesAlreadyCalculated,
+          latitude: latitude,
+          longitude: longitude,
         ),
       );
     } catch (error) {

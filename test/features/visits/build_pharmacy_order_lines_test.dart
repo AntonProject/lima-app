@@ -78,4 +78,21 @@ void main() {
     expect(result.lines, isEmpty);
     expect(result.skippedInvalidItems, 0);
   });
+
+  test('keeps the server markup on a priced line', () {
+    const line = PharmacyOrderLine(
+      incomeDetailingId: 1,
+      drugId: 2,
+      drugName: 'ЭССЕНИКС',
+      quantity: 5,
+      salePrice: 100,
+      salePriceWithoutNds: 89.29,
+    );
+
+    final priced = line.copyWith(salePrice: 150528, marginPercent: 12);
+
+    expect(priced.marginPercent, 12);
+    expect(priced.toApiMap()['margin_percent'], 12);
+    expect(line.toApiMap().containsKey('margin_percent'), isFalse);
+  });
 }

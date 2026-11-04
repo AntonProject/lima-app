@@ -12,6 +12,7 @@ import 'package:lima/core/i18n/app_i18n.dart';
 import 'package:lima/features/auth/providers/auth_provider.dart';
 import 'package:lima/features/visits/models/history_records.dart';
 import 'package:lima/features/visits/providers/pharmacy_order_provider.dart';
+import 'package:lima/features/visits/providers/specification_document_provider.dart';
 import 'package:lima/core/models/client_contract.dart';
 import 'package:lima/core/models/order_term_option.dart';
 
@@ -96,7 +97,7 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
   }
 
   List<SpecificationItem> _specificationItems() {
-    final markupPercent = (visit.markupPercent ?? 20).toDouble();
+    final markupPercent = visit.markupPercent;
     final items = visit.orderItems
         .where((item) => item.quantity > 0)
         .map(
@@ -108,9 +109,9 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
             expiryDate: item.expiryDate,
             basePrice: SpecificationExportService.basePriceFromGross(
               grossPrice: item.total / item.quantity,
-              markupPercent: markupPercent,
+              markupPercent: item.marginPercent ?? markupPercent,
             ),
-            markupPercent: markupPercent,
+            markupPercent: item.marginPercent ?? markupPercent,
           ),
         )
         .toList(growable: false);
@@ -709,8 +710,9 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
                     Expanded(
                       child: _kvCard(
                         title: context.l10n.t('markup'),
-                        value:
-                            '${(visit.markupPercent ?? 20).toStringAsFixed(0)}%',
+                        value: visit.markupPercent == null
+                            ? '—'
+                            : '${visit.markupPercent!.toStringAsFixed(0)}%',
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -983,19 +985,35 @@ class _VisitDetailSheetState extends ConsumerState<_VisitDetailSheet> {
     return OutlinedButton(
       onPressed: () {
         Navigator.pop(ctx);
+        // Without a server id the lines still hold catalogue prices, which the
+        // server replaces on send.
+        if (!visit.hasServerId) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(context.l10n.t('specificationNeedsPricing')),
+            ),
+          );
+          return;
+        }
         final data = SpecificationData(
-          orderId: int.tryParse(visit.id) ?? 0,
+          orderId: int.tryParse(visit.id),
           date: DateTime.now(),
           seller: _sellerCompanyName,
           buyer: visit.org,
           items: _specificationItems(),
         );
+        final format = text.contains('xlsx')
+            ? SpecificationFormat.xlsx
+            : SpecificationFormat.png;
+        final visitId = int.tryParse(visit.id);
+        final documents = ref.read(specificationDocumentSourceProvider);
         _specExport.export(
           context,
           data: data,
-          format: text.contains('xlsx')
-              ? SpecificationFormat.xlsx
-              : SpecificationFormat.png,
+          format: format,
+          serverDocument: visitId == null
+              ? null
+              : () => documents.forVisit(visitId, format),
         );
       },
       style: OutlinedButton.styleFrom(

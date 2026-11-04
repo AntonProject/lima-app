@@ -529,6 +529,13 @@ class AppI18n {
       'prepayments': 'Предоплаты',
       'wholesaleUnavailable':
           'Оптовый тип покупателя недоступен для вашей компании',
+      'specificationNeedsPricing':
+          'Спецификация будет доступна после расчёта цен: отправьте заказ при наличии сети',
+      'inBox': 'В коробке',
+      'inBoxValue': '{n} уп.',
+      'inBoxColon': 'В коробке: {value}',
+      'orderLocationRequired':
+          'Для отправки брони нужна геолокация: включите её и повторите',
       'selectPrepaymentFirst': 'Сначала выберите предоплату',
       'continueAction': 'Продолжить',
       'rating': 'Рейтинг',
@@ -1174,6 +1181,13 @@ class AppI18n {
       'prepayments': "Oldindan to'lovlar",
       'wholesaleUnavailable':
           "Ulgurji xaridor turi sizning kompaniyangiz uchun mavjud emas",
+      'specificationNeedsPricing':
+          'Spetsifikatsiya narxlar hisoblangandan keyin mavjud bo‘ladi: buyurtmani internet bor paytda yuboring',
+      'inBox': 'Qutida',
+      'inBoxValue': '{n} qadoq',
+      'inBoxColon': 'Qutida: {value}',
+      'orderLocationRequired':
+          'Bronni yuborish uchun geolokatsiya kerak: uni yoqing va qayta urinib ko‘ring',
       'selectPrepaymentFirst': 'Avval oldindan to‘lovni tanlang',
       'continueAction': 'Davom etish',
       'rating': 'Reyting',
@@ -1815,6 +1829,13 @@ class AppI18n {
       'prepayments': 'Олдиндан тўловлар',
       'wholesaleUnavailable':
           'Улгуржи харидор тури сизнинг компаниянгиз учун мавжуд эмас',
+      'specificationNeedsPricing':
+          'Спецификация нархлар ҳисоблангандан кейин мавжуд бўлади: буюртмани интернет бор пайтда юборинг',
+      'inBox': 'Қутида',
+      'inBoxValue': '{n} қадоқ',
+      'inBoxColon': 'Қутида: {value}',
+      'orderLocationRequired':
+          'Бронни юбориш учун геолокация керак: уни ёқинг ва қайта уриниб кўринг',
       'selectPrepaymentFirst': 'Аввал олдиндан тўловни танланг',
       'continueAction': 'Давом этиш',
       'rating': 'Рейтинг',
@@ -2448,6 +2469,13 @@ class AppI18n {
       'prepayments': 'Prepayments',
       'wholesaleUnavailable':
           'Wholesale buyer type is not available for your company',
+      'specificationNeedsPricing':
+          'The specification is available once prices are calculated: send the order when online',
+      'inBox': 'In a box',
+      'inBoxValue': '{n} pkg',
+      'inBoxColon': 'In a box: {value}',
+      'orderLocationRequired':
+          'Location is required to send the booking: turn it on and try again',
       'selectPrepaymentFirst': 'Select the prepayment first',
       'continueAction': 'Continue',
       'rating': 'Rating',

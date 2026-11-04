@@ -172,4 +172,29 @@ void main() {
       expect(viewModel.state.organisations.map((org) => org.id), [2, 1]);
     },
   );
+
+  test('a full INN finds an organisation outside the user region', () async {
+    const otherRegion = Organisation(
+      id: 5,
+      name: 'Other Region LPU',
+      address: 'Other address',
+      type: OrgType.lpu,
+      regionId: 2,
+      city: 'Самаркандская область',
+      inn: '312100557',
+    );
+    final viewModel = VisitsHubViewModel(
+      const _FakeOrganisationsDirectoryRepository(lpu: [otherRegion]),
+      _user,
+      autoLoad: false,
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.load();
+
+    viewModel.setQuery('Other');
+    expect(viewModel.state.organisations, isEmpty);
+
+    viewModel.setQuery('312100557');
+    expect(viewModel.state.organisations.map((org) => org.id), [5]);
+  });
 }

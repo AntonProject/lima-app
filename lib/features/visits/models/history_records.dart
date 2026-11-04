@@ -667,6 +667,9 @@ class HistoryVisitRecord {
             'expiration_date',
           ]),
           total: directTotal ?? salePrice * quantity,
+          marginPercent: _toDouble(
+            map['margin_percent'] ?? map['markup_percent'] ?? map['markup'],
+          ),
         ),
       );
     }
@@ -924,6 +927,7 @@ class HistoryOrderItemRecord {
   final String manufacturer;
   final String expiryDate;
   final double total;
+  final double? marginPercent;
 
   const HistoryOrderItemRecord({
     required this.name,
@@ -932,6 +936,7 @@ class HistoryOrderItemRecord {
     this.manufacturer = '—',
     this.expiryDate = '—',
     required this.total,
+    this.marginPercent,
   });
 }
 

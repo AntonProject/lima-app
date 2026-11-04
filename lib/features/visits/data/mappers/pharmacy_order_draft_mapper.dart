@@ -15,6 +15,8 @@ class PharmacyOrderDraftMapper {
       'organization_name': draft.organizationName,
       'organization_inn': draft.organizationInn,
       'visit_type': 1,
+      'latitude': draft.latitude,
+      'longitude': draft.longitude,
       'status': 'pending',
       'sync_status': 'pending',
       'comment': draft.comment,
