@@ -583,6 +583,10 @@ class Drug {
   /// Packages per shipping box; null when the price list has no value.
   final int? unitsPerPackage;
 
+  /// The price list sent a `sale_price`. As on the web, that price is final
+  /// and only lines without one take the /pricing/calculate result.
+  final bool hasListPrice;
+
   const Drug({
     required this.id,
     required this.name,
@@ -599,6 +603,7 @@ class Drug {
     this.imageUrl,
     this.cachedImagePath,
     this.unitsPerPackage,
+    this.hasListPrice = false,
   });
 
   Drug withPrice(double value) => Drug(
@@ -617,6 +622,7 @@ class Drug {
     imageUrl: imageUrl,
     cachedImagePath: cachedImagePath,
     unitsPerPackage: unitsPerPackage,
+    hasListPrice: hasListPrice,
   );
 
   factory Drug.fromJson(Map<String, dynamic> json) => Drug(
@@ -635,6 +641,7 @@ class Drug {
     imageUrl: json['image_url'] as String?,
     cachedImagePath: json['image_cached_path'] as String?,
     unitsPerPackage: (json['units_per_package'] as num?)?.toInt(),
+    hasListPrice: json['has_list_price'] == 1,
   );
 }
 

@@ -14,6 +14,7 @@ import 'package:lima/features/home/providers/home_repository_provider.dart';
 import 'package:lima/features/plan/providers/my_plan_provider.dart';
 import 'package:lima/features/visits/screens/visits_hub_screen.dart';
 import 'package:lima/features/visits/providers/visits_hub_provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../providers/splash_bootstrap_provider.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
@@ -198,7 +199,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       // splash MUST yield to /home within the budget. Anything still running
       // continues in the background. First run (empty DB) gets a longer
       // budget + full refresh so essential data is actually present on home.
-      final isFirstRun = !(await bootstrap.hasLocalOrganizations());
+      // The first launch of a new build counts too: the full pull rewrites
+      // local data in the format this build expects.
+      final syncNotifier = ref.read(syncProvider.notifier);
+      final build = (await PackageInfo.fromPlatform()).buildNumber;
+      final isFirstRun =
+          !(await bootstrap.hasLocalOrganizations()) ||
+          !(await syncNotifier.isSyncedForBuild(build));
       final budget = isFirstRun ? _firstRunBudget : _warmBudget;
       debugPrint(
         '[SPLASH] step 2: parallel sync (firstRun=$isFirstRun, budget=${budget.inSeconds}s)',
@@ -207,7 +214,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         _step = isFirstRun ? 'splashLoadingData' : 'splashUpdatingData';
         _progress = 0.35;
       });
-      final syncNotifier = ref.read(syncProvider.notifier);
       // Kick off doctors concurrently — fire-and-forget, never awaited here.
       syncNotifier.syncDoctorsInBackground();
       final currentYearPlan = _startPlanPreload();
@@ -237,6 +243,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             // so the splash clears fast. First run loads everything up front.
             homeOnly: !isFirstRun,
           )
+          .then((_) => syncNotifier.markSyncedForBuild(build))
           .catchError((Object e) {
             debugPrint('[SPLASH] sync error: $e');
           });

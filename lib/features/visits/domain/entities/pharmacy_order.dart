@@ -71,6 +71,7 @@ class PharmacyOrderRouteLine {
   final int? bindingDrugId;
   final int quantity;
   final String? imageUrl;
+  final bool hasListPrice;
 
   const PharmacyOrderRouteLine({
     required this.id,
@@ -87,6 +88,7 @@ class PharmacyOrderRouteLine {
     this.bindingDrugId,
     required this.quantity,
     this.imageUrl,
+    this.hasListPrice = false,
   });
 }
 

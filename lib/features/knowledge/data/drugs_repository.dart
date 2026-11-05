@@ -83,6 +83,7 @@ class DrugsRepositoryImpl
       imageUrl: _localImagePath(row),
       cachedImagePath: row['image_cached_path']?.toString(),
       unitsPerPackage: _toInt(row['units_per_package']),
+      hasListPrice: _toInt(row['has_list_price']) == 1,
     );
   }
 

@@ -3015,6 +3015,7 @@ class RemoteApiService {
           unitsPerPackage: _toInt(
             drugMap['units_per_package'] ?? m['units_per_package'],
           ),
+          hasListPrice: salePrice != null && salePrice > 0,
         ),
       );
     }

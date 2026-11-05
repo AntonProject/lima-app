@@ -188,6 +188,7 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
               bindingDrugId: line.drugId,
               quantity: line.quantity,
               imageUrl: drug.imageUrl,
+              hasListPrice: drug.hasListPrice,
             );
           })
           .toList(growable: false);

@@ -104,6 +104,30 @@ void main() {
     });
 
     test(
+      'stores the list price flag and clears it with the old list',
+      () async {
+        await db.replaceOrderPriceList([
+          {..._priceListRow(id: 1, name: 'ЭССЕНИКС'), 'has_list_price': 1},
+          _priceListRow(id: 2, name: 'гепатопротем'),
+        ]);
+        await db.upsertDrugs([
+          {'id': 1, 'name': 'ЭССЕНИКС', 'manufacturer': 'M'},
+        ]);
+
+        var rows = await drugsById();
+        expect(rows.first['has_list_price'], 1);
+        expect(rows.last['has_list_price'], 0);
+
+        await db.replaceOrderPriceList([
+          _priceListRow(id: 2, name: 'гепатопротем'),
+        ]);
+
+        rows = await drugsById();
+        expect(rows.first['has_list_price'], 0);
+      },
+    );
+
+    test(
       'merges instead of wiping when the snapshot looks truncated',
       () async {
         await db.replaceOrderPriceList([

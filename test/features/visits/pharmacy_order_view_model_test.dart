@@ -350,7 +350,7 @@ void main() {
     expect(drafts.markedSubmission?.remoteId, 123);
   });
 
-  test('shows the server price for every selected line', () async {
+  test('keeps price-list prices and calculates only the others', () async {
     final viewModel = PharmacyOrderViewModel(
       const _FakeDrugCatalogueRepository([]),
       SubmitPharmacyOrder(
@@ -375,6 +375,7 @@ void main() {
             stock: 5,
             currentStockId: 11,
             bindingDrugId: 1,
+            hasListPrice: true,
           ),
           2: Drug(
             id: 2,
@@ -394,8 +395,50 @@ void main() {
 
     await viewModel.refreshCalculatedPrices();
 
-    expect(viewModel.state.drugs[1]?.price, 250);
+    expect(viewModel.state.drugs[1]?.price, 100);
     expect(viewModel.state.drugs[2]?.price, 250);
+    expect(viewModel.state.isActionLocked, isFalse);
+
+    final preview = await viewModel.calculateSelectedPricing();
+    expect(preview?.lines.map((line) => line.salePrice), [100, 250]);
+  });
+
+  test('skips the calculation when every line has a list price', () async {
+    final repository = _FakePharmacyOrderRepository()..calculatedPrice = 250;
+    final viewModel = PharmacyOrderViewModel(
+      const _FakeDrugCatalogueRepository([]),
+      SubmitPharmacyOrder(repository),
+      _FakePharmacyOrderDraftRepository(),
+      const PharmacyOrderViewModelConfig(
+        pharmacyId: 458,
+        organizationName: 'Pharmacy',
+        fromCart: false,
+        checkoutCartId: null,
+        prepaymentPercent: 100,
+        buyerType: 0,
+        marginId: 8,
+        initialQuantities: {1: 1},
+        initialDrugs: {
+          1: Drug(
+            id: 1,
+            name: 'List priced',
+            manufacturer: 'M',
+            price: 100,
+            stock: 5,
+            currentStockId: 11,
+            bindingDrugId: 1,
+            hasListPrice: true,
+          ),
+        },
+        cartItems: [],
+      ),
+      autoLoad: false,
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.refreshCalculatedPrices();
+
+    expect(viewModel.state.drugs[1]?.price, 100);
     expect(viewModel.state.isActionLocked, isFalse);
   });
 

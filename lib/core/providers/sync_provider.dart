@@ -40,6 +40,7 @@ const _organizationDirectoryFullPullAtKey =
     'organization_directory_full_pull_at';
 const _organizationDirectoryFullPullInterval = Duration(hours: 24);
 const _lastAppActivityKey = 'last_app_activity_at';
+const _syncedBuildKey = 'synced_app_build';
 const _lastDeltaPullKey = 'last_delta_pull_at';
 const _minimumUsableLpuDirectorySize = 100;
 const _minimumUsablePharmacyDirectorySize = 100;
@@ -182,6 +183,19 @@ class SyncNotifier extends StateNotifier<SyncState> {
       repairDoctors: _repairDoctorDirectoryIfNeeded,
     );
     _startConnectivityWatcher();
+  }
+
+  /// The price list answered during this run; a sync can report success with
+  /// that layer swallowed, so the build marker depends on this instead.
+  bool _priceListFetched = false;
+
+  /// A new build may store fields the old one never wrote, so its first launch
+  /// repeats the full pull until the price list has been refreshed.
+  Future<bool> isSyncedForBuild(String build) async =>
+      await _db.getSyncMeta(_syncedBuildKey) == build;
+
+  Future<void> markSyncedForBuild(String build) async {
+    if (_priceListFetched) await _db.setSyncMeta(_syncedBuildKey, build);
   }
 
   /// Read-only snapshot for feature adapters that expose sync state to UI.
@@ -983,6 +997,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
     //    list on its own, preserving the previous behaviour.
     try {
       final stockDrugs = await _remoteApi.getStockPriceListDrugs();
+      _priceListFetched = true;
       if (stockDrugs.isNotEmpty) {
         final now = DateTime.now().toIso8601String();
         final rows = stockDrugs
@@ -1000,6 +1015,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
                 'current_stock_id': d.currentStockId,
                 'binding_drug_id': d.bindingDrugId,
                 'units_per_package': d.unitsPerPackage,
+                'has_list_price': d.hasListPrice ? 1 : 0,
                 'image_url': d.imageUrl,
                 'updated_at': now,
               },

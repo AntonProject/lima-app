@@ -311,7 +311,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
   }) async {
     final lines = buildSelectedLines();
     if (lines.lines.isEmpty) return null;
-    return _submitPharmacyOrder.calculatePricing(
+    final preview = await _submitPharmacyOrder.calculatePricing(
       prepaymentPercent: config.prepaymentPercent,
       isWholesaler: config.buyerType == 1,
       companyId: companyId,
@@ -319,15 +319,36 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
       orderTotal: state.total,
       lines: lines.lines,
     );
+    return preview == null ? null : _keepListPrices(preview);
   }
 
-  /// Puts server prices on the selected lines after a quantity change. The
-  /// server stores an order at its own calculated price and ignores the one
-  /// sent, so a price-list `sale_price` on screen can understate the real sum.
+  /// Same rule as the web: a price-list `sale_price` stays on the line and the
+  /// calculation only prices the lines without one.
+  PharmacyOrderPricingPreview _keepListPrices(
+    PharmacyOrderPricingPreview preview,
+  ) {
+    final listPriced = {
+      for (final drug in state.drugs.values)
+        if (drug.hasListPrice && drug.currentStockId != null)
+          drug.currentStockId!: drug.price,
+    };
+    return PharmacyOrderPricingPreview(
+      terms: preview.terms,
+      lines: List.unmodifiable(
+        preview.lines.map((line) {
+          final price = listPriced[line.incomeDetailingId];
+          return price == null ? line : line.copyWith(salePrice: price);
+        }),
+      ),
+    );
+  }
+
+  /// Puts calculated prices on selected lines the price list left unpriced.
   /// Only the latest request applies: markup depends on the order sum, so an
   /// older response describes quantities that no longer exist.
   Future<void> refreshCalculatedPrices({int? companyId}) async {
-    if (state.selectedIds.isEmpty) return;
+    final selected = state.selectedIds.map((id) => state.drugs[id]);
+    if (selected.every((drug) => drug?.hasListPrice ?? true)) return;
     final generation = ++_priceRefreshGeneration;
     setActionLocked(true);
     try {
@@ -401,7 +422,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
           );
           pricingTerms = pricingPreview?.terms;
           if (pricingPreview != null) {
-            orderLines = pricingPreview.lines;
+            orderLines = _keepListPrices(pricingPreview).lines;
             pricesAlreadyCalculated = true;
           }
         } catch (error) {
@@ -567,6 +588,7 @@ class PharmacyOrderViewModel extends StateNotifier<PharmacyOrderViewState> {
       bindingDrugId: incoming.bindingDrugId ?? existing?.bindingDrugId,
       imageUrl: incoming.imageUrl ?? existing?.imageUrl,
       unitsPerPackage: incoming.unitsPerPackage ?? existing?.unitsPerPackage,
+      hasListPrice: incoming.hasListPrice || (existing?.hasListPrice ?? false),
     );
   }
 }

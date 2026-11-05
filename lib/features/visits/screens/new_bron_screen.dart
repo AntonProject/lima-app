@@ -97,6 +97,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
         currentStockId: line.currentStockId,
         bindingDrugId: line.bindingDrugId,
         imageUrl: line.imageUrl,
+        hasListPrice: line.hasListPrice,
       );
     }
     _paramsLoaded = true;
@@ -117,13 +118,6 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
       cartItems: List.unmodifiable(ref.read(appCollectionsProvider).cartItems),
       plannedVisitId: routeData.plannedVisitId,
     );
-    // A saved cart keeps the price from when it was saved; the order will be
-    // stored at the current server price.
-    if (_fromCart) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _repriceAfterQuantityChange();
-      });
-    }
   }
 
   PharmacyOrderViewState get _orderState {

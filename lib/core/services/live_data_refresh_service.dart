@@ -107,6 +107,7 @@ class LiveDataRefreshService {
                     'remains_stock': drug.remainsStock ?? drug.stock ?? 0,
                     'current_stock_id': drug.currentStockId,
                     'binding_drug_id': drug.bindingDrugId,
+                    'has_list_price': drug.hasListPrice ? 1 : 0,
                     'image_url': drug.imageUrl,
                     'updated_at': now,
                   },
