@@ -1,5 +1,21 @@
 import 'package:flutter/widgets.dart';
 
+/// Tells tab screens the keyboard is up. They can't read it themselves: the
+/// shell [Scaffold] removes the bottom view inset from its body.
+class ShellKeyboard extends InheritedWidget {
+  final bool isOpen;
+
+  const ShellKeyboard({super.key, required this.isOpen, required super.child});
+
+  static bool isOpenOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<ShellKeyboard>()?.isOpen ??
+      false;
+
+  @override
+  bool updateShouldNotify(ShellKeyboard oldWidget) =>
+      isOpen != oldWidget.isOpen;
+}
+
 class LimaNavBarLayout {
   const LimaNavBarLayout._();
 

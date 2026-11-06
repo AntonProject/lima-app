@@ -14,6 +14,8 @@ import 'package:lima/core/providers/connectivity_provider.dart';
 
 import '../../../../core/models/models.dart';
 
+import 'package:lima/shell/nav_bar_layout.dart';
+
 part '../../widgets/pharmacy_order_widgets.dart';
 
 class PharmacyOrderScreen extends ConsumerStatefulWidget {
@@ -325,6 +327,8 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                     title: context.l10n.t('nothingFound'),
                   )
                 : ListView.builder(
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                     itemCount: filtered.length,
                     itemBuilder: (_, i) {
@@ -341,7 +345,8 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: _selectedCount == 0
+      bottomNavigationBar:
+          _selectedCount == 0 || ShellKeyboard.isOpenOf(context)
           ? null
           : Container(
               decoration: BoxDecoration(
@@ -368,12 +373,17 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                             color: AppColors.secondaryText,
                           ),
                         ),
-                        Text(
-                          formatUzs(_selectedTotal),
-                          style: GoogleFonts.manrope(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primaryText,
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            formatUzs(_selectedTotal),
+                            maxLines: 1,
+                            style: GoogleFonts.manrope(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primaryText,
+                            ),
                           ),
                         ),
                         Text(
@@ -388,20 +398,22 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 190),
                     child: ElevatedButton(
                       onPressed:
                           _hasInvalidSelectedQty || orderState.isConfirming
                           ? null
                           : _continueToBron,
                       style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 52),
+                        minimumSize: const Size(0, 52),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                         ),
                       ),
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           if (orderState.isConfirming) ...[
@@ -415,13 +427,17 @@ class _PharmacyOrderScreenState extends ConsumerState<PharmacyOrderScreen> {
                             ),
                             const SizedBox(width: 8),
                           ],
-                          Text(
-                            orderState.isConfirming
-                                ? context.l10n.t('preparingOrder')
-                                : context.l10n.t('placeBron'),
-                            style: GoogleFonts.manrope(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
+                          Flexible(
+                            child: Text(
+                              orderState.isConfirming
+                                  ? context.l10n.t('preparingOrder')
+                                  : context.l10n.t('placeBron'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.manrope(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                           if (!orderState.isConfirming) ...[

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:lima/core/services/specification_export_service.dart';
 
 void main() {
@@ -90,5 +91,28 @@ void main() {
       SpecificationExportService.pngRowHeightForItem(long),
       greaterThan(shortHeight),
     );
+  });
+
+  test('adds a white margin around a server PNG', () {
+    final source = img.Image(width: 4, height: 2);
+    img.fill(source, color: img.ColorRgb8(0, 0, 0));
+
+    final padded = img.decodePng(
+      SpecificationExportService.withPngMargins(
+        img.encodePng(source),
+        margin: 3,
+      ),
+    )!;
+
+    expect(padded.width, 10);
+    expect(padded.height, 8);
+    expect(padded.getPixel(0, 0).r, 255);
+    expect(padded.getPixel(3, 3).r, 0);
+  });
+
+  test('keeps bytes that are not a readable PNG', () {
+    final bytes = Uint8List.fromList(const [1, 2, 3]);
+
+    expect(SpecificationExportService.withPngMargins(bytes), same(bytes));
   });
 }

@@ -22,6 +22,8 @@ import 'package:lima/features/visits/providers/visits_hub_provider.dart';
 import 'package:lima/features/collections/domain/entities/cart_server_item.dart';
 import 'package:lima/features/plan/providers/planned_visits_provider.dart';
 
+import 'package:lima/shell/nav_bar_layout.dart';
+
 part '../widgets/new_bron_screen_widgets.dart';
 
 class NewBronScreen extends ConsumerStatefulWidget {
@@ -507,6 +509,7 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
           ),
           Expanded(
             child: ListView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
               children: [
                 _orderDetailsCard(itemsCount),
@@ -552,6 +555,10 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
                       const SizedBox(height: 8),
                       TextField(
                         controller: _commentCtrl,
+                        // Return adds a line here, and the action buttons
+                        // stay hidden until the keyboard closes.
+                        onTapOutside: (_) =>
+                            FocusManager.instance.primaryFocus?.unfocus(),
                         maxLines: 3,
                         decoration: InputDecoration(
                           hintText: context.l10n.t('enterComment'),
@@ -565,163 +572,171 @@ class _NewBronScreenState extends ConsumerState<NewBronScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: AppColors.secondaryBg,
-          boxShadow: shadowMd,
-        ),
-        padding: EdgeInsets.fromLTRB(
-          8,
-          8,
-          8,
-          MediaQuery.of(context).padding.bottom + 8,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      bottomNavigationBar: ShellKeyboard.isOpenOf(context)
+          ? null
+          : Container(
               decoration: BoxDecoration(
-                color: const Color(0xFFE6894A),
-                borderRadius: BorderRadius.circular(12),
+                color: AppColors.secondaryBg,
+                boxShadow: shadowMd,
+              ),
+              padding: EdgeInsets.fromLTRB(
+                8,
+                8,
+                8,
+                MediaQuery.of(context).padding.bottom + 8,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    children: [
-                      Text(
-                        context.l10n.t('toPayColon'),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE6894A),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              context.l10n.t('toPayColon'),
+                              style: GoogleFonts.manrope(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              formatUzs(_payableTotal),
+                              style: GoogleFonts.manrope(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                        // At 100% prepayment both figures are the same, so the order
+                        // sum only earns its line when part of it is due later —
+                        // without it a 0% booking would read as a zero-value order.
+                        if (_prepayment != 100) ...[
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Text(
+                                context.l10n.t('totalColon'),
+                                style: GoogleFonts.manrope(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                formatUzs(_orderTotal),
+                                style: GoogleFonts.manrope(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    onPressed:
+                        _ids.isEmpty || actionBusy || _hasInvalidQuantities
+                        ? null
+                        : _sendOrder,
+                    icon: actionBusy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.check_rounded),
+                    label: Text(
+                      actionBusy
+                          ? context.l10n.t('placingOrder')
+                          : context.l10n.t('sendOrderToOperator'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                  if (!_fromCart) ...[
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed:
+                          _ids.isEmpty || actionBusy || _hasInvalidQuantities
+                          ? null
+                          : _saveToCart,
+                      icon: const Icon(
+                        Icons.shopping_cart_rounded,
+                        color: Color(0xFF2C9E63),
+                      ),
+                      label: Text(
+                        context.l10n.t('saveToCart'),
                         style: GoogleFonts.manrope(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
-                          color: Colors.white,
+                          color: const Color(0xFF2C9E63),
                         ),
                       ),
-                      const Spacer(),
-                      Text(
-                        formatUzs(_payableTotal),
-                        style: GoogleFonts.manrope(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 50),
+                        side: const BorderSide(color: Color(0xFFAEDFC6)),
+                        backgroundColor: const Color(0xFFEFFAF4),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
                         ),
                       ),
-                    ],
-                  ),
-                  // At 100% prepayment both figures are the same, so the order
-                  // sum only earns its line when part of it is due later —
-                  // without it a 0% booking would read as a zero-value order.
-                  if (_prepayment != 100) ...[
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Text(
-                          context.l10n.t('totalColon'),
-                          style: GoogleFonts.manrope(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.white70,
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          formatUzs(_orderTotal),
-                          style: GoogleFonts.manrope(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ],
                     ),
                   ],
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed:
+                        _ids.isEmpty || actionBusy || _hasInvalidQuantities
+                        ? null
+                        : _showSpecFormatDialog,
+                    icon: const Icon(Icons.file_download_outlined),
+                    label: Text(
+                      context.l10n.t('downloadSpec'),
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-            const SizedBox(height: 8),
-            ElevatedButton.icon(
-              onPressed: _ids.isEmpty || actionBusy || _hasInvalidQuantities
-                  ? null
-                  : _sendOrder,
-              icon: actionBusy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.check_rounded),
-              label: Text(
-                actionBusy
-                    ? context.l10n.t('placingOrder')
-                    : context.l10n.t('sendOrderToOperator'),
-                style: GoogleFonts.manrope(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-            ),
-            if (!_fromCart) ...[
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: _ids.isEmpty || actionBusy || _hasInvalidQuantities
-                    ? null
-                    : _saveToCart,
-                icon: const Icon(
-                  Icons.shopping_cart_rounded,
-                  color: Color(0xFF2C9E63),
-                ),
-                label: Text(
-                  context.l10n.t('saveToCart'),
-                  style: GoogleFonts.manrope(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF2C9E63),
-                  ),
-                ),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 50),
-                  side: const BorderSide(color: Color(0xFFAEDFC6)),
-                  backgroundColor: const Color(0xFFEFFAF4),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _ids.isEmpty || actionBusy || _hasInvalidQuantities
-                  ? null
-                  : _showSpecFormatDialog,
-              icon: const Icon(Icons.file_download_outlined),
-              label: Text(
-                context.l10n.t('downloadSpec'),
-                style: GoogleFonts.manrope(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

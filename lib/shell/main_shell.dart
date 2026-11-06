@@ -150,9 +150,11 @@ class _MainShellState extends ConsumerState<MainShell> {
         currentPath.contains('/detailing') ||
         currentPath.contains('/complete');
 
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     final hideNavBar =
-        currentPath.startsWith('/visits/pharmacy/detail/') &&
-        currentPath.contains('/type');
+        keyboardOpen ||
+        (currentPath.startsWith('/visits/pharmacy/detail/') &&
+            currentPath.contains('/type'));
 
     ref.listen<int>(offlineBannerPulseProvider, (_, _) {
       if (ref.read(isOfflineProvider) && currentPath != '/home') {
@@ -200,7 +202,12 @@ class _MainShellState extends ConsumerState<MainShell> {
             extendBody: true,
             body: Stack(
               children: [
-                Positioned.fill(child: widget.child),
+                Positioned.fill(
+                  child: ShellKeyboard(
+                    isOpen: keyboardOpen,
+                    child: widget.child,
+                  ),
+                ),
                 Positioned(
                   left: 0,
                   right: 0,

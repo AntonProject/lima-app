@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:excel/excel.dart' as ex;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -97,11 +98,26 @@ class SpecificationExportService {
     if (serverDocument == null) return null;
     try {
       final bytes = await serverDocument();
-      return isDocumentOfFormat(bytes, format) ? bytes : null;
+      if (!isDocumentOfFormat(bytes, format)) return null;
+      return format == SpecificationFormat.png ? withPngMargins(bytes) : bytes;
     } catch (error) {
       logSwallowed(error, 'SpecificationExportService.serverDocument');
       return null;
     }
+  }
+
+  /// The server renders the image flush with its content, so the title and
+  /// the signatures touch the edges of the file.
+  static Uint8List withPngMargins(Uint8List bytes, {int margin = 40}) {
+    final source = img.decodePng(bytes);
+    if (source == null) return bytes;
+    final canvas = img.Image(
+      width: source.width + margin * 2,
+      height: source.height + margin * 2,
+    );
+    img.fill(canvas, color: img.ColorRgb8(255, 255, 255));
+    img.compositeImage(canvas, source, dstX: margin, dstY: margin);
+    return img.encodePng(canvas);
   }
 
   static bool isDocumentOfFormat(Uint8List bytes, SpecificationFormat format) {

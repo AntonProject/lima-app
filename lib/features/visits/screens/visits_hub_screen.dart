@@ -364,60 +364,61 @@ class _VisitsHubScreenState extends ConsumerState<VisitsHubScreen> {
           ),
 
           // Floating actions
-          Positioned(
-            left: AppUi.screenHorizontal,
-            right: AppUi.screenHorizontal,
-            bottom: LimaNavBarLayout.totalBarHeight(context) - 10,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AppTapScale(
-                  onTap: hubState.isFindingNearby ? null : _findNearby,
-                  pressedScale: 0.97,
-                  child: Container(
-                    height: AppUi.buttonHeight,
-                    decoration: BoxDecoration(
-                      color: AppColors.secondaryBg,
-                      borderRadius: BorderRadius.circular(AppUi.cardRadius),
-                      border: Border.all(color: AppColors.primary),
-                      boxShadow: shadowMd,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        if (hubState.isFindingNearby)
-                          const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
+          if (!ShellKeyboard.isOpenOf(context))
+            Positioned(
+              left: AppUi.screenHorizontal,
+              right: AppUi.screenHorizontal,
+              bottom: LimaNavBarLayout.totalBarHeight(context) - 10,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AppTapScale(
+                    onTap: hubState.isFindingNearby ? null : _findNearby,
+                    pressedScale: 0.97,
+                    child: Container(
+                      height: AppUi.buttonHeight,
+                      decoration: BoxDecoration(
+                        color: AppColors.secondaryBg,
+                        borderRadius: BorderRadius.circular(AppUi.cardRadius),
+                        border: Border.all(color: AppColors.primary),
+                        boxShadow: shadowMd,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (hubState.isFindingNearby)
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.primary,
+                              ),
+                            )
+                          else
+                            const Icon(
+                              LucideIcons.mapPin,
                               color: AppColors.primary,
+                              size: 18,
                             ),
-                          )
-                        else
-                          const Icon(
-                            LucideIcons.mapPin,
-                            color: AppColors.primary,
-                            size: 18,
+                          const SizedBox(width: 8),
+                          Text(
+                            hubState.isFindingNearby
+                                ? context.l10n.t('searching')
+                                : context.l10n.t('findNearby'),
+                            style: GoogleFonts.manrope(
+                              color: AppColors.primary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        const SizedBox(width: 8),
-                        Text(
-                          hubState.isFindingNearby
-                              ? context.l10n.t('searching')
-                              : context.l10n.t('findNearby'),
-                          style: GoogleFonts.manrope(
-                            color: AppColors.primary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
